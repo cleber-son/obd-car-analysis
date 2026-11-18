@@ -50,3 +50,8 @@ CREATE TABLE IF NOT EXISTS fuel_fill (
   id INTEGER PRIMARY KEY, ts INTEGER, fuel TEXT, liters REAL, price_l REAL, full INTEGER DEFAULT 1,
   mix_after REAL,          -- fração de etanol hidratado no tanque após abastecer (0 = gasolina C, 1 = etanol)
   km_since_prev REAL, est_l_since_prev REAL, real_kml REAL, calib REAL, note TEXT);
+
+-- Testes de aceleração 0–100 km/h
+CREATE TABLE IF NOT EXISTS accel_run (
+  id INTEGER PRIMARY KEY, ts INTEGER, trip_id INTEGER, t60 REAL, t80 REAL, t100 REAL,
+  max_rpm REAL, samples INTEGER, hz REAL, fuel_mix REAL, note TEXT);

@@ -67,12 +67,24 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   .spd b { font-size: clamp(110px, 26vh, 200px) } .foot { grid-column: 1 / -1 }
   .t .v { font-size: 20px }
 }
+.acc { position: fixed; inset: 0; z-index: 10; background: color-mix(in srgb, #000 88%, transparent); display: grid; place-items: center; padding: 20px }
+.acc[hidden] { display: none } .accin { display: grid; gap: 14px; justify-items: center; text-align: center; width: 100% }
+.acst { font: 700 22px var(--disp); color: var(--warn) } .acst.go { color: var(--ok) } .acst.run { color: var(--speed) }
+.actime { font: 800 clamp(90px, 30vw, 160px)/1 var(--mono); font-variant-numeric: tabular-nums }
+.acspl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: min(420px, 100%) }
+.acspl div { background: var(--tile); border: 1px solid var(--line); border-radius: 14px; padding: 10px } .acspl b { display: block; font: 700 22px var(--mono) } .acspl span { font-size: 11px; color: var(--muted) }
+.acbtns { display: flex; gap: 10px } .acbtns button { font: 700 16px var(--disp); padding: 14px 20px; border-radius: 14px; border: 1px solid var(--line); background: var(--tile); color: var(--fg) }
+.cfg { max-height: 86vh; overflow: auto } .cfg ul { list-style: none; margin: 0; padding: 0; width: min(420px, 100%); display: grid; gap: 6px; text-align: left }
+.cfg li { display: flex; justify-content: space-between; align-items: center; background: var(--tile); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 15px }
+.cfg li input { width: 20px; height: 20px; vertical-align: middle; margin-right: 8px } .cfg li button { font-size: 14px; background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 8px; padding: 4px 9px; margin-left: 4px }
+.t.good .v { color: var(--ok) }
+.lam.trim { background: linear-gradient(90deg, var(--bad), var(--warn) 30%, var(--o2) 40% 60%, var(--warn) 70%, var(--bad)) }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
 </style>
 </head>
 <body>
 <div class="app">
-  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><a href="/">Painel</a></div>
+  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="accBtn">⏱ 0–100</a><a href="/">Painel</a></span></div>
   <div class="rpmbar" id="rpmbar"><i id="rpmfill"></i><div class="ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></div>
   <div class="alert" id="alert"></div>
   <div class="core">
@@ -84,6 +96,17 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     </div>
   </div>
   <div class="tiles" id="tiles"></div>
+  <div class="acc" id="acc" hidden><div class="accin">
+    <div class="acst" id="acst">Pare o carro</div>
+    <div class="actime" id="actime">0,00</div>
+    <div class="acspl" id="acspl"></div>
+    <div class="acbtns"><button type="button" id="acRe">Novo teste</button><button type="button" id="acX">Fechar</button></div>
+  </div></div>
+  <div class="acc" id="cfg" hidden><div class="accin cfg">
+    <div class="acst go">Quadros do modo direção</div>
+    <ul id="cfgList"></ul>
+    <div class="acbtns"><button type="button" id="cfgSave">Salvar</button><button type="button" id="cfgReset">Padrão</button></div>
+  </div></div>
   <div class="foot"><span id="ftrip"></span><span id="fage"></span></div>
 </div>
 <script>
@@ -91,18 +114,90 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   const $ = (s) => document.getElementById(s);
   const nf = (v, d = 0) => v == null || Number.isNaN(+v) ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d });
   const dur = (s) => s == null ? "—" : s >= 3600 ? `${Math.floor(s / 3600)}h${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}` : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-  const TILES = [
-    { id: "kml", l: "Consumo agora", c: "--o2" }, { id: "kmlavg", l: "Média viagem", c: "--o2" }, { id: "avg", l: "Vel. média", c: "--speed" },
-    { id: "lam", l: "Oxigênio (λ)", c: "--o2", wide: true }, { id: "timing", l: "Avanço", c: "--volt" },
-    { id: "ect", l: "Motor", c: "--temp" }, { id: "batt", l: "Bateria", c: "--volt" }, { id: "load", l: "Carga", c: "--rpm" },
-    { id: "km", l: "Km viagem", c: "--speed" }, { id: "time", l: "Tempo", c: "--speed" }, { id: "tps", l: "Borboleta", c: "--pedal" },
-  ];
-  $("tiles").innerHTML = TILES.map((t) => `<div class="t${t.wide ? " wide" : ""}" id="t-${t.id}" style="--c:var(${t.c})"><div class="l">${t.l}</div><div class="v" id="v-${t.id}">—</div><div class="s" id="s-${t.id}"></div>${t.id === "lam" ? '<div class="lam"><i id="lamdot"></i></div>' : ""}</div>`).join("");
-  const set = (id, v, unit = "", sub = "", cls = "") => { $("v-" + id).innerHTML = `${v}<small>${unit}</small>`; $("s-" + id).textContent = sub; $("t-" + id).className = "t" + ($("t-" + id).classList.contains("wide") ? " wide" : "") + (cls ? " " + cls : ""); };
-  const stCls = (d, k) => { const s = d.status?.[k]?.[0]; return s === "crit" ? "bad" : s === "warn" ? "warn" : ""; };
+  // ---- catálogo de quadros (o usuário escolhe quais e a ordem; salvo neste aparelho)
+  let fuelInfo = null;
+  const loadFuel = () => fetch("/api/fuel").then((r) => r.json()).then((j) => { fuelInfo = j; }).catch(() => { });
+  loadFuel(); setInterval(loadFuel, 60000);
+  const sgn = (x, d = 1) => x == null ? "—" : (x > 0 ? "+" : "") + nf(x, d);
+  const CAT = {
+    kml: { l: "Consumo agora", c: "--o2", r: (v) => v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" : ""] : [nf(v.fuel_lh, 1), "L/h", "parado"] },
+    kmlavg: { l: "Média da viagem", c: "--o2", r: (v, t) => [nf(t.kml, 1), "km/L", t.fuel_l ? nf(t.fuel_l, 2) + " L" + (t.cost ? " · R$ " + nf(t.cost, 2) : "") : "calculando…"] },
+    prev: { l: "Previsão da viagem", c: "--o2", wide: true, r: (v, t) => {
+      const el = t.elapsed_s || 0, lh = el > 60 ? t.fuel_l / (el / 3600) : v.fuel_lh;   // média de L/h desde que ligou
+      const kml = t.kml ?? fuelInfo?.avg_real_kml ?? fuelInfo?.since_fill?.kml_est;
+      const price = fuelInfo?.fills?.find((f) => f.price_l)?.price_l;
+      return [nf(kml, 1), "km/L", `${nf(lh, 2)} L/h desde que ligou${price && lh ? " · ≈ R$ " + nf(lh * price, 2) + "/h" : ""} · ${nf((t.fuel_l || 0), 2)} L até agora`]; } },
+    auto: { l: "Autonomia", c: "--o2", r: (v, t) => { const f = fuelInfo; if (!f?.fills?.length) return ["—", "", "registre um tanque cheio"];
+      const rest = Math.max(0, f.tank_l - (f.since_fill?.liters_est || 0) - (t.fuel_l || 0)); const kml = f.avg_real_kml ?? t.kml ?? f.since_fill?.kml_est;
+      return [kml ? nf(rest * kml, 0) : "—", "km", `≈ ${nf(rest, 0)} L no tanque`]; } },
+    avg: { l: "Vel. média", c: "--speed", r: (v, t) => [nf(t.avg_moving ?? t.avg_speed), "km/h", t.max_speed ? "máx " + nf(t.max_speed) : ""] },
+    stft: { l: "Ajuste curto combustível", c: "--o2", k: "stft1", wide: true, bar: true, r: (v) => [sgn(v.stft1), "%", v.stft1 == null ? "" : v.stft1 > 10 ? "ECU adicionando combustível (pobre)" : v.stft1 < -10 ? "ECU tirando combustível (rica)" : "normal ±10%"] },
+    lam: { l: "Oxigênio (λ)", c: "--o2", k: "o2c1_lambda", r: (v) => [nf(v.o2c1_lambda, 2), "", v.o2c1_lambda == null ? "" : v.o2c1_lambda < 0.97 ? "rica" : v.o2c1_lambda > 1.9 ? "corte" : v.o2c1_lambda > 1.03 ? "pobre" : "ideal"] },
+    timing: { l: "Avanço", c: "--volt", k: "timing", r: (v) => [nf(v.timing, 1), "°", ""] },
+    ect: { l: "Motor", c: "--temp", k: "ect", r: (v) => [nf(v.ect), "°C", v.iat != null ? "ar " + nf(v.iat) + " °C" : ""] },
+    batt: { l: "Bateria", c: "--volt", k: "batt", r: (v) => [nf(v.batt, 1), "V", ""] },
+    load: { l: "Carga", c: "--rpm", k: "load", r: (v) => [nf(v.load), "%", v.map != null ? "MAP " + nf(v.map) + " kPa" : ""] },
+    km: { l: "Km viagem", c: "--speed", r: (v, t) => [nf(t.km, 1), "km", ""] },
+    time: { l: "Tempo ligado", c: "--speed", r: (v, t) => [dur(t.elapsed_s), "", t.moving_s ? "rodando " + dur(t.moving_s) : ""] },
+    tps: { l: "Borboleta", c: "--pedal", k: "tps", r: (v) => [nf(v.tps, 1), "%", v.tps_cmd != null ? "cmd " + nf(v.tps_cmd, 1) + "%" : ""] },
+    iat: { l: "Ar admitido", c: "--temp", k: "iat", r: (v) => [nf(v.iat), "°C", ""] },
+    map: { l: "MAP", c: "--speed", k: "map", r: (v) => [nf(v.map), "kPa", ""] },
+    maf: { l: "Fluxo de ar", c: "--speed", k: "maf", r: (v) => [nf(v.maf, 1), "g/s", ""] },
+  };
+  const DEFAULT = ["kml", "kmlavg", "avg", "stft", "timing", "ect", "prev", "auto", "km", "time", "tps"];
+  let chosen; try { chosen = JSON.parse(localStorage.getItem("driveTiles")) || DEFAULT; } catch { chosen = DEFAULT; }
+  chosen = chosen.filter((k) => CAT[k]);
+  function buildTiles() {
+    $("tiles").innerHTML = chosen.map((id) => { const t = CAT[id]; return `<div class="t${t.wide ? " wide" : ""}" id="t-${id}" style="--c:var(${t.c})"><div class="l">${t.l}</div><div class="v" id="v-${id}">—</div><div class="s" id="s-${id}"></div>${t.bar ? `<div class="lam trim"><i id="bar-${id}"></i></div>` : ""}</div>`; }).join("");
+  }
+  buildTiles();
+  function renderTiles(d) {
+    const v = d.values || {}, tr = d.trip || {};
+    for (const id of chosen) {
+      const t = CAT[id]; const el = $("t-" + id); if (!el) continue;
+      const [val, unit, sub] = t.r(v, tr);
+      $("v-" + id).innerHTML = `${val}<small>${unit}</small>`; $("s-" + id).textContent = sub || "";
+      const st = t.k ? d.status?.[t.k]?.[0] : null;
+      el.classList.toggle("bad", st === "warn" || st === "crit");           // fora do normal = vermelho
+      el.classList.toggle("good", st === "ok");
+      if (t.bar && v.stft1 != null) $("bar-" + id).style.left = Math.max(0, Math.min(100, (v.stft1 + 25) / 50 * 100)) + "%";
+    }
+  }
+  // ---- configurar quadros
+  $("cfgBtn").addEventListener("click", (e) => { e.preventDefault(); openCfg(); });
+  function openCfg() {
+    const all = [...chosen, ...Object.keys(CAT).filter((k) => !chosen.includes(k))];
+    $("cfgList").innerHTML = all.map((k) => `<li data-k="${k}"><label><input type="checkbox" ${chosen.includes(k) ? "checked" : ""}> ${CAT[k].l}</label><span><button type="button" data-m="-1" aria-label="Subir">▲</button><button type="button" data-m="1" aria-label="Descer">▼</button></span></li>`).join("");
+    $("cfg").hidden = false;
+  }
+  $("cfgList").addEventListener("click", (e) => { const b = e.target.closest("button[data-m]"); if (!b) return; const li = b.closest("li");
+    const sib = +b.dataset.m < 0 ? li.previousElementSibling : li.nextElementSibling; if (sib) (+b.dataset.m < 0 ? sib.before(li) : sib.after(li)); });
+  $("cfgSave").addEventListener("click", () => { chosen = [...$("cfgList").querySelectorAll("li")].filter((li) => li.querySelector("input").checked).map((li) => li.dataset.k);
+    try { localStorage.setItem("driveTiles", JSON.stringify(chosen)); } catch { } buildTiles(); if (lastD) renderTiles(lastD); $("cfg").hidden = true; });
+  $("cfgReset").addEventListener("click", () => { chosen = DEFAULT.slice(); try { localStorage.removeItem("driveTiles"); } catch { } buildTiles(); $("cfg").hidden = true; });
+  let lastD = null;
+
+  // ---- teste 0–100
+  const acc = $("acc");
+  const post = (c) => fetch("/api/accel/" + c, { method: "POST" });
+  $("accBtn").addEventListener("click", (e) => { e.preventDefault(); acc.hidden = false; post("arm"); });
+  $("acRe").addEventListener("click", () => post("arm"));
+  $("acX").addEventListener("click", () => { post("cancel"); acc.hidden = true; });
+  function renderAcc(d) {
+    const a = d.accel; if (!a) return;
+    if (acc.hidden && ["pronto", "correndo"].includes(a.state)) acc.hidden = false;
+    const st = $("acst"); const map = { aguardando_parar: ["Pare o carro para começar", ""], pronto: ["PRONTO — pode acelerar!", "go"], correndo: ["Medindo…", "run"],
+      concluido: ["Concluído!", "go"], incompleto: ["Teste interrompido (não chegou a 100)", ""], cancelado: ["Cancelado", ""] };
+    const [t, c] = map[a.state] || [a.state, ""]; st.textContent = t; st.className = "acst " + c;
+    const time = a.state === "concluido" ? a.splits["100"] : a.elapsed;
+    $("actime").textContent = time != null ? nf(time, 2) : "0,00";
+    $("acspl").innerHTML = ["60", "80", "100"].map((k) => `<div><b>${a.splits?.[k] != null ? nf(a.splits[k], 2) + "s" : "—"}</b><span>0–${k} km/h</span></div>`).join("");
+    if (a.hz && a.state === "concluido") $("acspl").insertAdjacentHTML("beforeend", `<div style="grid-column:1/-1;font-size:12px;color:var(--muted)">${nf(a.hz, 1)} leituras/s · precisão ≈ ±${nf(1 / a.hz / 2, 2)} s · rpm máx ${nf(a.max_rpm)}</div>`);
+  }
 
   let last = 0;
   function render(d) {
+    renderAcc(d);
     const v = d.values || {}, tr = d.trip || {};
     last = Date.now();
     const on = d.engine_on, coll = d.state === "coletando";
@@ -111,6 +206,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     $("spd").textContent = nf(v.speed);
     const rpm = v.rpm || 0;
     $("rpm").textContent = nf(rpm);
+    $("rpm").style.color = ["warn", "crit"].includes(d.status?.rpm?.[0]) ? "var(--bad)" : "";
     $("rpmfill").style.width = Math.min(100, rpm / 7000 * 100) + "%";
     $("rpmbar").classList.toggle("shift", rpm > 6200);
     $("gear").textContent = v.gear == null ? "–" : v.gear === 0 ? "N" : v.gear;
@@ -119,20 +215,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     if (v.gear && v.gear < 5 && rpm > 2800 && (v.load ?? 100) < 55) hint = "↑ Suba a marcha";
     else if (v.gear && v.gear > 1 && rpm < 1300 && (v.load ?? 0) > 80) hint = "↓ Reduza a marcha";
     $("hint").textContent = hint;
-    set("kml", v.kml_inst != null ? nf(v.kml_inst, 1) : v.fuel_lh != null ? nf(v.fuel_lh, 1) : "—", v.kml_inst != null ? "km/L" : "L/h", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" : "");
-    set("kmlavg", nf(tr.kml, 1), "km/L", tr.fuel_l ? nf(tr.fuel_l, 2) + " L" + (tr.cost ? " · R$ " + nf(tr.cost, 2) : "") : "");
-    set("avg", nf(tr.avg_moving ?? tr.avg_speed), "km/h", tr.max_speed ? "máx " + nf(tr.max_speed) : "");
-    const lam = v.o2c1_lambda;
-    const lamTxt = lam == null ? "" : lam < 0.97 ? "rica" : lam > 1.03 ? (lam > 1.9 ? "corte de combustível" : "pobre") : "ideal";
-    set("lam", nf(lam, 2), "", lam == null ? "" : `mistura ${lamTxt} · alvo ${nf(v.lambda_cmd, 2)}`, stCls(d, "o2c1_lambda"));
-    $("lamdot") && ($("lamdot").style.left = (lam == null ? 50 : Math.max(0, Math.min(100, (lam - 0.8) / 0.4 * 100))) + "%");
-    set("timing", nf(v.timing, 1), "°", "");
-    set("ect", nf(v.ect), "°C", v.iat != null ? "ar " + nf(v.iat) + " °C" : "", stCls(d, "ect"));
-    set("batt", nf(v.batt, 1), "V", on ? "carga 13,5–14,7" : "", stCls(d, "batt"));
-    set("load", nf(v.load), "%", v.map != null ? "MAP " + nf(v.map) + " kPa" : "", stCls(d, "load"));
-    set("km", nf(tr.km, 1), "km", "");
-    set("time", dur(tr.elapsed_s), "", tr.moving_s ? "rodando " + dur(tr.moving_s) : "");
-    set("tps", nf(v.tps, 1), "%", v.tps_cmd != null ? "cmd " + nf(v.tps_cmd, 1) + "%" : "");
+    lastD = d; renderTiles(d);
     // alerta recente (10 min)
     const a = (d.alerts || []).find((x) => Date.now() - x.ts < 10 * 60e3 && x.sev !== "info");
     const al = $("alert"); al.classList.toggle("on", !!a);
@@ -148,6 +231,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   let es;
   const connect = () => { try { es?.close(); } catch { } es = new EventSource("/api/stream"); es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch (x) { console.error(x); } }; };
   connect();
+  if (location.hash === "#acc") { acc.hidden = false; post("arm"); }
   document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else { connect(); lock(); } });
   // manter a tela acesa (quando o navegador permitir)
   let wl = null;

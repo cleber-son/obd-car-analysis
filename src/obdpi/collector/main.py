@@ -119,6 +119,7 @@ class Collector:
         self.ecu_info: dict = {}
         self.fuel_mix, self.fuel_calib = 0.0, 1.0
         self.trip_live = {"km": 0.0, "fuel_l": 0.0, "moving_s": 0.0, "max_speed": 0, "last_ts": None}
+        self.accel: dict | None = None
         self.load_fuel()
         self.finalize_open_trips()
         self._load_dtc_state()
@@ -190,6 +191,12 @@ class Collector:
             bt.pair(mac)
             self.state.set("adapter_mac", mac)
             self.state.set("adapter_name", name)
+        if not getattr(self, "_bt_reset_done", False):
+            # ao iniciar, derruba qualquer enlace antigo (o clone ELM327 aceita só uma conexão e às vezes fica preso)
+            import subprocess
+            subprocess.run(["bluetoothctl", "disconnect", mac], capture_output=True, timeout=10)
+            time.sleep(1)
+            self._bt_reset_done = True
         return RfcommTransport(mac, self.state.get("rfcomm_channel", a["rfcomm_channel"]))
 
     def start_session(self) -> None:
@@ -240,18 +247,35 @@ class Collector:
         self.state.set("last_probe", info)
         self.event("info", "pids_descobertos", f"{len(sup)} PIDs: {' '.join(info['supported'])}")
 
+    @staticmethod
+    def pack_single_frame(pids: list[int], cap: int = 6) -> list[list[int]]:
+        """Agrupa PIDs para a resposta caber num único quadro CAN (7 bytes: 41 + pares pid/dados).
+        O clone ELM327 deste carro (CAN 29 bits) só devolve o 1º quadro de respostas multi-frame."""
+        groups: list[list[int]] = []
+        sizes: list[int] = []
+        for p in sorted(pids, key=lambda x: -PID_LEN.get(x, 4)):
+            need = 1 + PID_LEN.get(p, 4)
+            for i, used in enumerate(sizes):
+                if used + need <= cap and len(groups[i]) < 6:
+                    groups[i].append(p)
+                    sizes[i] += need
+                    break
+            else:
+                groups.append([p])
+                sizes.append(need)
+        return groups
+
     def read_pids(self, pids: list[int]) -> dict[int, bytes]:
         e = self.elm
         out: dict[int, bytes] = {}
         if e.multi_pid:
-            for i in range(0, len(pids), 6):
-                chunk = pids[i:i + 6]
+            for chunk in self.pack_single_frame(pids):
                 r = e.request(0x01, chunk)
                 out.update(r)
-                for p in chunk:
-                    if p not in r:          # alguns clones falham em blocos: tenta individual
-                        rr = e.request(0x01, [p])
-                        out.update(rr)
+                if len(chunk) > 1:
+                    for p in chunk:
+                        if p not in r:          # se algum faltou, tenta individual
+                            out.update(e.request(0x01, [p]))
         else:
             for p in pids:
                 out.update(e.request(0x01, [p]))
@@ -376,14 +400,28 @@ class Collector:
     def handle_alerts(self, alerts: list[Alert]) -> None:
         for al in alerts:
             al.ts = al.ts or self.clock.now()
-            self.con.execute("INSERT INTO alert(ts, trip_id, source, rule, signal, severity, title, detail, value)"
-                             " VALUES (?,?,?,?,?,?,?,?,?)",
+            # mesma regra nos últimos 30 min → atualiza a linha existente ("continua"), sem novo alerta
+            prev = self.con.execute("SELECT id, count, severity FROM alert WHERE rule=? AND COALESCE(ts_end, ts) > ? ORDER BY id DESC LIMIT 1",
+                                    (al.rule, al.ts - 30 * 60 * 1000)).fetchone()
+            if prev:
+                sev = al.severity if SEV_ORDER[al.severity] > SEV_ORDER[prev["severity"]] else prev["severity"]
+                n = (prev["count"] or 1) + 1
+                self.con.execute("UPDATE alert SET count=?, ts_end=?, detail=?, value=?, severity=? WHERE id=?",
+                                 (n, al.ts, al.detail, al.value, sev, prev["id"]))
+                for r in self.recent_alerts:
+                    if r["rule"] == al.rule:
+                        r.update(count=n, ts_end=al.ts, detail=al.detail, sev=sev)
+                if n == 3 and SEV_ORDER[sev] >= SEV_ORDER[self.cfg["notify"]["min_severity"]]:
+                    self.queue_push(f"{al.title} (continua)", f"Repetiu 3× nos últimos minutos. {al.detail}", sev)
+                continue
+            self.con.execute("INSERT INTO alert(ts, trip_id, source, rule, signal, severity, title, detail, value, count)"
+                             " VALUES (?,?,?,?,?,?,?,?,?,1)",
                              (al.ts, self.trip_id, al.source, al.rule, al.signal, al.severity, al.title, al.detail, al.value))
             if self.trip_id:
                 self.trip_alerts.append(al)
             self.recent_alerts = ([{"ts": al.ts, "sev": al.severity, "title": al.title, "detail": al.detail,
-                                    "rule": al.rule, "source": al.source}] + self.recent_alerts)[:20]
-            # anti-spam: 1 push por regra por viagem; crítico pode repetir a cada 15 min
+                                    "rule": al.rule, "source": al.source, "count": 1}] + self.recent_alerts)[:20]
+            # 1 push por regra por viagem; crítico pode repetir a cada 15 min
             minsev = SEV_ORDER[self.cfg["notify"]["min_severity"]]
             if SEV_ORDER[al.severity] < minsev:
                 continue
@@ -474,6 +512,7 @@ class Collector:
                         "multi_pid": self.elm.multi_pid if self.elm else None,
                         "name": self.state.get("adapter_name")},
             "trip": self._trip_live_view(),
+            "accel": {k: v for k, v in self.accel.items() if k != "pts"} if self.accel else None,
             "supported": len(self.supported), "clock_synced": self.clock.synced, "version": __version__,
         }
         p = self.run_dir / "live.json"
@@ -495,8 +534,70 @@ class Collector:
                 "cost": round(t["fuel_l"] * price[0], 2) if price else None}
 
     # ------------------------------------------------------------------ ciclos
+    # ------------------------------------------------------------------ teste 0–100
+    def accel_poll_cmd(self) -> None:
+        f = self.run_dir / "accel_cmd"
+        if not f.exists():
+            return
+        cmd = f.read_text().strip()
+        f.unlink(missing_ok=True)
+        if cmd == "arm":
+            self.accel = {"state": "aguardando_parar", "armed_ts": self.clock.now(), "pts": [], "splits": {}}
+        elif cmd == "cancel":
+            self.accel = None
+
+    def accel_feed(self, ts: int, spd: float | None, rpm: float | None) -> None:
+        a = self.accel
+        if not a or spd is None or a["state"] in ("concluido", "cancelado"):
+            return
+        if a["state"] == "aguardando_parar":
+            if spd == 0:
+                a["state"] = "pronto"
+            elif ts - a["armed_ts"] > 180_000:
+                a["state"] = "cancelado"
+            a["last0"] = ts
+            return
+        if a["state"] == "pronto":
+            if spd == 0:
+                a["last0"] = ts
+                return
+            a["state"] = "correndo"
+            a["t0"] = (a["last0"] + ts) / 2          # largada entre a última leitura parada e a primeira em movimento
+            a["pts"] = [(a["last0"], 0.0)]
+        a["pts"].append((ts, spd))
+        a["max_rpm"] = max(a.get("max_rpm", 0), rpm or 0)
+        (t1, v1), (t2, v2) = a["pts"][-2], a["pts"][-1]
+        for target in (60, 80, 100):
+            if str(target) not in a["splits"] and v1 < target <= v2 and v2 > v1:
+                tc = t1 + (t2 - t1) * (target - v1) / (v2 - v1)
+                a["splits"][str(target)] = round((tc - a["t0"]) / 1000, 2)
+        a["elapsed"] = round((ts - a["t0"]) / 1000, 2)
+        if "100" in a["splits"] or spd < v1 - 5 or a["elapsed"] > 40:
+            a["state"] = "concluido" if "100" in a["splits"] else "incompleto"
+            dts = [b[0] - x[0] for x, b in zip(a["pts"], a["pts"][1:])]
+            hz = round(1000 / (sum(dts) / len(dts)), 1) if dts else None
+            self.con.execute("INSERT INTO accel_run(ts, trip_id, t60, t80, t100, max_rpm, samples, hz, fuel_mix) VALUES (?,?,?,?,?,?,?,?,?)",
+                             (int(a["t0"]), self.trip_id, a["splits"].get("60"), a["splits"].get("80"), a["splits"].get("100"),
+                              a.get("max_rpm"), len(a["pts"]), hz, self.fuel_mix))
+            a["hz"] = hz
+            self.con.commit()
+
     def fast_cycle(self) -> None:
         ts = self.clock.now()
+        self.accel_poll_cmd()
+        if self.accel and self.accel["state"] in ("aguardando_parar", "pronto", "correndo"):
+            raw = self.read_pids([0x0D, 0x0C])       # só velocidade e rpm: máxima taxa durante o teste
+            vals = {}
+            for pid, data in raw.items():
+                vals.update(decode(pid, data))
+            self.values.update(vals)
+            for k in vals:
+                self.value_ts[k] = ts
+            self.fast_times.append(time.time())
+            self.accel_feed(ts, vals.get("speed"), vals.get("rpm"))
+            self.update_engine(vals.get("rpm"), ts)
+            self.trip_live_update(vals, ts)
+            return
         raw = self.read_pids(self.fast_pids or [0x0C])
         vals: dict[str, float] = {}
         for pid, data in raw.items():
@@ -521,7 +622,10 @@ class Collector:
         if self.engine_on or self.trip_id:
             self.con.execute(f"INSERT OR REPLACE INTO fast_sample(ts, trip_id, {', '.join(FAST_COLS)}) VALUES (?,?,{','.join('?' * len(FAST_COLS))})",
                              (ts, self.trip_id, *[vals.get(c) for c in FAST_COLS]))
-            self.handle_alerts(self.throttle.feed(vals, ts, self.values.get("ect")))
+            # as regras da borboleta usam janelas calibradas para ~1 amostra/s
+            if ts - getattr(self, "_last_tb_feed", 0) >= 900:
+                self._last_tb_feed = ts
+                self.handle_alerts(self.throttle.feed(vals, ts, self.values.get("ect")))
 
     def full_cycle(self) -> None:
         ts = self.clock.now()
@@ -561,16 +665,17 @@ class Collector:
             t0 = time.monotonic()
             sd_notify("WATCHDOG=1")
             self.fast_cycle()
-            if t0 - self.last_full >= self.full_period:
+            testing = self.accel and self.accel["state"] in ("pronto", "correndo")
+            if t0 - self.last_full >= self.full_period and not testing:
                 self.last_full = t0
                 self.full_cycle()
-            if t0 - self.last_dtc >= self.dtc_period:
+            if t0 - self.last_dtc >= self.dtc_period and not testing:
                 self.last_dtc = t0
                 self.poll_dtc()
             self.write_live()
             self.maybe_commit()
             dt = self.fast_period - (time.monotonic() - t0)
-            if dt > 0:
+            if dt > 0 and not testing:
                 time.sleep(dt)
 
     def ecu_silent_loop(self, why: str) -> None:

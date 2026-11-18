@@ -157,3 +157,10 @@ details.alert[open] > summary { border-bottom: 1px solid var(--line) }
 .more { font-size: 11px; color: var(--speed); font-weight: 600; white-space: nowrap }
 .theme { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden } .theme button { font: 600 11px var(--f-body); background: none; border: 0; color: var(--muted); padding: 6px 9px; cursor: pointer }
 .theme button[aria-pressed="true"] { background: var(--panel2); color: var(--fg) }
+
+/* sensores: verde = normal, vermelho = fora do normal */
+.sensor .rng { font-size: 11px; color: var(--muted); line-height: 1.3 }
+.sensor.good .val { color: var(--ok) } .sensor.good { border-top-color: var(--ok) }
+.sensor.bad .val { color: var(--bad) } .sensor.bad .rng { color: var(--bad) }
+
+.big2 { font-size: 28px; font-weight: 700 }

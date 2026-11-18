@@ -20,8 +20,8 @@ DEFAULTS: dict = {
         "record_raw": False,
     },
     "collector": {
-        "full_period_s": 20,
-        "fast_period_s": 1.0,
+        "full_period_s": 5,
+        "fast_period_s": 0.5,
         "fast_pids": ["0C", "11", "49", "4C", "0D", "0B", "45", "4A", "47", "10", "44", "04"],
         "dtc_period_s": 20,
         "commit_interval_s": 5,

@@ -157,13 +157,13 @@ def trip(tid: int):
 @app.get("/api/alerts")
 def alerts(days: int = 30, severity: str | None = None, limit: int = 200):
     con = ro()
-    q = "SELECT * FROM alert WHERE ts > ?"
+    q = "SELECT * FROM alert WHERE COALESCE(ts_end, ts) > ?"
     args: list = [now_ms() - days * DAY]
     if severity:
         q += " AND severity=?"
         args.append(severity)
     from ..analytics.advice import advice_for
-    out = rows(con.execute(q + " ORDER BY ts DESC LIMIT ?", (*args, limit)))
+    out = rows(con.execute(q + " ORDER BY COALESCE(ts_end, ts) DESC LIMIT ?", (*args, limit)))
     for a in out:
         a["has_advice"] = advice_for(a["rule"], a["source"]) is not None
     return out
@@ -352,6 +352,21 @@ def fuel_fill(body: dict, x_token: str | None = Header(None)):
     return {"ok": True, "real_kml": kml, "km_since_prev": km, "mix_after": mix}
 
 
+# ---------------------------------------------------------------- teste 0–100
+@app.post("/api/accel/{cmd}")
+def accel_cmd(cmd: str, x_token: str | None = Header(None)):
+    check_admin(x_token)
+    if cmd not in ("arm", "cancel"):
+        raise HTTPException(400, "use arm ou cancel")
+    (LIVE.parent / "accel_cmd").write_text(cmd)
+    return {"ok": True}
+
+
+@app.get("/api/accel")
+def accel_runs():
+    return rows(ro().execute("SELECT * FROM accel_run ORDER BY ts DESC LIMIT 50"))
+
+
 # ---------------------------------------------------------------- diário de manutenção
 @app.get("/api/annotations")
 def annotations():
@@ -433,7 +448,8 @@ async def http_exc(_req, exc: HTTPException):
 
 def main():
     import uvicorn
-    uvicorn.run(app, host=CFG["web"]["bind"], port=int(CFG["web"]["port"]), log_level="warning", workers=1)
+    uvicorn.run(app, host=CFG["web"]["bind"], port=int(CFG["web"]["port"]), log_level="warning", workers=1,
+                timeout_graceful_shutdown=2)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,17 @@
         <ul class="checks" id="healthChecks"></ul>
       </div>
     </div>
+    <div class="grid2e">
+      <div class="card"><div class="row-head"><div><h2>Ajuste curto de combustível</h2><div class="lbl" style="margin-top:4px">Últimos 15 min · normal ±10% (motor quente)</div></div><b class="num big2" id="stftNow">—</b></div>
+        <svg class="chart sm" id="stftChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:8px"></svg>
+        <div class="muted" style="font-size:12px" id="stftTxt"></div></div>
+      <div class="card"><div class="row-head"><div><h2>Avanço de ignição</h2><div class="lbl" style="margin-top:4px">Últimos 15 min · graus antes do PMS</div></div><b class="num big2" id="timNow">—</b></div>
+        <svg class="chart sm" id="timChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:8px"></svg>
+        <div class="muted" style="font-size:12px" id="timTxt"></div></div>
+    </div>
+    <div class="card"><div class="row-head"><div><h2>Teste 0–100 km/h</h2><div class="lbl" style="margin-top:4px">Arme, pare o carro e acelere. O Pi mede sozinho.</div></div>
+      <a class="btn big" href="/dirigir#acc" id="accGo">⏱ Iniciar teste</a></div>
+      <div class="list" id="accList" style="margin-top:10px"></div></div>
     <div class="card">
       <div class="row-head"><div><h2>Todos os sensores ao vivo</h2><div class="lbl" style="margin-top:4px" id="sensCount"></div></div></div>
       <div class="sensors" id="liveSensors" style="margin-top:12px"></div>

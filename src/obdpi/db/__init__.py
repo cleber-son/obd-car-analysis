@@ -51,3 +51,4 @@ def migrate(con) -> None:
     _add_col(con, "fast_sample", "fuel_lh", "REAL")      # consumo instantâneo estimado (L/h)
     _add_col(con, "trip", "fuel_l", "REAL")
     _add_col(con, "trip", "km_l", "REAL")
+    _add_col(con, "alert", "count", "INTEGER DEFAULT 1")

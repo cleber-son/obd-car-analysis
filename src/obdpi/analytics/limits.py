@@ -35,6 +35,19 @@ STUCK_O2 = "o2s1_v"
 SEVN = {"ok": 0, "info": 0, "warn": 1, "crit": 2}   # sonda deve oscilar em malha fechada
 
 
+CTX_LABEL = {"running": " (motor ligado)", "warm": " (motor quente)", "idle_warm": " (marcha lenta, motor quente)",
+             "off": " (motor desligado)", "any": "", "cruise": " (rodando)"}
+
+
+def fmt_range(lo, hi) -> str:
+    f = lambda x: f"{x:g}".replace(".", ",")
+    if lo is not None and hi is not None:
+        return f"{f(lo)} a {f(hi)}"
+    if hi is not None:
+        return f"até {f(hi)}"
+    return f"acima de {f(lo)}"
+
+
 def total_trim(v: dict) -> float | None:
     if "stft1" in v and "ltft1" in v:
         return v["stft1"] + v["ltft1"]
@@ -164,7 +177,7 @@ class LimitsEngine:
             x = v.get(sig)
             if x is None or c not in ctx:
                 continue
-            rng = f"{wl if wl is not None else '…'} a {wh if wh is not None else '…'}"
+            rng = fmt_range(wl, wh) + CTX_LABEL.get(c, "")
             sev = "crit" if ((cl is not None and x < cl) or (ch is not None and x > ch)) else \
                   "warn" if ((wl is not None and x < wl) or (wh is not None and x > wh)) else "ok"
             prev = out.get(sig)
@@ -178,7 +191,7 @@ class LimitsEngine:
                 if x is None or not w or w.n < self.MIN_BASELINE or w.std <= 0:
                     continue
                 z = (x - w.mean) / max(w.std, abs(w.mean) * 0.02, 0.5)
-                hab = f"habitual {w.mean:.1f} ± {w.std:.1f}"
+                hab = f"habitual {w.mean - 2 * w.std:.1f} a {w.mean + 2 * w.std:.1f}".replace(".", ",")
                 if sig not in out:
                     out[sig] = ["ok", "", hab, f"z:{sig}@{c}"]
                 if abs(z) > self.Z_WARN and out[sig][0] == "ok":

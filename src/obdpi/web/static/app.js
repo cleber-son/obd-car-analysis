@@ -56,7 +56,7 @@
   }
   const alertItem = (a) => { const [c, l, i] = SEV[a.severity || a.sev] || SEV.info;
     if (!a.rule) return `<div class="alert" style="--s:${c}"><span class="ic">${i}</span><div><div class="t">${esc(a.title)}</div><div class="d">${esc(a.detail || "")} · ${dt(a.ts)}</div></div><span class="pill">${l}</span></div>`;
-    return `<details class="alert" style="--s:${c}" data-rule="${esc(a.rule)}" data-source="${esc(a.source || "")}"><summary><span class="ic">${i}</span><div><div class="t">${esc(a.title)}</div><div class="d">${esc(a.detail || "")} · ${dt(a.ts)}</div></div><span style="display:grid;justify-items:end;gap:4px"><span class="pill">${l}</span><span class="more">O que fazer ▾</span></span></summary><div class="adv">Carregando recomendação…</div></details>`; };
+    return `<details class="alert" style="--s:${c}" data-rule="${esc(a.rule)}" data-source="${esc(a.source || "")}"><summary><span class="ic">${i}</span><div><div class="t">${esc(a.title)}</div><div class="d">${esc(a.detail || "")} · ${(a.count || 1) > 1 ? `<b>continua: ${a.count}× desde ${dt(a.ts)}, último ${dt(a.ts_end)}</b>` : dt(a.ts)}</div></div><span style="display:grid;justify-items:end;gap:4px"><span class="pill">${(a.count || 1) >= 3 ? "Continua" : l}</span><span class="more">O que fazer ▾</span></span></summary><div class="adv">Carregando recomendação…</div></details>`; };
   const advHtml = (d) => `<div><h4>O que significa</h4>${esc(d.o_que)}</div>
     ${d.causas?.length ? `<div><h4>Causas prováveis</h4><ul>${d.causas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
     ${d.verificar?.length ? `<div><h4>O que verificar</h4><ul>${d.verificar.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
@@ -118,22 +118,44 @@
       <div><span class="lbl">Ajuste curto/longo</span><b>${nf(v.stft1, 0)} / ${nf(v.ltft1, 0)}%</b></div>`;
     for (const [k, x] of Object.entries(v)) { if (x == null) continue; const h = (hist[k] ??= []); const t = d.value_ts?.[k] || d.ts; if (!h.length || h.at(-1)[0] !== t) h.push([t, x]); while (h.length && h[0][0] < d.ts - 15 * 60e3) h.shift(); }
     renderEngine(d);
+    renderTrimTiming(d);
     if (modalKey) updateModal();
     // sensores: cor pelo estado calculado no Pi (faixa normal + comportamento habitual)
     const recentBad = {}; for (const [k, st] of Object.entries(d.status || {})) if (st[0] !== "ok") recentBad[k] = st[0];
     const keys = Object.keys(v).sort((a, b) => (catalog[a]?.name || a).localeCompare(catalog[b]?.name || b, "pt"));
-    $("#sensCount").textContent = `${keys.length} sinais · ${d.supported || 0} PIDs suportados pela ECU`;
-    $("#liveSensors").innerHTML = keys.length ? keys.map((k) => { const c = catalog[k] || {}; const sv = recentBad[k];
-      return `<button class="sensor${sv ? " bad" : ""}" data-k="${esc(k)}" title="${esc(d.status?.[k]?.[1] || "")}" style="--s:${sv ? SEV[sv][0] : `var(${COLORS[k] || "--line"})`}"><span class="n">${esc(c.name || k)}</span>
-      <span class="val num">${nf(v[k], c.decimals ?? 1)}<small>${esc(c.unit || "")}</small></span><span class="pid">${esc(k)}${d.value_ts?.[k] ? " · " + Math.max(0, Math.round((d.ts - d.value_ts[k]) / 1000)) + " s" : ""}</span></button>`; }).join("")
+    const nbad = Object.values(d.status || {}).filter((x) => x[0] !== "ok").length;
+    $("#sensCount").innerHTML = `${keys.length} sinais · ${d.supported || 0} PIDs da ECU · <span style="color:var(--ok)">● normal</span> <span style="color:var(--bad)">● fora do normal${nbad ? " (" + nbad + ")" : ""}</span> <span class="muted">● sem faixa</span>`;
+    $("#liveSensors").innerHTML = keys.length ? keys.map((k) => { const c = catalog[k] || {}; const st = d.status?.[k];
+      const cls = !st ? "" : st[0] === "ok" ? "good" : "bad";
+      const rng = st?.[2] ? `Normal: ${esc(st[2])} ${esc(c.unit || "")}` : "Sem faixa definida";
+      return `<button class="sensor ${cls}" data-k="${esc(k)}" title="${esc(st?.[1] || "")}" style="--s:${cls === "bad" ? "var(--bad)" : cls === "good" ? "var(--ok)" : `var(${COLORS[k] || "--line"})`}"><span class="n">${esc(c.name || k)}</span>
+      <span class="val num">${nf(v[k], c.decimals ?? 1)}<small>${esc(c.unit || "")}</small></span><span class="rng">${cls === "bad" ? "⚠ " + esc(st[1] || "Fora do normal") + " · " : ""}${rng}</span><span class="pid">${esc(k)}${d.value_ts?.[k] ? " · " + Math.max(0, Math.round((d.ts - d.value_ts[k]) / 1000)) + " s" : ""}</span></button>`; }).join("")
       : `<div class="empty" style="grid-column:1/-1">Aguardando a primeira leitura do OBD. Ligue a ignição com o adaptador conectado.</div>`;
     // banners de alerta recentes
-    const crit = (d.alerts || []).filter((a) => Date.now() - a.ts < 10 * 60e3 && a.sev !== "info").slice(0, 3);
-    $("#banners").innerHTML = crit.map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}</b><span class="muted">${esc(a.detail)} · ${tm(a.ts)}</span></div>`).join("");
+    const crit = (d.alerts || []).filter((a) => Date.now() - (a.ts_end || a.ts) < 10 * 60e3 && a.sev !== "info").slice(0, 3);
+    $("#banners").innerHTML = crit.map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}${(a.count || 1) > 1 ? ` · continua (${a.count}×)` : ""}</b><span class="muted">${esc(a.detail)} · ${(a.count || 1) > 1 ? "desde " + tm(a.ts) + ", último " + tm(a.ts_end) : tm(a.ts)}</span></div>`).join("");
     const nb = (d.alerts || []).filter((a) => Date.now() - a.ts < 24 * 3600e3 && a.sev === "crit").length;
     $("#badge").hidden = !nb; $("#badge").textContent = nb;
   }
 
+  function renderTrimTiming(d) {
+    const v = d.values || {}, now = d.ts, x0 = now - 15 * 60e3;
+    const st = d.status?.stft1, ok = !st || st[0] === "ok";
+    $("#stftNow").textContent = v.stft1 != null ? (v.stft1 > 0 ? "+" : "") + nf(v.stft1, 1) + "%" : "—";
+    $("#stftNow").style.color = v.stft1 == null ? "" : ok ? "var(--ok)" : "var(--bad)";
+    lineChart($("#stftChart"), [{ pts: [[x0, 10], [now, 10]], c: "--line", w: 1, end: false }, { pts: [[x0, -10], [now, -10]], c: "--line", w: 1, end: false },
+      { pts: hist.stft1 || [], c: ok ? "--ok" : "--bad", area: true }], { x0, x1: now, ymin: -30, ymax: 50 });
+    $("#stftTxt").textContent = v.stft1 == null ? "" : v.stft1 > 10 ? "Positivo: a ECU está ADICIONANDO combustível (mistura pobre / entrada de ar?)" : v.stft1 < -10 ? "Negativo: a ECU está TIRANDO combustível (mistura rica)" : "Dentro do normal";
+    $("#timNow").textContent = v.timing != null ? nf(v.timing, 1) + "°" : "—";
+    lineChart($("#timChart"), [{ pts: hist.timing || [], c: "--volt", area: true }], { x0, x1: now });
+    $("#timTxt").textContent = v.timing == null ? "" : `Marcha lenta típica 5–15°; em aceleração sobe (25–40°). Quedas bruscas em carga podem indicar detonação.`;
+  }
+  async function loadAccel() {
+    const r = await api("/api/accel").catch(() => []);
+    $("#accList").innerHTML = r.length ? r.slice(0, 5).map((a, i) => `<div class="alert" style="--s:${a.t100 ? "var(--ok)" : "var(--muted)"}"><span class="ic">${i + 1}</span><div><div class="t">${a.t100 ? "0–100 em " + nf(a.t100, 2) + " s" : "Incompleto"}</div>
+      <div class="d">0–60 ${nf(a.t60, 2)} s · 0–80 ${nf(a.t80, 2)} s · ${nf(a.hz, 1)} leit/s · ${dt(a.ts)}</div></div><span class="pill">${a.fuel_mix > 0.5 ? "Etanol" : "Gasolina"}</span></div>`).join("")
+      : `<div class="empty">Nenhum teste ainda. Toque em Iniciar teste (abre o modo direção).</div>`;
+  }
   let summary = null;
   async function loadSummary() { summary = await api("/api/summary?days=14"); if (live) renderEngine(live); return summary; }
   function renderEngine(d) {
@@ -388,7 +410,7 @@
   setTheme(document.documentElement.dataset.theme || "dark");
 
   // ------------------------------------------------------------ roteamento
-  const LOAD = { consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: loadReport, sistema: loadSystem };
+  const LOAD = { consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: loadReport, sistema: loadSystem };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });

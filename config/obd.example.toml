@@ -6,8 +6,8 @@ rfcomm_channel = 1
 protocol = "auto"
 
 [collector]
-full_period_s = 20       # todos os sensores a cada 20 s
-fast_period_s = 1.0      # grupo do corpo de borboleta ~1 Hz
+full_period_s = 5        # todos os sensores a cada 5 s
+fast_period_s = 0.5      # sensores principais o mais rápido possível (~2 Hz)
 
 [notify]
 min_severity = "warn"    # info | warn | crit
