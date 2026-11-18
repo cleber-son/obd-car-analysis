@@ -68,7 +68,7 @@ def _stats(vals):
             "desvio": round(statistics.pstdev(v), 3) if len(v) > 1 else 0}
 
 
-def build_context(db_path: str, live: dict, days: int = 30) -> dict:
+def build_context(db_path: str, live: dict, days: int = 14) -> dict:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
     con.row_factory = sqlite3.Row
     now = int(time.time() * 1000)

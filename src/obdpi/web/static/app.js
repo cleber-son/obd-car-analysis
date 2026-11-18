@@ -132,9 +132,9 @@
       <span class="val num">${nf(v[k], c.decimals ?? 1)}<small>${esc(c.unit || "")}</small></span><span class="rng">${cls === "bad" ? "⚠ " + esc(st[1] || "Fora do normal") + " · " : ""}${rng}</span><span class="pid">${esc(k)}${d.value_ts?.[k] ? " · " + Math.max(0, Math.round((d.ts - d.value_ts[k]) / 1000)) + " s" : ""}</span></button>`; }).join("")
       : `<div class="empty" style="grid-column:1/-1">Aguardando a primeira leitura do OBD. Ligue a ignição com o adaptador conectado.</div>`;
     // banners de alerta recentes
-    const crit = (d.alerts || []).filter((a) => Date.now() - (a.ts_end || a.ts) < 10 * 60e3 && a.sev !== "info").slice(0, 3);
+    const crit = (d.alerts || []).filter((a) => d.ts - (a.ts_end || a.ts) < 10 * 60e3 && a.sev !== "info").slice(0, 3);
     $("#banners").innerHTML = crit.map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}${(a.count || 1) > 1 ? ` · continua (${a.count}×)` : ""}</b><span class="muted">${esc(a.detail)} · ${(a.count || 1) > 1 ? "desde " + tm(a.ts) + ", último " + tm(a.ts_end) : tm(a.ts)}</span></div>`).join("");
-    const nb = (d.alerts || []).filter((a) => Date.now() - a.ts < 24 * 3600e3 && a.sev === "crit").length;
+    const nb = (d.alerts || []).filter((a) => d.ts - (a.ts_end || a.ts) < 24 * 3600e3 && a.sev === "crit").length;
     $("#badge").hidden = !nb; $("#badge").textContent = nb;
   }
 

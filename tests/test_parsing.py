@@ -54,10 +54,30 @@ def test_throttle_stall_and_hunt():
         rpm = 800 + (200 if (i // 2) % 2 else -200)
         out += t.feed({"rpm": rpm, "speed": 0, "tps": 6, "tps_cmd": 7, "pedal_d": 15}, ts, 90)
     assert any(a.rule == "R4" for a in out), [a.rule for a in out]
-    for rpm in (800, 790, 50, 0):
+    for rpm in (800, 790, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0):   # ECU continua respondendo com motor parado
         ts += 1000
         out += t.feed({"rpm": rpm, "speed": 0, "tps": 6, "tps_cmd": 7, "pedal_d": 15}, ts, 90)
     assert any(a.rule == "R6" and a.severity == "crit" for a in out)
+
+
+def test_keyoff_is_not_stall():
+    t = ThrottleEngine(); ts = 0; out = []
+    for rpm in [780] * 10 + [0]:           # chave desligada: depois disso a ECU some (sem mais leituras)
+        ts += 1000
+        out += t.feed({"rpm": rpm, "speed": 0, "tps": 6, "tps_cmd": 7, "pedal_d": 15}, ts, 90)
+    assert not any(a.rule == "R6" for a in out)
+
+
+def test_frozen_stft_ignored():
+    l = LimitsEngine(period_s=5)
+    v = {"stft1": 46.88, "ect": 90, "rpm": 750, "speed": 0, "run_time": 600}
+    late = []
+    for i in range(80):
+        r = l.evaluate(dict(v), True, i)
+        if i > 50:
+            late += r
+    assert "stft1" in l.frozen and not any(a.rule.startswith("stft1") for a in late)
+    assert "stft1" not in l.status(v, True)
 
 
 def test_limits_ect():

@@ -26,7 +26,12 @@ eletrônico**, que foi trocado recentemente.
 | 🏁 **Modo direção** `/dirigir` | Tela cheia para o iPhone 17 Pro Max (retrato/paisagem): velocidade, rpm com luz de troca, **marcha engatada**, quadros configuráveis, **modo gráfico em tempo real**, vermelho quando algo foge do normal. |
 | ⏱ **Teste 0–100 km/h** | O Pi lê só velocidade e rpm na taxa máxima e interpola 0–60, 0–80 e 0–100. |
 | 📊 **Painel web** | Ao vivo, Borboleta, Viagens (histórico de motor ligado), Consumo, Alertas/DTCs, Sensores (gráfico individual tempo real + histórico), Relatório + CSV, Sistema. Tema escuro. |
+| 🩺 **Diagnóstico** | **Entrada falsa de ar × MAF** (MAF medido ÷ ar esperado por carga, com veredito por viagem), **bateria na partida** (repouso e queda ao dar partida), **válvula termostática** (tempo até 80 °C), **autotestes da ECU** (monitores prontos/pendentes). |
+| 🌱 **Direção econômica** | Nota 0–100 por viagem (giro alto, arrancadas e freadas bruscas, tempo parado ligado, acima de 110 km/h, marcha alta forçando) com dicas. |
+| 🗓 **Relatórios** | Semanal e mensal no painel, comparados com o período anterior, e **enviados no iPhone** toda segunda e todo dia 1º. |
+| 🤖 **Analisar dados (IA)** | Um botão envia o resumo de tudo (sensores por condição, viagens, diagnósticos, alertas, códigos) para o **Claude Opus 5.5**, que devolve um laudo completo: veredito, pontos de atenção, sistema por sistema e o que fazer. Requer chave da API. |
 | 📲 **Notificações** | Push no iPhone via [ntfy](https://ntfy.sh) para alertas e para avisar o IP sempre que o Pi entra em uma rede. |
+| 📶 **Rede** | Prioridade sempre para o **hotspot do celular** (troca sozinho quando ele aparece), com **IP fixo `172.20.10.14`** nele; em casa, `obd.local`. |
 
 Prévia da interface (dados simulados): https://claude.ai/artifact/1NkrbnkLgDTzTbuu9sXMSY
 
@@ -42,8 +47,9 @@ Prévia da interface (dados simulados): https://claude.ai/artifact/1NkrbnkLgDTzT
 | Onde | Como |
 |---|---|
 | Em casa | `http://obd.local` (ou o IP que chega no ntfy) |
-| No hotspot do iPhone | toque na notificação **"Civic OBD online"** (ative *Maximizar Compatibilidade*: o Pi 3 só enxerga 2,4 GHz) |
-| Dirigindo | `http://obd.local/dirigir` → Compartilhar → *Adicionar à Tela de Início* |
+| No hotspot do iPhone | **`http://172.20.10.14`** (IP fixo) ou a notificação **"Civic OBD online"**. Ative *Maximizar Compatibilidade*: o Pi 3 só enxerga 2,4 GHz |
+| Dirigindo | `http://172.20.10.14/dirigir` → Compartilhar → *Adicionar à Tela de Início*. Bloqueio automático do iPhone em "Nunca" |
+| Análise por IA | chave em `/etc/obd/secrets.toml` → `[ai]` `api_key = "sk-ant-..."` e reiniciar `obd-web` |
 | Notificações | app **ntfy** → assinar o tópico em *Sistema* no painel |
 
 ## Instalação
@@ -69,11 +75,13 @@ src/obdpi/
 ├── elm/          driver ELM327 (socket RFCOMM, parser, multi-frame CAN)
 ├── obd/          tabela de PIDs (nomes em PT-BR) e códigos de falha
 ├── collector/    coleta, viagens, relógio, DTCs, 0–100, pareamento Bluetooth
-├── analytics/    limites + linha de base, borboleta, consumo, recomendações
+├── analytics/    limites + linha de base, borboleta, consumo, diagnósticos por viagem, recomendações
+├── reports.py    relatórios semanal e mensal (painel + push)
+├── ai.py         análise completa pelo Claude
 ├── web/          FastAPI + SSE + painel (JS puro, sem build) e modo direção
 ├── db/           esquema SQLite (WAL) e migrações
 └── notify.py     ntfy com fila offline
-deploy/           systemd, bluetooth agent, journald volátil, avahi, anúncio de IP
+deploy/           systemd, bluetooth agent, journald volátil, avahi, anúncio de IP, prioridade do hotspot
 docs/             ARQUITETURA.md · PROCESSO.md (diário) · pids-civic-2008.md
 ```
 
@@ -83,6 +91,15 @@ docs/             ARQUITETURA.md · PROCESSO.md (diário) · pids-civic-2008.md
 - [`docs/PROCESSO.md`](docs/PROCESSO.md): diário de tudo que foi feito e descoberto
 - [`docs/pids-civic-2008.md`](docs/pids-civic-2008.md): o que este Civic informa pelo OBD
 - [`docs/DIAGNOSTICO-2026-11-18.md`](docs/DIAGNOSTICO-2026-11-18.md): análise do ajuste de combustível após a troca da borboleta
+
+## Qualidade
+
+- Testes unitários do parser, DTCs, regras da borboleta e limites (`tests/test_parsing.py`).
+- Teste ponta a ponta no Pi com `ELM327-emulator`.
+- Revisão de código pelo Claude Fable antes da primeira volta: corrigidos correção de relógio que deslocava o banco inteiro,
+  viagens indevidamente unidas, perda de viagem após queda longa do Bluetooth, valores antigos gravados como novos,
+  descoberta parcial de PIDs, alertas que não escalavam, DTCs "sumindo" com NO DATA, 0–100 travando a coleta e falsos alertas
+  (ajuste curto fixo do ECU, carga controlada do alternador Honda, estol ao desligar a chave).
 
 ## Segredos
 

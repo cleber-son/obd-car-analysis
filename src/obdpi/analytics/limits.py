@@ -15,8 +15,9 @@ from . import Alert
 # contexto: any | running | warm | idle_warm | off   (None = sem limite)
 RULES = [
     ("ect", "running", None, 102, None, 108, 2, "Temperatura do motor alta"),
-    ("batt", "running", 13.0, 15.0, 12.4, 15.5, 3, "Tensão de carga fora do normal"),
-    ("ecu_volt", "running", 13.0, 15.0, 12.4, 15.5, 3, "Tensão no módulo fora do normal"),
+    # Honda usa carga controlada (ELD): com pouca carga elétrica o alternador pode ficar em ~12,5 V — normal
+    ("batt", "running", 12.3, 15.0, 11.8, 15.5, 3, "Tensão de carga fora do normal"),
+    ("ecu_volt", "running", 12.3, 15.0, 11.8, 15.5, 3, "Tensão no módulo fora do normal"),
     ("batt", "off", 12.2, None, 11.8, None, 3, "Bateria baixa"),
     ("stft1", "warm", -15, 15, -25, 25, 3, "Ajuste curto de combustível extremo"),
     ("ltft1", "warm", -15, 15, -25, 25, 2, "Ajuste longo de combustível extremo"),
@@ -92,7 +93,13 @@ class LimitsEngine:
     MIN_BASELINE = 90          # amostras (~30 min de motor) antes de usar a linha de base
     Z_WARN = 4.5
 
-    def __init__(self, baseline_rows: list | None = None):
+    def __init__(self, baseline_rows: list | None = None, period_s: float = 20):
+        # os "N leituras seguidas" foram pensados para 20 s; escala para o período real de coleta
+        self.k = max(1, round(20 / period_s))
+        self.MIN_BASELINE = 90 * self.k
+        self.recent: dict[str, list] = defaultdict(list)
+        self.frozen: set[str] = set()
+        self.seen: set[str] = set()
         self.streak: dict[tuple, int] = defaultdict(int)
         self.z_streak: dict[str, int] = defaultdict(int)
         self.base: dict[str, Welford] = {}
@@ -104,10 +111,18 @@ class LimitsEngine:
     def evaluate(self, v: dict, engine_on: bool, ts: int, learn: bool = True) -> list[Alert]:
         alerts: list[Alert] = []
         ctx = context_of(v, engine_on)
+        # valor que nunca muda com o motor ligado (ex.: PID 06 deste ECU fixo em 0xBC) não é medida real
+        if engine_on:
+            for sig in ("stft1", "stft2", "ltft1", "timing", "o2c1_lambda", "maf", "map"):
+                if v.get(sig) is not None:
+                    h = self.recent[sig] = (self.recent[sig] + [v[sig]])[-12 * self.k:]
+                    if len(h) >= 12 * self.k:
+                        (self.frozen.add if max(h) == min(h) else self.frozen.discard)(sig)
         for (sig, c, wl, wh, cl, ch, need, title) in RULES:
             key = (sig, c)
             x = v.get(sig)
-            if c not in ctx or x is None:
+            need = need * self.k
+            if c not in ctx or x is None or sig in self.frozen:
                 self.streak[key] = 0
                 continue
             sev = None
@@ -133,14 +148,14 @@ class LimitsEngine:
         closed_loop = int(v.get("fuel_status", 0)) & 0x02
         if "warm" in ctx and closed_loop:
             if STUCK_O2 in v:
-                self.o2_hist = (self.o2_hist + [v[STUCK_O2]])[-6:]
-                if len(self.o2_hist) == 6 and max(self.o2_hist) - min(self.o2_hist) < 0.1:
+                self.o2_hist = (self.o2_hist + [v[STUCK_O2]])[-6 * self.k:]
+                if len(self.o2_hist) == 6 * self.k and max(self.o2_hist) - min(self.o2_hist) < 0.1:
                     alerts.append(Alert("limits", "o2_stuck", "warn", "Sonda lambda sem oscilar",
                                         f"B1S1 parada em ~{self.o2_hist[-1]:.2f} V por 2 min", STUCK_O2, self.o2_hist[-1], ts))
             lam = v.get("o2c1_lambda")
             if lam is not None:
-                self.o2_hist = (self.o2_hist + [lam])[-3:]
-                if len(self.o2_hist) == 3 and (min(self.o2_hist) > 1.25 or max(self.o2_hist) < 0.8):
+                self.o2_hist = (self.o2_hist + [lam])[-3 * self.k:]
+                if len(self.o2_hist) == 3 * self.k and (min(self.o2_hist) > 1.25 or max(self.o2_hist) < 0.8):
                     alerts.append(Alert("limits", "afr_extreme", "warn", "Mistura fora do lambda 1 em malha fechada",
                                         f"Sonda de faixa larga em λ {lam:.2f} por 1 min ({'pobre' if lam > 1 else 'rica'})", "o2c1_lambda", lam, ts))
         # linha de base aprendida
@@ -157,7 +172,7 @@ class LimitsEngine:
                     z = (x - w.mean) / max(w.std, abs(w.mean) * 0.02, 0.5)
                     if abs(z) > self.Z_WARN:
                         self.z_streak[bk] += 1
-                        if self.z_streak[bk] >= 3:
+                        if self.z_streak[bk] >= 3 * self.k:
                             alerts.append(Alert("baseline", f"z:{bk}", "warn", "Sensor fora do comportamento habitual",
                                                 f"{sig} = {x:g} (habitual {w.mean:.1f} ± {w.std:.1f} em {'marcha lenta' if c == 'idle_warm' else 'cruzeiro'})",
                                                 sig, x, ts))
@@ -175,7 +190,7 @@ class LimitsEngine:
         out: dict = {}
         for (sig, c, wl, wh, cl, ch, _need, title) in RULES:
             x = v.get(sig)
-            if x is None or c not in ctx:
+            if x is None or c not in ctx or sig in self.frozen:
                 continue
             rng = fmt_range(wl, wh) + CTX_LABEL.get(c, "")
             sev = "crit" if ((cl is not None and x < cl) or (ch is not None and x > ch)) else \
@@ -207,9 +222,12 @@ class LimitsEngine:
                 continue                      # valores opcionais (0xFF = não usado) — não é sensor sumindo
             if s in got:
                 self.missing[s] = 0
+                self.seen.add(s)
+            elif s not in self.seen:
+                continue                      # nunca respondeu nesta execução: não é "parou de responder"
             else:
                 self.missing[s] += 1
-                if self.missing[s] == 10:
+                if self.missing[s] == 10 * self.k:
                     out.append(Alert("limits", f"missing:{s}", "warn", "Sensor parou de responder",
                                      f"{s} sem resposta em 10 leituras seguidas", s, None, ts))
         return out

@@ -116,7 +116,8 @@ class ThrottleEngine:
             if pr > 20 and ts_std < 0.5:
                 out += self._emit("R3", "crit", "Borboleta parada (possível modo de emergência)",
                                   f"Pedal variou {pr:.0f} pp e a borboleta ficou fixa em ~{w[-1]['tps']:.1f}%", ts, "tps", w[-1]["tps"], 120)
-        if running and pn is not None and pn > 30 and s.get("tps_rel") is not None and s["tps_rel"] < 5:
+        self.r3b = getattr(self, "r3b", 0) + 1 if (running and pn is not None and pn > 30 and s.get("tps_rel") is not None and s["tps_rel"] < 5) else 0
+        if self.r3b >= 3:
             out += self._emit("R3b", "crit", "Pedal pressionado sem abrir a borboleta",
                               f"Pedal {pn:.0f}% e borboleta relativa {s['tps_rel']:.1f}%", ts, "tps_rel", s["tps_rel"], 120)
 
@@ -143,18 +144,26 @@ class ThrottleEngine:
         else:
             self.idle_rpm.clear()
 
-        # R6 estol
-        if prev and rpm is not None and rpm < 100:
+        # R6 estol: a queda de rpm só vira alerta se a ECU continuar respondendo (desligar a chave corta a ECU)
+        pend = getattr(self, "r6_pending", None)
+        if pend:
+            if rpm is not None and rpm > 400:                       # religou logo depois: foi estol mesmo
+                out += self._emit("R6", pend["sev"], pend["title"], pend["detail"], pend["ts"], "rpm", 0, 30)
+                self.r6_pending = None
+            elif ts - pend["ts"] >= 8000:                          # ECU seguiu respondendo com o motor parado
+                out += self._emit("R6", pend["sev"], pend["title"], pend["detail"], pend["ts"], "rpm", 0, 30)
+                self.r6_pending = None
+        elif prev and rpm is not None and rpm < 100:
             hist = [x.get("rpm") for x in list(self.win)[-5:-1] if x.get("rpm") is not None]
             if hist and max(hist) > 400:
                 was_idle = all((x.get("speed") or 0) == 0 for x in list(self.win)[-5:-1])
                 pn_prev = prev.get("pedal_norm")
                 if was_idle and (pn_prev is None or pn_prev < 2):
-                    out += self._emit("R6", "crit", "Motor morreu em marcha lenta",
-                                      f"Rotação caiu de {max(hist):.0f} para {rpm:.0f} rpm sem acelerar", ts, "rpm", rpm, 30)
+                    self.r6_pending = {"ts": ts, "sev": "crit", "title": "Motor morreu em marcha lenta",
+                                       "detail": f"Rotação caiu de {max(hist):.0f} para {rpm:.0f} rpm sem acelerar"}
                 else:
-                    out += self._emit("R6", "info", "Motor morreu (arrancada)",
-                                      f"Rotação caiu de {max(hist):.0f} para {rpm:.0f} rpm", ts, "rpm", rpm, 30)
+                    self.r6_pending = {"ts": ts, "sev": "info", "title": "Motor morreu (arrancada)",
+                                       "detail": f"Rotação caiu de {max(hist):.0f} para {rpm:.0f} rpm"}
 
         # R9 salto de sinal (vai e volta em 1 amostra, sem mudança de comando/pedal)
         if len(self.win) >= 3 and running:

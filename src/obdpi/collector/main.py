@@ -90,8 +90,9 @@ class Collector:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         last = self.con.execute("SELECT MAX(ts) FROM sample").fetchone()[0] or 0
         self.clock = Clock(last)
+        self.boot_ts = self.clock.now()            # tudo gravado por este processo é >= boot_ts
         self.sig_ids = {r["key"]: r["id"] for r in self.con.execute("SELECT id, key FROM signal")}
-        self.limits = LimitsEngine([dict(r) for r in self.con.execute("SELECT * FROM baseline")])
+        self.limits = LimitsEngine([dict(r) for r in self.con.execute("SELECT * FROM baseline")], period_s=c["full_period_s"])
         self.throttle = ThrottleEngine(self.state.get("throttle"))
         self.session_id = None
         self.session_start = 0
@@ -166,7 +167,7 @@ class Collector:
             self.last_commit = time.monotonic()
 
     def apply_clock_offset(self, off: int) -> None:
-        start = self.session_start
+        start = self.boot_ts
         log.warning("relógio sincronizou: corrigindo %d ms desde %d", off, start)
         c = self.con
         c.execute("UPDATE sample SET ts = -(ts + ?) WHERE ts >= ?", (off, start))
@@ -177,8 +178,17 @@ class Collector:
             c.execute(f"UPDATE {t} SET {col} = {col} + ? WHERE {col} >= ?", (off, start))
         c.execute("UPDATE trip SET start_ts = start_ts + ?, end_ts = end_ts + ? WHERE start_ts >= ?", (off, off, start))
         c.execute("UPDATE session SET started_ts = started_ts + ? WHERE id=?", (off, self.session_id))
-        self.session_start += off
+        self.session_start += off if self.session_start else 0
+        self.boot_ts += off
         self.trip_start += off if self.trip_start else 0
+        if self.last_engine_ts:
+            self.last_engine_ts += off
+        if self.trip_live.get("last_ts"):
+            self.trip_live["last_ts"] += off
+        if self.pending_crank:
+            self.pending_crank["ts"] += off
+        self.value_ts = {k: v + off for k, v in self.value_ts.items()}
+        self.volt_hist = [(t + off, v) for t, v in self.volt_hist]
 
     # ------------------------------------------------------------------ conexão
     def make_transport(self):
@@ -198,8 +208,7 @@ class Collector:
             self.state.set("adapter_name", name)
         if not getattr(self, "_bt_reset_done", False):
             # ao iniciar, derruba qualquer enlace antigo (o clone ELM327 aceita só uma conexão e às vezes fica preso)
-            import subprocess
-            subprocess.run(["bluetoothctl", "disconnect", mac], capture_output=True, timeout=10)
+            bt._ctl("disconnect", mac, timeout=10)
             time.sleep(1)
             self._bt_reset_done = True
         return RfcommTransport(mac, self.state.get("rfcomm_channel", a["rfcomm_channel"]))
@@ -229,6 +238,14 @@ class Collector:
             if (base + 0x20) not in got:
                 break
             base += 0x20
+        if not sup:
+            raise EcuSilent("ECU não informou PIDs (ignição desligada / acordando)")
+        prev = {int(x, 16) for x in (self.state.get("last_probe") or {}).get("supported", [])}
+        if prev and len(sup) < len(prev):
+            log.warning("descoberta parcial (%d < %d PIDs): usando a união com a última", len(sup), len(prev))
+            sup |= prev
+        if not e.multi_pid and e.is_can:
+            e.multi_pid = e._probe_multi()
         self.supported = sup
         self.sweep_pids = sorted(p for p in sup if p in PID_LEN and p not in INFO_ONLY and p % 0x20 != 0)
         self.fast_pids = [p for p in self.fast_pids_cfg if p in sup]
@@ -291,9 +308,10 @@ class Collector:
         if rpm is not None and rpm >= self.engine_rpm:
             self.rpm_streak += 1
             self.last_engine_ts = ts
-            if not self.engine_on and self.rpm_streak >= 3:
-                self.engine_on = True
-                self.event("info", "motor_ligado")
+            if self.rpm_streak >= 3:
+                if not self.engine_on:
+                    self.engine_on = True
+                    self.event("info", "motor_ligado")
                 if not self.trip_id:
                     self.start_trip(ts)
         else:
@@ -333,7 +351,17 @@ class Collector:
         cold = self.values.get("ect")
         # o Pi caiu (energia) e voltou em < 3 min com o motor ligado: continua a mesma viagem
         last = self.con.execute("SELECT id, start_ts, end_ts, end_reason FROM trip ORDER BY start_ts DESC LIMIT 1").fetchone()
-        if last and last["end_reason"] in ("corte_de_energia", "sem_conexao") and ts - (last["end_ts"] or 0) < 180_000:
+        try:
+            uptime = float(open("/proc/uptime").read().split()[0])
+        except OSError:
+            uptime = time.monotonic()
+        run_time = self.values.get("run_time")
+        # motor ligado há mais tempo que o Pi → o Pi caiu no meio da viagem (o relógio sem NTP não mede o tempo desligado)
+        engine_before_pi = run_time is not None and run_time > uptime - 10
+        same_process = last and last["end_reason"] == "sem_conexao" and ts - (last["end_ts"] or 0) < 180_000
+        self.trip_merged = False
+        if last and last["end_reason"] in ("corte_de_energia", "sem_conexao") and (engine_before_pi or same_process):
+            self.trip_merged = True
             self.con.execute("UPDATE trip SET finalized=0, end_reason=NULL WHERE id=?", (last["id"],))
             self.trip_id, self.trip_start = last["id"], last["start_ts"]
             self.event("info", "viagem_continuada", f"viagem {last['id']} retomada após queda de {int((ts - last['end_ts']) / 1000)} s")
@@ -352,7 +380,7 @@ class Collector:
         if not self.trip_id:
             return
         self.con.execute("UPDATE trip SET end_ts=?, end_reason=? WHERE id=?", (self.last_engine_ts or self.clock.now(), reason, self.trip_id))
-        self.finalize_trip(self.trip_id, self.trip_alerts)
+        self.finalize_trip(self.trip_id, None if getattr(self, "trip_merged", False) else self.trip_alerts)
         s = self.con.execute("SELECT * FROM trip WHERE id=?", (self.trip_id,)).fetchone()
         crit = sum(1 for a in self.trip_alerts if a.severity == "crit")
         warn = sum(1 for a in self.trip_alerts if a.severity == "warn")
@@ -437,10 +465,15 @@ class Collector:
         for al in alerts:
             al.ts = al.ts or self.clock.now()
             # mesma regra nos últimos 30 min → atualiza a linha existente ("continua"), sem novo alerta
-            prev = self.con.execute("SELECT id, count, severity FROM alert WHERE rule=? AND COALESCE(ts_end, ts) > ? ORDER BY id DESC LIMIT 1",
-                                    (al.rule, al.ts - 30 * 60 * 1000)).fetchone()
+            prev = self.con.execute("SELECT id, count, severity FROM alert WHERE rule=? AND trip_id IS ? AND COALESCE(ts_end, ts) > ? ORDER BY id DESC LIMIT 1",
+                                    (al.rule, self.trip_id, al.ts - 30 * 60 * 1000)).fetchone()
             if prev:
-                sev = al.severity if SEV_ORDER[al.severity] > SEV_ORDER[prev["severity"]] else prev["severity"]
+                escalated = SEV_ORDER[al.severity] > SEV_ORDER[prev["severity"]]
+                sev = al.severity if escalated else prev["severity"]
+                if escalated:
+                    self.queue_push(f"{al.title} (piorou)", al.detail, sev)
+                    if self.trip_id:
+                        self.trip_alerts.append(al)
                 n = (prev["count"] or 1) + 1
                 self.con.execute("UPDATE alert SET count=?, ts_end=?, detail=?, value=?, severity=? WHERE id=?",
                                  (n, al.ts, al.detail, al.value, sev, prev["id"]))
@@ -497,7 +530,10 @@ class Collector:
                 if self.mil:
                     self.handle_alerts([Alert("dtc", "MIL", "crit", "Luz de injeção acendeu", "A ECU acendeu a luz de anomalia (MIL)", ts=ts)])
         for kind, mode in (("confirmed", 0x03), ("pending", 0x07)):
-            codes = set(dtcmod.parse(e.raw_mode(f"{mode:02X}"), mode, e.is_can))
+            msgs = e.raw_mode(f"{mode:02X}")
+            if not any(m and m[0] == mode + 0x40 for m in msgs):
+                continue                        # NO DATA / falha momentânea: não conclui que os códigos sumiram
+            codes = set(dtcmod.parse(msgs, mode, e.is_can))
             old = self.dtc_active.get(kind, set())
             for code in codes - old:
                 freeze = self.read_freeze() if kind == "confirmed" else None
@@ -591,6 +627,7 @@ class Collector:
         if a["state"] == "aguardando_parar":
             if spd == 0:
                 a["state"] = "pronto"
+                a["ready_ts"] = ts
             elif ts - a["armed_ts"] > 180_000:
                 a["state"] = "cancelado"
             a["last0"] = ts
@@ -598,6 +635,8 @@ class Collector:
         if a["state"] == "pronto":
             if spd == 0:
                 a["last0"] = ts
+                if ts - a.get("ready_ts", ts) > 300_000:
+                    a["state"] = "cancelado"      # armado e esquecido: libera a coleta normal
                 return
             a["state"] = "correndo"
             a["t0"] = (a["last0"] + ts) / 2          # largada entre a última leitura parada e a primeira em movimento
@@ -635,6 +674,9 @@ class Collector:
             self.accel_feed(ts, vals.get("speed"), vals.get("rpm"))
             self.update_engine(vals.get("rpm"), ts)
             self.trip_live_update(vals, ts)
+            if self.trip_id:
+                self.con.execute("INSERT OR REPLACE INTO fast_sample(ts, trip_id, rpm, speed) VALUES (?,?,?,?)",
+                                 (ts, self.trip_id, vals.get("rpm"), vals.get("speed")))
             return
         raw = self.read_pids(self.fast_pids or [0x0C])
         if not self.engine_on or (self.pending_crank and ts - self.pending_crank["ts"] < 4000):
@@ -642,15 +684,24 @@ class Collector:
             if bv is not None:
                 self.volt_hist = [(t, v) for t, v in self.volt_hist if ts - t < 20000] + [(ts, bv)]
                 self.values["batt"] = bv
+                self.value_ts["batt"] = ts
         if self.pending_crank and ts - self.pending_crank["ts"] >= 4000 and self.trip_id:
             pc = self.pending_crank
             dip = [v for t, v in self.volt_hist if pc["ts"] - 6000 <= t <= pc["ts"] + 4000]
-            self.con.execute("UPDATE trip SET rest_v=COALESCE(rest_v, ?), crank_v=COALESCE(crank_v, ?) WHERE id=?",
-                             (pc["rest"], min(dip) if dip else None, self.trip_id))
+            if pc["rest"] is not None and dip and min(dip) < pc["rest"] - 0.5:
+                self.con.execute("UPDATE trip SET rest_v=COALESCE(rest_v, ?), crank_v=COALESCE(crank_v, ?) WHERE id=?",
+                                 (pc["rest"], min(dip), self.trip_id))
             self.pending_crank = None
         vals: dict[str, float] = {}
         for pid, data in raw.items():
             vals.update(decode(pid, data))
+        if not vals:
+            self.empty_fast = getattr(self, "empty_fast", 0) + 1
+            if self.empty_fast >= 5:
+                self.empty_fast = 0
+                raise EcuSilent("ECU parou de responder (NO DATA)")
+            return
+        self.empty_fast = 0
         self.values.update(vals)
         for k in vals:
             self.value_ts[k] = ts
@@ -663,9 +714,12 @@ class Collector:
             spd = vals.get("speed") or 0
             vals["kml_inst"] = round(min(spd / lh, 99.0), 1) if lh > 0.2 and spd > 3 else None
             self.values.update({k: vals[k] for k in ("fuel_lh", "kml_inst")})
+            for k in ("fuel_lh", "kml_inst"):
+                self.value_ts[k] = ts
         g = self.gear(vals.get("speed"), vals.get("rpm"))
         vals["gear"] = g
         self.values["gear"] = g
+        self.value_ts["gear"] = ts
         self.update_engine(vals.get("rpm"), ts)
         self.trip_live_update(vals, ts)
         if self.engine_on or self.trip_id:
@@ -690,7 +744,9 @@ class Collector:
             self.value_ts[k] = ts
         allv = dict(self.values)
         allv["pedal_d_norm"] = self.throttle.pedal_norm(allv.get("pedal_d")) or 0
-        rows = [(self.sig_id(k), ts, x) for k, x in allv.items() if k != "pedal_d_norm" and x is not None]
+        fresh = ts - 2 * self.full_period * 1000
+        rows = [(self.sig_id(k), ts, x) for k, x in allv.items()
+                if k != "pedal_d_norm" and x is not None and self.value_ts.get(k, 0) >= fresh]
         self.con.executemany("INSERT OR REPLACE INTO sample(signal_id, ts, value) VALUES (?,?,?)", rows)
         expected = {k for p in self.sweep_pids if p not in self.fast_pids for k in decode(p, b"\x80" * 8)}
         self.handle_alerts(self.limits.evaluate(allv, self.engine_on, ts) +
@@ -778,8 +834,7 @@ class Collector:
             except (TransportError, TimeoutError, OSError, ElmError) as e:
                 fails += 1
                 if self.cfg["adapter"]["transport"] == "rfcomm" and fails >= 2 and self.state.get("adapter_mac"):
-                    import subprocess
-                    subprocess.run(["bluetoothctl", "disconnect", self.state.get("adapter_mac")], capture_output=True, timeout=10)
+                    bt._ctl("disconnect", self.state.get("adapter_mac"), timeout=10)
                 self.elm = None
                 self.set_state("desconectado", str(e)[:120])
                 self.maybe_commit(force=True)

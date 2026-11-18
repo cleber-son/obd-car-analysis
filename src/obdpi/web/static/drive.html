@@ -278,7 +278,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     $("hint").textContent = hint;
     lastD = d; pushHist(d); if (graphMode) drawGraphs(); else renderTiles(d);
     // alerta recente (10 min)
-    const a = (d.alerts || []).find((x) => Date.now() - x.ts < 10 * 60e3 && x.sev !== "info");
+    const a = (d.alerts || []).find((x) => d.ts - (x.ts_end || x.ts) < 10 * 60e3 && x.sev !== "info");
     const al = $("alert"); al.classList.toggle("on", !!a);
     if (a) { al.style.setProperty("--s", a.sev === "crit" ? "var(--bad)" : "var(--warn)"); al.innerHTML = `⚠ ${a.title}<span>${a.detail}</span>`; }
     $("ftrip").textContent = d.dtc?.confirmed?.length ? "DTC: " + d.dtc.confirmed.join(" ") : d.mil ? "Luz de injeção acesa" : "Sem códigos de falha";

@@ -128,3 +128,25 @@ Bug corrigido nos testes: cooldown das regras da borboleta suprimia o 1º alerta
   alertas repetidos agrupados ("continua N×"); sensores com faixa normal escrita, verde/vermelho; gráfico individual de
   qualquer sensor (tempo real 15 min + histórico 1 h–30 dias); tema Escuro/Claro/Auto (padrão escuro).
 - Coleta: todos os sensores a cada **5 s** (era 20 s), principais o mais rápido possível, DTCs a cada 20 s.
+
+## 2026-11-18 — Diagnósticos, relatórios, IA, rede e revisão do Fable
+- Novos: diagnóstico ar × MAF (speed-density, veredito por viagem), bateria na partida, termostática, monitores (PID 01),
+  nota de direção econômica, relatórios semanal/mensal (painel + push automático via `obd-maint`, a cada 1 h verifica se fechou período),
+  botão **Analisar dados** (Claude Opus 5.5, streaming + adaptive thinking + fallback automático; chave em `/etc/obd/secrets.toml`),
+  modo gráfico no modo direção, viagem retomada quando o Pi cai com o motor ligado.
+- Rede: perfil `hotspot-iphone` com IP fixo 172.20.10.14 e serviço `obd-netprefer` que troca para o hotspot quando ele aparece.
+- **Revisão pelo Claude Fable** (somente leitura, 3 bugs reproduzidos). Corrigido:
+  1. sincronização do NTP antes da 1ª sessão deslocava o banco inteiro → correção a partir de `boot_ts`;
+  2. relógio sem NTP fazia juntar viagens de dias diferentes → junção só se `run_time` da ECU > uptime do Pi;
+  3. queda do BT > 120 s deixava o resto da viagem sem `trip_id` → nova viagem se o motor está ligado e não há viagem;
+  4. valores antigos gravados como novos com NO DATA → só grava sinais lidos recentemente; 5 ciclos vazios → `EcuSilent`;
+  5. descoberta parcial de PIDs → une com a última descoberta, refaz teste multi-PID;
+  6. alertas agrupados só na mesma viagem e push quando a severidade sobe;
+  7. resposta vazia do modo 03/07 não "apaga" códigos;
+  8. 0–100: estado "pronto" expira em 5 min e grava amostras durante o teste;
+  9. `TimeoutExpired` do bluetoothctl escapava e derrubava o serviço;
+  10. banners de alerta comparavam a hora do Pi com a do celular.
+  Ruído: ajuste curto fixo do ECU é ignorado (valor sem variação), limites de tensão ajustados à carga controlada (ELD) da Honda,
+  estol só confirmado se a ECU continuar respondendo (desligar a chave não alerta), R3b exige 3 leituras, "sensor parou" só
+  para sinais que já responderam, contagens escaladas para o período de 5 s.
+- Testado: 9 testes unitários + 70 s contra o emulador no Pi sem erros; instalado no carro e coletando.
