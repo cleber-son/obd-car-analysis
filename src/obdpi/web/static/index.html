@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -8,17 +8,21 @@
 <meta name="apple-mobile-web-app-title" content="Civic OBD">
 <meta name="theme-color" content="#151b24">
 <title>Civic OBD</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("theme")||"dark"}catch(e){}</script>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23ff6b3d'/%3E%3Ccircle cx='16' cy='16' r='8' fill='%23151b24'/%3E%3C/svg%3E">
 </head>
 <body>
 <header class="top"><div class="in">
   <div class="brand"><div class="logo"><i></i></div><div><h1>Civic 1.8 Flex</h1><small>2008 · R18A · Manual</small></div></div>
+  <div class="theme" id="theme" role="group" aria-label="Tema"><button type="button" data-t="dark">Escuro</button><button type="button" data-t="light">Claro</button><button type="button" data-t="auto">Auto</button></div>
+  <a class="btn" href="/dirigir" style="background:var(--speed);color:#04121a;border:0">▶ Modo direção</a>
   <div class="chips" id="chips"><span class="chip"><span class="dot" style="--c:var(--muted)"></span>Conectando ao Pi…</span></div>
   <nav class="tabs" id="tabs">
     <a href="#vivo" data-v="vivo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 14l4-4"/><path d="M3.5 18a9 9 0 1 1 17 0"/></svg>Ao vivo</a>
     <a href="#borboleta" data-v="borboleta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M7 17L17 7"/></svg>Borboleta</a>
     <a href="#viagens" data-v="viagens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19l5-14h6l5 14"/><path d="M12 9v2M12 14v2"/></svg>Viagens</a>
+    <a href="#consumo" data-v="consumo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M14 9h2a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V8l-3-3"/><path d="M7 7h4v4H7z"/></svg>Consumo</a>
     <a href="#alertas" data-v="alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>Alertas<span class="badge" id="badge" hidden></span></a>
     <a href="#sensores" data-v="sensores"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Sensores</a>
     <a href="#relatorio" data-v="relatorio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Relatório</a>
@@ -31,6 +35,7 @@
 
   <!-- AO VIVO -->
   <section class="view" id="v-vivo">
+    <div class="card engine" id="engineCard"></div>
     <div class="gauges" id="gauges"></div>
     <div class="grid2">
       <div class="card">
@@ -72,10 +77,41 @@
 
   <!-- VIAGENS -->
   <section class="view" id="v-viagens" hidden>
+    <div class="grid2e">
+      <div class="card"><h2>Motor ligado por dia</h2><div class="legend" style="margin:6px 0 10px"><span style="--c:var(--rpm)">Horas ligado</span></div>
+        <svg class="chart" id="engDayChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+      <div class="card"><h2>Linha do tempo (14 dias)</h2><div class="lbl" style="margin:4px 0 10px">Cada barra é um período com motor ligado</div>
+        <div id="engTimeline" class="timeline"></div></div>
+    </div>
     <div class="card"><h2>Viagens</h2><div class="tbl" style="margin-top:10px"><table>
       <thead><tr><th>Quando</th><th>Duração</th><th>Km</th><th>Vel. média</th><th>Temp. máx</th><th>Alertas</th><th>Borboleta</th></tr></thead>
       <tbody id="tripRows"></tbody></table></div></div>
     <div id="tripDetail" class="view"></div>
+  </section>
+
+  <!-- CONSUMO -->
+  <section class="view" id="v-consumo" hidden>
+    <div class="card fillcard">
+      <div class="row-head"><div><h2>Abastecimento</h2><div class="lbl" style="margin-top:4px" id="fillHint">Toque ao encher o tanque</div></div>
+        <button class="btn big" type="button" id="fillBtn">⛽ Tanque cheio</button></div>
+      <form id="fillForm" hidden style="display:grid;gap:10px;margin-top:14px">
+        <div class="seg" role="radiogroup" aria-label="Combustível">
+          <label><input type="radio" name="fuel" value="gasolina" id="fuelG" checked><span>Gasolina</span></label>
+          <label><input type="radio" name="fuel" value="etanol" id="fuelE"><span>Etanol</span></label></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="number" inputmode="decimal" step="0.01" id="fillL" placeholder="Litros (bomba)" aria-label="Litros" style="flex:1 1 120px">
+          <input type="number" inputmode="decimal" step="0.01" id="fillP" placeholder="R$ por litro" aria-label="Preço por litro" style="flex:1 1 120px"></div>
+        <div style="display:flex;gap:8px"><button class="btn big" type="submit" id="fillSave">Salvar abastecimento</button><button class="btn" type="button" id="fillCancel">Cancelar</button></div>
+        <div class="muted" style="font-size:12px">Litros e preço são opcionais, mas com os litros o consumo real (km/L) fica exato e o estimado é recalibrado.</div>
+      </form>
+      <div class="stats" id="fuelStats" style="margin-top:14px"></div>
+    </div>
+    <div class="grid2e">
+      <div class="card"><h2>Consumo real por tanque</h2><div class="lbl" style="margin:4px 0 10px">km/L medido entre dois tanques cheios</div><svg class="chart" id="fuelFillChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+      <div class="card"><h2>Consumo estimado por viagem</h2><div class="lbl" style="margin:4px 0 10px">km/L calculado pelo fluxo de ar (MAF)</div><svg class="chart" id="fuelTripChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+    </div>
+    <div class="card"><h2>Histórico de abastecimentos</h2><div class="tbl" style="margin-top:10px"><table>
+      <thead><tr><th>Data</th><th>Combustível</th><th>Litros</th><th>R$/L</th><th>Km desde o anterior</th><th>km/L real</th><th>Mistura no tanque</th></tr></thead><tbody id="fillRows"></tbody></table></div></div>
   </section>
 
   <!-- ALERTAS -->
@@ -128,6 +164,17 @@
     <div class="card"><h2>Eventos do sistema</h2><div class="tbl" style="margin-top:10px"><table><tbody id="sysEvents"></tbody></table></div></div>
   </section>
 </main>
+<div class="modal" id="sigModal" hidden role="dialog" aria-modal="true" aria-labelledby="mTitle">
+  <div class="sheet card">
+    <div class="row-head"><div><h2 id="mTitle"></h2><div class="lbl" id="mSub" style="margin-top:4px"></div></div><button class="btn" type="button" id="mClose" aria-label="Fechar">✕</button></div>
+    <div class="mval"><b class="num" id="mVal">—</b><span class="pill" id="mPill"></span></div>
+    <div class="seg small" role="tablist"><label><input type="radio" name="mmode" value="rt" checked><span>Tempo real</span></label><label><input type="radio" name="mmode" value="hist"><span>Histórico</span></label></div>
+    <div id="mRange" hidden style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    <svg class="chart" id="mChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg>
+    <div class="stats" id="mStats"></div>
+    <div id="mAdv"></div>
+  </div>
+</div>
 <script src="/static/app.js"></script>
 </body>
 </html>

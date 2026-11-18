@@ -22,7 +22,9 @@ class ThrottleEngine:
         self.pedal_max = s.get("pedal_max", 0.0)
         self.off_n = s.get("off_n", 0)
         self.off_mean = s.get("off_mean", 0.0)
-        self.reg = s.get("reg", [0, 0.0, 0.0, 0.0, 0.0])      # n, sx, sy, sxx, sxy (pedal_e ~ pedal_d)
+        # regressões lineares aprendidas entre sensores redundantes: n, sx, sy, sxx, sxy
+        self.regs = s.get("regs") or {"R2": s.get("reg", [0, 0.0, 0.0, 0.0, 0.0]), "R2t": [0, 0.0, 0.0, 0.0, 0.0]}
+        self.r_streak = {"R2": 0, "R2t": 0}
         self.win: deque[dict] = deque(maxlen=40)
         self.r1_streak = 0
         self.r2_streak = 0
@@ -34,7 +36,7 @@ class ThrottleEngine:
     # ---------- estado persistente ----------
     def state(self) -> dict:
         return {"pedal_min": self.pedal_min, "pedal_max": self.pedal_max, "off_n": self.off_n,
-                "off_mean": self.off_mean, "reg": self.reg}
+                "off_mean": self.off_mean, "regs": self.regs}
 
     def pedal_norm(self, pedal: float | None) -> float | None:
         if pedal is None:
@@ -85,22 +87,26 @@ class ThrottleEngine:
                         self.r1_streak = 0
                         self.off_mean += (diff - self.off_mean) / 500
 
-        # R2 pedal D × E (regressão linear aprendida)
-        if pd is not None and pe is not None:
-            n, sx, sy, sxx, sxy = self.reg
-            if n >= self.LEARN_MIN and (sxx - sx * sx / n) > 1e-6:
+        # R2 pedal D × E e R2t borboleta A × B (sensores redundantes; precursores de P2138 / P2135)
+        for rule, xk, yk, title, code in (("R2", "pedal_d", "pedal_e", "Sensores do pedal divergentes", "P2138"),
+                                          ("R2t", "tps", "tps_b", "Sensores da borboleta A/B divergentes", "P2135")):
+            x, y = s.get(xk), s.get(yk)
+            if x is None or y is None:
+                continue
+            n, sx, sy, sxx, sxy = self.regs[rule]
+            if n >= self.LEARN_MIN and (sxx - sx * sx / n) > 1e-6 and (sxx / n - (sx / n) ** 2) > 4:
                 a = (sxy - sx * sy / n) / (sxx - sx * sx / n)
                 b = (sy - a * sx) / n
-                res = abs(pe - (a * pd + b))
+                res = abs(y - (a * x + b))
                 if res > 4:
-                    self.r2_streak += 1
-                    if self.r2_streak >= 2:
-                        out += self._emit("R2", "crit" if res > 8 else "warn", "Sensores do pedal divergentes",
-                                          f"Pedal E {pe:.1f}% esperado {a * pd + b:.1f}% (desvio {res:.1f} pp) — precursor de P2138", ts, "pedal_e", res)
+                    self.r_streak[rule] += 1
+                    if self.r_streak[rule] >= 2:
+                        out += self._emit(rule, "crit" if res > 8 else "warn", title,
+                                          f"{yk} {y:.1f}% esperado {a * x + b:.1f}% (desvio {res:.1f} pp) — precursor de {code}", ts, yk, res)
                 else:
-                    self.r2_streak = 0
+                    self.r_streak[rule] = 0
             if n < 20000:
-                self.reg = [n + 1, sx + pd, sy + pe, sxx + pd * pd, sxy + pd * pe]
+                self.regs[rule] = [n + 1, sx + x, sy + y, sxx + x * x, sxy + x * y]
 
         # R3 borboleta travada / modo de emergência
         w = [x for x in list(self.win)[-10:] if x.get("tps") is not None and x.get("pedal_norm") is not None]

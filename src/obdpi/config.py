@@ -22,7 +22,7 @@ DEFAULTS: dict = {
     "collector": {
         "full_period_s": 20,
         "fast_period_s": 1.0,
-        "fast_pids": ["0C", "11", "49", "4C", "0D", "0B", "45", "4A"],
+        "fast_pids": ["0C", "11", "49", "4C", "0D", "0B", "45", "4A", "47", "10", "44", "04"],
         "dtc_period_s": 20,
         "commit_interval_s": 5,
         "engine_on_rpm": 400,

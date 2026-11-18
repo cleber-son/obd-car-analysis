@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Civic Dirigir">
+<meta name="theme-color" content="#05070a">
+<title>Civic Dirigir</title>
+<style>
+/* Painel de direção — iPhone 17 Pro Max (440×956 pt), retrato e paisagem. Fundo preto (OLED, não ofusca à noite). */
+:root {
+  --bg: #05070a; --tile: #0f141b; --line: #1d2633; --fg: #f2f5f9; --muted: #7d8899;
+  --rpm: #ff6b3d; --speed: #2ec8ff; --temp: #ffb020; --volt: #8b7bff; --o2: #2ee59d; --pedal: #ff4fa3;
+  --ok: #2ee59d; --warn: #ffb020; --bad: #ff4d5e;
+  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  --disp: -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: var(--disp); overflow: hidden; -webkit-user-select: none; user-select: none }
+.app { height: 100%; display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px;
+  padding: calc(env(safe-area-inset-top, 0px) + 6px) max(14px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 8px) max(14px, env(safe-area-inset-left, 0px)) }
+.top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); gap: 8px }
+.top a { color: var(--muted); text-decoration: none; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px }
+.st { display: inline-flex; align-items: center; gap: 6px } .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--muted)) }
+
+/* barra de rotação com luz de troca */
+.rpmbar { position: relative; height: 18px; border-radius: 9px; background: var(--tile); overflow: hidden; border: 1px solid var(--line) }
+.rpmbar i { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--o2), var(--speed) 45%, var(--temp) 70%, var(--bad)); transition: width .4s ease-out }
+.rpmbar .ticks { position: absolute; inset: 0; display: flex; justify-content: space-between; padding: 0 4px; font: 600 9px var(--mono); color: #000a; align-items: center; pointer-events: none }
+.rpmbar.shift { animation: shift .35s steps(2) infinite } @keyframes shift { 50% { border-color: var(--bad); box-shadow: 0 0 18px var(--bad) } }
+
+/* núcleo: velocidade + marcha + rpm */
+.core { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; min-height: 0 }
+.spd { display: grid; justify-items: start }
+.spd b { font: 800 clamp(120px, 38vw, 220px)/0.86 var(--disp); letter-spacing: -0.04em; font-variant-numeric: tabular-nums }
+.spd span { font: 600 18px var(--disp); color: var(--muted); margin-top: 4px }
+.side { display: grid; gap: 10px; justify-items: end }
+.gear { width: 96px; height: 96px; border-radius: 24px; border: 2px solid var(--line); display: grid; place-items: center; font: 800 58px var(--disp); background: var(--tile) }
+.gear small { display: block; font: 600 10px var(--disp); color: var(--muted); letter-spacing: .1em; margin-top: -14px }
+.rpmnum { text-align: right } .rpmnum b { font: 700 34px var(--mono); color: var(--rpm); font-variant-numeric: tabular-nums } .rpmnum span { display: block; font-size: 12px; color: var(--muted) }
+.hint { font: 700 13px var(--disp); color: var(--ok); text-align: right; min-height: 16px }
+
+/* tiles */
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-content: start; min-height: 0 }
+.t { background: var(--tile); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; min-width: 0; border-top: 3px solid var(--c, var(--line)) }
+.t .l { font: 600 10px var(--disp); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.t .v { font: 700 24px var(--mono); font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap } .t .v small { font: 600 11px var(--disp); color: var(--muted); margin-left: 2px }
+.t .s { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.t.wide { grid-column: span 2 }
+.t.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, var(--tile)) } .t.bad .v { color: var(--bad) }
+.t.warn { border-color: var(--warn) } .t.warn .v { color: var(--warn) }
+.lam { position: relative; height: 8px; border-radius: 4px; margin-top: 6px; background: linear-gradient(90deg, var(--temp), var(--o2) 45% 55%, var(--speed)) }
+.lam i { position: absolute; top: -4px; width: 4px; height: 16px; border-radius: 2px; background: var(--fg); transform: translateX(-2px); transition: left .4s }
+
+.alert { display: none; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--s, var(--bad)) 18%, var(--tile)); border: 1px solid var(--s, var(--bad)); font: 700 15px var(--disp) }
+.alert.on { display: block } .alert span { display: block; font: 500 12px var(--disp); color: var(--muted); margin-top: 2px }
+.foot { display: flex; justify-content: space-between; font: 600 11px var(--mono); color: var(--muted) }
+
+/* paisagem (no suporte do carro) */
+@media (orientation: landscape) {
+  .app { grid-template-columns: 1.05fr 1fr; grid-template-rows: auto auto 1fr auto; column-gap: 16px }
+  .top, .rpmbar, .alert { grid-column: 1 / -1 } .core { grid-row: 3 } .tiles { grid-row: 3; grid-template-columns: repeat(3, minmax(0, 1fr)) }
+  .spd b { font-size: clamp(110px, 26vh, 200px) } .foot { grid-column: 1 / -1 }
+  .t .v { font-size: 20px }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><a href="/">Painel</a></div>
+  <div class="rpmbar" id="rpmbar"><i id="rpmfill"></i><div class="ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></div>
+  <div class="alert" id="alert"></div>
+  <div class="core">
+    <div class="spd"><b id="spd">0</b><span>km/h</span></div>
+    <div class="side">
+      <div class="gear"><div><span id="gear">–</span><small>MARCHA</small></div></div>
+      <div class="rpmnum"><b id="rpm">0</b><span>rpm</span></div>
+      <div class="hint" id="hint"></div>
+    </div>
+  </div>
+  <div class="tiles" id="tiles"></div>
+  <div class="foot"><span id="ftrip"></span><span id="fage"></span></div>
+</div>
+<script>
+(() => {
+  const $ = (s) => document.getElementById(s);
+  const nf = (v, d = 0) => v == null || Number.isNaN(+v) ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d });
+  const dur = (s) => s == null ? "—" : s >= 3600 ? `${Math.floor(s / 3600)}h${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}` : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  const TILES = [
+    { id: "kml", l: "Consumo agora", c: "--o2" }, { id: "kmlavg", l: "Média viagem", c: "--o2" }, { id: "avg", l: "Vel. média", c: "--speed" },
+    { id: "lam", l: "Oxigênio (λ)", c: "--o2", wide: true }, { id: "timing", l: "Avanço", c: "--volt" },
+    { id: "ect", l: "Motor", c: "--temp" }, { id: "batt", l: "Bateria", c: "--volt" }, { id: "load", l: "Carga", c: "--rpm" },
+    { id: "km", l: "Km viagem", c: "--speed" }, { id: "time", l: "Tempo", c: "--speed" }, { id: "tps", l: "Borboleta", c: "--pedal" },
+  ];
+  $("tiles").innerHTML = TILES.map((t) => `<div class="t${t.wide ? " wide" : ""}" id="t-${t.id}" style="--c:var(${t.c})"><div class="l">${t.l}</div><div class="v" id="v-${t.id}">—</div><div class="s" id="s-${t.id}"></div>${t.id === "lam" ? '<div class="lam"><i id="lamdot"></i></div>' : ""}</div>`).join("");
+  const set = (id, v, unit = "", sub = "", cls = "") => { $("v-" + id).innerHTML = `${v}<small>${unit}</small>`; $("s-" + id).textContent = sub; $("t-" + id).className = "t" + ($("t-" + id).classList.contains("wide") ? " wide" : "") + (cls ? " " + cls : ""); };
+  const stCls = (d, k) => { const s = d.status?.[k]?.[0]; return s === "crit" ? "bad" : s === "warn" ? "warn" : ""; };
+
+  let last = 0;
+  function render(d) {
+    const v = d.values || {}, tr = d.trip || {};
+    last = Date.now();
+    const on = d.engine_on, coll = d.state === "coletando";
+    $("dot").style.setProperty("--c", on ? "var(--ok)" : coll ? "var(--warn)" : "var(--bad)");
+    $("state").textContent = on ? "Motor ligado" : coll ? "Ignição ligada" : d.state === "ecu_silenciosa" ? "Ignição desligada" : "OBD desconectado";
+    $("spd").textContent = nf(v.speed);
+    const rpm = v.rpm || 0;
+    $("rpm").textContent = nf(rpm);
+    $("rpmfill").style.width = Math.min(100, rpm / 7000 * 100) + "%";
+    $("rpmbar").classList.toggle("shift", rpm > 6200);
+    $("gear").textContent = v.gear == null ? "–" : v.gear === 0 ? "N" : v.gear;
+    // dica de economia (manual 5 marchas)
+    let hint = "";
+    if (v.gear && v.gear < 5 && rpm > 2800 && (v.load ?? 100) < 55) hint = "↑ Suba a marcha";
+    else if (v.gear && v.gear > 1 && rpm < 1300 && (v.load ?? 0) > 80) hint = "↓ Reduza a marcha";
+    $("hint").textContent = hint;
+    set("kml", v.kml_inst != null ? nf(v.kml_inst, 1) : v.fuel_lh != null ? nf(v.fuel_lh, 1) : "—", v.kml_inst != null ? "km/L" : "L/h", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" : "");
+    set("kmlavg", nf(tr.kml, 1), "km/L", tr.fuel_l ? nf(tr.fuel_l, 2) + " L" + (tr.cost ? " · R$ " + nf(tr.cost, 2) : "") : "");
+    set("avg", nf(tr.avg_moving ?? tr.avg_speed), "km/h", tr.max_speed ? "máx " + nf(tr.max_speed) : "");
+    const lam = v.o2c1_lambda;
+    const lamTxt = lam == null ? "" : lam < 0.97 ? "rica" : lam > 1.03 ? (lam > 1.9 ? "corte de combustível" : "pobre") : "ideal";
+    set("lam", nf(lam, 2), "", lam == null ? "" : `mistura ${lamTxt} · alvo ${nf(v.lambda_cmd, 2)}`, stCls(d, "o2c1_lambda"));
+    $("lamdot") && ($("lamdot").style.left = (lam == null ? 50 : Math.max(0, Math.min(100, (lam - 0.8) / 0.4 * 100))) + "%");
+    set("timing", nf(v.timing, 1), "°", "");
+    set("ect", nf(v.ect), "°C", v.iat != null ? "ar " + nf(v.iat) + " °C" : "", stCls(d, "ect"));
+    set("batt", nf(v.batt, 1), "V", on ? "carga 13,5–14,7" : "", stCls(d, "batt"));
+    set("load", nf(v.load), "%", v.map != null ? "MAP " + nf(v.map) + " kPa" : "", stCls(d, "load"));
+    set("km", nf(tr.km, 1), "km", "");
+    set("time", dur(tr.elapsed_s), "", tr.moving_s ? "rodando " + dur(tr.moving_s) : "");
+    set("tps", nf(v.tps, 1), "%", v.tps_cmd != null ? "cmd " + nf(v.tps_cmd, 1) + "%" : "");
+    // alerta recente (10 min)
+    const a = (d.alerts || []).find((x) => Date.now() - x.ts < 10 * 60e3 && x.sev !== "info");
+    const al = $("alert"); al.classList.toggle("on", !!a);
+    if (a) { al.style.setProperty("--s", a.sev === "crit" ? "var(--bad)" : "var(--warn)"); al.innerHTML = `⚠ ${a.title}<span>${a.detail}</span>`; }
+    $("ftrip").textContent = d.dtc?.confirmed?.length ? "DTC: " + d.dtc.confirmed.join(" ") : d.mil ? "Luz de injeção acesa" : "Sem códigos de falha";
+  }
+  setInterval(() => {
+    $("clock").textContent = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const age = (Date.now() - last) / 1000;
+    $("fage").textContent = last ? (age > 5 ? `sem dados há ${Math.round(age)} s` : "ao vivo") : "";
+  }, 1000);
+
+  let es;
+  const connect = () => { try { es?.close(); } catch { } es = new EventSource("/api/stream"); es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch (x) { console.error(x); } }; };
+  connect();
+  document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else { connect(); lock(); } });
+  // manter a tela acesa (quando o navegador permitir)
+  let wl = null;
+  async function lock() { try { if ("wakeLock" in navigator && !wl) { wl = await navigator.wakeLock.request("screen"); wl.addEventListener("release", () => { wl = null; }); } } catch { } }
+  lock(); document.addEventListener("click", lock, { once: true });
+})();
+</script>
+</body>
+</html>

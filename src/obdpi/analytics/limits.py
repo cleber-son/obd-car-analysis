@@ -31,7 +31,8 @@ RULES = [
     ("fuel_level", "any", 10, None, 5, None, 3, "Combustível na reserva"),
 ]
 
-STUCK_O2 = "o2s1_v"   # sonda deve oscilar em malha fechada
+STUCK_O2 = "o2s1_v"
+SEVN = {"ok": 0, "info": 0, "warn": 1, "crit": 2}   # sonda deve oscilar em malha fechada
 
 
 def total_trim(v: dict) -> float | None:
@@ -115,12 +116,20 @@ class LimitsEngine:
         if tt is not None and "warm" in ctx and abs(tt) > 25:
             alerts.append(Alert("limits", "fuel_trim_total", "warn", "Mistura muito " + ("pobre" if tt > 0 else "rica"),
                                 f"STFT+LTFT = {tt:+.1f}% (entrada falsa de ar, bico, sonda ou combustível)", "ltft1", tt, ts))
-        # sonda O2 parada em malha fechada
-        if "warm" in ctx and STUCK_O2 in v and v.get("fuel_status", 2) & 0x02:
-            self.o2_hist = (self.o2_hist + [v[STUCK_O2]])[-6:]
-            if len(self.o2_hist) == 6 and max(self.o2_hist) - min(self.o2_hist) < 0.1:
-                alerts.append(Alert("limits", "o2_stuck", "warn", "Sonda lambda sem oscilar",
-                                    f"B1S1 parada em ~{self.o2_hist[-1]:.2f} V por 2 min", STUCK_O2, self.o2_hist[-1], ts))
+        # sonda de oxigênio: convencional (V) deve oscilar; de faixa larga (λ, caso do Civic R18) não pode saturar
+        closed_loop = int(v.get("fuel_status", 0)) & 0x02
+        if "warm" in ctx and closed_loop:
+            if STUCK_O2 in v:
+                self.o2_hist = (self.o2_hist + [v[STUCK_O2]])[-6:]
+                if len(self.o2_hist) == 6 and max(self.o2_hist) - min(self.o2_hist) < 0.1:
+                    alerts.append(Alert("limits", "o2_stuck", "warn", "Sonda lambda sem oscilar",
+                                        f"B1S1 parada em ~{self.o2_hist[-1]:.2f} V por 2 min", STUCK_O2, self.o2_hist[-1], ts))
+            lam = v.get("o2c1_lambda")
+            if lam is not None:
+                self.o2_hist = (self.o2_hist + [lam])[-3:]
+                if len(self.o2_hist) == 3 and (min(self.o2_hist) > 1.25 or max(self.o2_hist) < 0.8):
+                    alerts.append(Alert("limits", "afr_extreme", "warn", "Mistura fora do lambda 1 em malha fechada",
+                                        f"Sonda de faixa larga em λ {lam:.2f} por 1 min ({'pobre' if lam > 1 else 'rica'})", "o2c1_lambda", lam, ts))
         # linha de base aprendida
         for c in ("idle_warm", "cruise"):
             if c not in ctx:
@@ -147,18 +156,49 @@ class LimitsEngine:
                     w.add(x)
         return alerts
 
+    def status(self, v: dict, engine_on: bool) -> dict:
+        """Estado instantâneo de cada sinal para o painel: {chave: [sev, motivo, faixa_normal]}."""
+        ctx = context_of(v, engine_on)
+        out: dict = {}
+        for (sig, c, wl, wh, cl, ch, _need, title) in RULES:
+            x = v.get(sig)
+            if x is None or c not in ctx:
+                continue
+            rng = f"{wl if wl is not None else '…'} a {wh if wh is not None else '…'}"
+            sev = "crit" if ((cl is not None and x < cl) or (ch is not None and x > ch)) else \
+                  "warn" if ((wl is not None and x < wl) or (wh is not None and x > wh)) else "ok"
+            prev = out.get(sig)
+            if not prev or SEVN[sev] > SEVN[prev[0]]:
+                out[sig] = [sev, title if sev != "ok" else "", rng, f"{sig}:{c}"]
+        for c in ("idle_warm", "cruise"):
+            if c not in ctx:
+                continue
+            for sig, x in v.items():
+                w = self.base.get(f"{sig}@{c}")
+                if x is None or not w or w.n < self.MIN_BASELINE or w.std <= 0:
+                    continue
+                z = (x - w.mean) / max(w.std, abs(w.mean) * 0.02, 0.5)
+                hab = f"habitual {w.mean:.1f} ± {w.std:.1f}"
+                if sig not in out:
+                    out[sig] = ["ok", "", hab, f"z:{sig}@{c}"]
+                if abs(z) > self.Z_WARN and out[sig][0] == "ok":
+                    out[sig] = ["warn", "Fora do comportamento habitual", hab, f"z:{sig}@{c}"]
+        return out
+
     def check_missing(self, expected: set[str], got: dict, ts: int, engine_on: bool) -> list[Alert]:
         out = []
         if not engine_on:
             return out
         for s in expected:
+            if s.endswith("_trim") or s.endswith("_ma"):
+                continue                      # valores opcionais (0xFF = não usado) — não é sensor sumindo
             if s in got:
                 self.missing[s] = 0
             else:
                 self.missing[s] += 1
-                if self.missing[s] == 5:
+                if self.missing[s] == 10:
                     out.append(Alert("limits", f"missing:{s}", "warn", "Sensor parou de responder",
-                                     f"{s} sem resposta em 5 leituras seguidas", s, None, ts))
+                                     f"{s} sem resposta em 10 leituras seguidas", s, None, ts))
         return out
 
     def baseline_rows(self):

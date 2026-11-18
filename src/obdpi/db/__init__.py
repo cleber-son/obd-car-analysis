@@ -34,6 +34,20 @@ def init(path: str) -> sqlite3.Connection:
             p.rename(p.with_name(f"{p.name}.corrompido-{int(time.time())}"))
     con = connect(path)
     con.executescript(SCHEMA)
+    migrate(con)
     con.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version','1')")
     con.commit()
     return con
+
+
+def _add_col(con, table, col, decl):
+    cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+    if col not in cols:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+
+def migrate(con) -> None:
+    """Migrações aditivas (colunas novas em tabelas antigas)."""
+    _add_col(con, "fast_sample", "fuel_lh", "REAL")      # consumo instantâneo estimado (L/h)
+    _add_col(con, "trip", "fuel_l", "REAL")
+    _add_col(con, "trip", "km_l", "REAL")

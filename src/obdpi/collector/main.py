@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .. import __version__, config, db, notify
 from ..analytics import SEV_ORDER, Alert
+from ..analytics import fuel as fuelmod
 from ..analytics.limits import LimitsEngine
 from ..analytics.throttle import ThrottleEngine, trip_score
 from ..elm.elm327 import ELM327, EcuSilent, ElmError, ElmNeedsReset
@@ -26,7 +27,7 @@ from . import bt
 
 log = logging.getLogger("collector")
 
-FAST_COLS = ("rpm", "speed", "map", "tps", "tps_rel", "tps_b", "tps_cmd", "pedal_d", "pedal_e")
+FAST_COLS = ("rpm", "speed", "map", "tps", "tps_rel", "tps_b", "tps_cmd", "pedal_d", "pedal_e", "fuel_lh")
 
 
 def sd_notify(msg: str) -> None:
@@ -116,6 +117,9 @@ class Collector:
         self.last_dtc = 0.0
         self.last_batt_store = 0.0
         self.ecu_info: dict = {}
+        self.fuel_mix, self.fuel_calib = 0.0, 1.0
+        self.trip_live = {"km": 0.0, "fuel_l": 0.0, "moving_s": 0.0, "max_speed": 0, "last_ts": None}
+        self.load_fuel()
         self.finalize_open_trips()
         self._load_dtc_state()
         threading.Thread(target=self._notifier_loop, daemon=True).start()
@@ -271,7 +275,32 @@ class Collector:
         if self.trip_id and not self.engine_on and ts - self.last_engine_ts > self.trip_end_s * 1000:
             self.end_trip("motor_desligado")
 
+    # relação km/h por 1000 rpm de cada marcha — Civic 8ª geração 1.8 manual (5 marchas), pneu 205/55 R16
+    GEAR_KMH_PER_KRPM = {1: 8.83, 2: 14.84, 3: 22.46, 4: 29.26, 5: 38.16}
+
+    def gear(self, speed, rpm) -> int | None:
+        if not speed or not rpm or speed < 5 or rpm < 700:
+            return None
+        r = speed / (rpm / 1000)
+        g, ref = min(self.GEAR_KMH_PER_KRPM.items(), key=lambda kv: abs(kv[1] - r))
+        return g if abs(r - ref) / ref < 0.08 else 0     # 0 = embreagem pressionada / ponto morto
+
+    def trip_live_update(self, vals: dict, ts: int) -> None:
+        t = self.trip_live
+        if not self.trip_id:
+            return
+        last = t.get("last_ts")
+        dt = min((ts - last) / 1000, 5) if last else 0
+        spd = vals.get("speed") or 0
+        t["km"] += spd * dt / 3600
+        t["fuel_l"] += (vals.get("fuel_lh") or 0) * dt / 3600
+        if spd > 2:
+            t["moving_s"] += dt
+        t["max_speed"] = max(t["max_speed"], spd)
+        t["last_ts"] = ts
+
     def start_trip(self, ts: int) -> None:
+        self.trip_live = {"km": 0.0, "fuel_l": 0.0, "moving_s": 0.0, "max_speed": 0, "last_ts": None}
         cold = self.values.get("ect")
         cur = self.con.execute("INSERT INTO trip(session_id, start_ts, end_ts, cold_start) VALUES (?,?,?,?)",
                                (self.session_id, ts, ts, int(cold is not None and cold < 50)))
@@ -301,12 +330,13 @@ class Collector:
         if not t:
             return
         a, b = t["start_ts"], t["end_ts"] or t["start_ts"]
-        f = c.execute("SELECT ts, speed, rpm FROM fast_sample WHERE ts BETWEEN ? AND ? ORDER BY ts", (a, b)).fetchall()
-        dist, idle, prev = 0.0, 0.0, None
+        f = c.execute("SELECT ts, speed, rpm, fuel_lh FROM fast_sample WHERE ts BETWEEN ? AND ? ORDER BY ts", (a, b)).fetchall()
+        dist, idle, fuel_l, prev = 0.0, 0.0, 0.0, None
         for r in f:
             if prev is not None:
                 dt = min((r["ts"] - prev["ts"]) / 1000, 5)
                 dist += (prev["speed"] or 0) * dt / 3600
+                fuel_l += (prev["fuel_lh"] or 0) * dt / 3600
                 if (prev["speed"] or 0) == 0 and (prev["rpm"] or 0) > 400:
                     idle += dt
             prev = r
@@ -326,12 +356,21 @@ class Collector:
                      max_ect=?, min_volt=?, max_volt=?, avg_ltft=?, tb_score=?, n_alerts=? WHERE id=?""",
                   (int((b - a) / 1000), round(dist, 2), int(idle), agg["av"], agg["ms"], agg["mr"], sagg("ect", "MAX"),
                    sagg("batt", "MIN"), sagg("batt", "MAX"), sagg("ltft1", "AVG"), score, len(alerts), tid))
+        c.execute("UPDATE trip SET fuel_l=?, km_l=? WHERE id=?",
+                  (round(fuel_l, 3) if fuel_l else None, round(dist / fuel_l, 1) if fuel_l > 0.05 else None, tid))
 
     def finalize_open_trips(self) -> None:
         for r in self.con.execute("SELECT id FROM trip WHERE finalized=0").fetchall():
             self.con.execute("UPDATE trip SET end_reason=COALESCE(end_reason,'corte_de_energia') WHERE id=?", (r["id"],))
             self.finalize_trip(r["id"])
         self.con.commit()
+
+    # ------------------------------------------------------------------ combustível
+    def load_fuel(self) -> None:
+        fills = [dict(r) for r in self.con.execute("SELECT * FROM fuel_fill ORDER BY ts")]
+        if fills:
+            self.fuel_mix = fills[-1]["mix_after"] if fills[-1]["mix_after"] is not None else 0.0
+        self.fuel_calib = fuelmod.calib_from(fills)
 
     # ------------------------------------------------------------------ alertas
     def handle_alerts(self, alerts: list[Alert]) -> None:
@@ -426,6 +465,7 @@ class Collector:
             "engine_on": self.engine_on, "trip_id": self.trip_id, "trip_start": self.trip_start or None,
             "values": self.values, "value_ts": self.value_ts,
             "pedal_norm": self.throttle.pedal_norm(self.values.get("pedal_d")),
+            "status": self.limits.status(dict(self.values, pedal_d_norm=self.throttle.pedal_norm(self.values.get("pedal_d")) or 0), self.engine_on),
             "dtc": {k: sorted(v) for k, v in self.dtc_active.items()}, "mil": self.mil,
             "alerts": self.recent_alerts[:10],
             "rates": {"fast_hz": round(len(self.fast_times) / 10, 2), "req": self.elm.n_requests if self.elm else 0},
@@ -433,12 +473,26 @@ class Collector:
                         "protocol": self.elm.protocol_desc if self.elm else None,
                         "multi_pid": self.elm.multi_pid if self.elm else None,
                         "name": self.state.get("adapter_name")},
+            "trip": self._trip_live_view(),
             "supported": len(self.supported), "clock_synced": self.clock.synced, "version": __version__,
         }
         p = self.run_dir / "live.json"
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(live, ensure_ascii=False))
         os.replace(tmp, p)
+
+    def _trip_live_view(self) -> dict | None:
+        if not self.trip_id:
+            return None
+        t = self.trip_live
+        el = (self.clock.now() - self.trip_start) / 1000 if self.trip_start else 0
+        price = self.con.execute("SELECT price_l FROM fuel_fill WHERE price_l IS NOT NULL ORDER BY ts DESC LIMIT 1").fetchone()
+        return {"km": round(t["km"], 2), "elapsed_s": int(el), "moving_s": int(t["moving_s"]),
+                "avg_speed": round(t["km"] / (el / 3600), 1) if el > 30 else None,
+                "avg_moving": round(t["km"] / (t["moving_s"] / 3600), 1) if t["moving_s"] > 30 else None,
+                "max_speed": t["max_speed"], "fuel_l": round(t["fuel_l"], 3),
+                "kml": round(t["km"] / t["fuel_l"], 1) if t["fuel_l"] > 0.05 else None,
+                "cost": round(t["fuel_l"] * price[0], 2) if price else None}
 
     # ------------------------------------------------------------------ ciclos
     def fast_cycle(self) -> None:
@@ -451,7 +505,19 @@ class Collector:
         for k in vals:
             self.value_ts[k] = ts
         self.fast_times.append(time.time())
+        lh = fuelmod.fuel_lh(vals.get("maf", self.values.get("maf")), vals.get("lambda_cmd", self.values.get("lambda_cmd")),
+                             self.fuel_mix, self.fuel_calib, rpm=vals.get("rpm"), load=vals.get("load"),
+                             closed_loop=bool(int(self.values.get("fuel_status", 2)) & 0x02))
+        if lh is not None:
+            vals["fuel_lh"] = round(lh, 2)
+            spd = vals.get("speed") or 0
+            vals["kml_inst"] = round(min(spd / lh, 99.0), 1) if lh > 0.2 and spd > 3 else None
+            self.values.update({k: vals[k] for k in ("fuel_lh", "kml_inst")})
+        g = self.gear(vals.get("speed"), vals.get("rpm"))
+        vals["gear"] = g
+        self.values["gear"] = g
         self.update_engine(vals.get("rpm"), ts)
+        self.trip_live_update(vals, ts)
         if self.engine_on or self.trip_id:
             self.con.execute(f"INSERT OR REPLACE INTO fast_sample(ts, trip_id, {', '.join(FAST_COLS)}) VALUES (?,?,{','.join('?' * len(FAST_COLS))})",
                              (ts, self.trip_id, *[vals.get(c) for c in FAST_COLS]))
@@ -476,6 +542,7 @@ class Collector:
         expected = {k for p in self.sweep_pids if p not in self.fast_pids for k in decode(p, b"\x80" * 8)}
         self.handle_alerts(self.limits.evaluate(allv, self.engine_on, ts) +
                            self.limits.check_missing(expected, vals, ts, self.engine_on))
+        self.load_fuel()
         if int(ts / 1000) % 300 < self.full_period:      # a cada ~5 min persiste aprendizado
             self.con.executemany("INSERT OR REPLACE INTO baseline(key, n, mean, m2, updated_ts) VALUES (?,?,?,?,?)",
                                  [(*r, ts) for r in self.limits.baseline_rows()])
@@ -556,6 +623,9 @@ class Collector:
                         self.event("warn", "elm_reset", str(e)[:80])
             except (TransportError, TimeoutError, OSError, ElmError) as e:
                 fails += 1
+                if self.cfg["adapter"]["transport"] == "rfcomm" and fails >= 2 and self.state.get("adapter_mac"):
+                    import subprocess
+                    subprocess.run(["bluetoothctl", "disconnect", self.state.get("adapter_mac")], capture_output=True, timeout=10)
                 self.elm = None
                 self.set_state("desconectado", str(e)[:120])
                 self.maybe_commit(force=True)
@@ -578,7 +648,19 @@ def main() -> None:
     cfg = config.load()
     if len(sys.argv) > 1 and sys.argv[1] == "--tcp":
         cfg["adapter"]["transport"] = "tcp"
-    Collector(cfg).run()
+    col = Collector(cfg)
+
+    def stop(*_):
+        # fecha o RFCOMM e grava antes de sair: evita o adaptador ficar "preso" na conexão antiga
+        try:
+            col.maybe_commit(force=True)
+            if col.elm:
+                col.elm.t.close()
+        finally:
+            os._exit(0)
+    import signal
+    signal.signal(signal.SIGTERM, stop)
+    col.run()
 
 
 if __name__ == "__main__":

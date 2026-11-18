@@ -147,3 +147,7 @@ def decode_status(data: bytes) -> dict:
     a, b, c, d = (data + b"\0\0\0\0")[:4]
     return {"mil": bool(a & 0x80), "dtc_count": a & 0x7F, "spark": not bool(b & 0x08),
             "raw": data.hex()}
+
+SIGNALS["fuel_lh"] = Signal("fuel_lh", "Consumo instantâneo (estimado)", "L/h", 2, lambda d: None, -1)
+SIGNALS["kml_inst"] = Signal("kml_inst", "Consumo instantâneo (estimado)", "km/L", 1, lambda d: None, -1)
+SIGNALS["gear"] = Signal("gear", "Marcha engatada (calculada)", "", 0, lambda d: None, -1)

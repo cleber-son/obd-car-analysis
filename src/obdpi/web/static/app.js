@@ -18,6 +18,7 @@
   let catalog = {};      // key -> {name, unit, decimals}
   let live = null;
   const buf = [];        // histórico ao vivo para o gráfico pedal × borboleta
+  const hist = {};       // tempo real por sinal: key -> [[ts, v]] (últimos 15 min)
 
   // ------------------------------------------------------------ gráficos SVG
   function lineChart(svg, series, o = {}) {
@@ -54,7 +55,18 @@
       <div><div class="score num">${score ?? "—"}<span style="font-size:16px;color:var(--muted)">/100</span></div><div class="muted" style="font-size:13px">${esc(text)}</div></div>`;
   }
   const alertItem = (a) => { const [c, l, i] = SEV[a.severity || a.sev] || SEV.info;
-    return `<div class="alert" style="--s:${c}"><span class="ic">${i}</span><div><div class="t">${esc(a.title)}</div><div class="d">${esc(a.detail || "")} · ${dt(a.ts)}</div></div><span class="pill">${l}</span></div>`; };
+    if (!a.rule) return `<div class="alert" style="--s:${c}"><span class="ic">${i}</span><div><div class="t">${esc(a.title)}</div><div class="d">${esc(a.detail || "")} · ${dt(a.ts)}</div></div><span class="pill">${l}</span></div>`;
+    return `<details class="alert" style="--s:${c}" data-rule="${esc(a.rule)}" data-source="${esc(a.source || "")}"><summary><span class="ic">${i}</span><div><div class="t">${esc(a.title)}</div><div class="d">${esc(a.detail || "")} · ${dt(a.ts)}</div></div><span style="display:grid;justify-items:end;gap:4px"><span class="pill">${l}</span><span class="more">O que fazer ▾</span></span></summary><div class="adv">Carregando recomendação…</div></details>`; };
+  const advHtml = (d) => `<div><h4>O que significa</h4>${esc(d.o_que)}</div>
+    ${d.causas?.length ? `<div><h4>Causas prováveis</h4><ul>${d.causas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+    ${d.verificar?.length ? `<div><h4>O que verificar</h4><ul>${d.verificar.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+    ${d.fazer?.length ? `<div><h4>O que fazer</h4><ul>${d.fazer.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+    <div><h4>Urgência</h4><span class="urg">${esc(d.urgencia_txt || "")}</span>${d.rodar ? ` · ${esc(d.rodar)}` : ""}</div>`;
+  const advCache = {};
+  async function getAdvice(rule, source) { const k = rule + "|" + source; if (!(k in advCache)) advCache[k] = await api(`/api/advice?rule=${encodeURIComponent(rule)}&source=${encodeURIComponent(source)}`).catch(() => null); return advCache[k]; }
+  document.addEventListener("toggle", async (e) => { const el = e.target; if (!(el instanceof HTMLDetailsElement) || !el.open || !el.dataset.rule || el.dataset.loaded) return;
+    const d = await getAdvice(el.dataset.rule, el.dataset.source); el.dataset.loaded = 1;
+    el.querySelector(".adv").innerHTML = d ? advHtml(d) : "Sem recomendação específica para este alerta."; }, true);
 
   // ------------------------------------------------------------ ao vivo
   const GAUGES = [
@@ -104,19 +116,37 @@
       <div><span class="lbl">Pedal</span><b>${nf(d.pedal_norm ?? v.pedal_d, 0)}%</b></div>
       <div><span class="lbl">Dif. média</span><b>${diffs.length ? nf(diffs.reduce((a, b) => a + b, 0) / diffs.length, 1) + " pp" : "—"}</b></div>
       <div><span class="lbl">Ajuste curto/longo</span><b>${nf(v.stft1, 0)} / ${nf(v.ltft1, 0)}%</b></div>`;
-    // sensores
-    const recentBad = {}; for (const a of d.alerts || []) if (Date.now() - a.ts < 15 * 60e3) recentBad[a.source === "throttle" ? "tps" : (a.rule || "").split(":")[0]] = a.sev;
+    for (const [k, x] of Object.entries(v)) { if (x == null) continue; const h = (hist[k] ??= []); const t = d.value_ts?.[k] || d.ts; if (!h.length || h.at(-1)[0] !== t) h.push([t, x]); while (h.length && h[0][0] < d.ts - 15 * 60e3) h.shift(); }
+    renderEngine(d);
+    if (modalKey) updateModal();
+    // sensores: cor pelo estado calculado no Pi (faixa normal + comportamento habitual)
+    const recentBad = {}; for (const [k, st] of Object.entries(d.status || {})) if (st[0] !== "ok") recentBad[k] = st[0];
     const keys = Object.keys(v).sort((a, b) => (catalog[a]?.name || a).localeCompare(catalog[b]?.name || b, "pt"));
     $("#sensCount").textContent = `${keys.length} sinais · ${d.supported || 0} PIDs suportados pela ECU`;
     $("#liveSensors").innerHTML = keys.length ? keys.map((k) => { const c = catalog[k] || {}; const sv = recentBad[k];
-      return `<button class="sensor" data-k="${esc(k)}" style="--s:${sv ? SEV[sv][0] : `var(${COLORS[k] || "--line"})`}"><span class="n">${esc(c.name || k)}</span>
+      return `<button class="sensor${sv ? " bad" : ""}" data-k="${esc(k)}" title="${esc(d.status?.[k]?.[1] || "")}" style="--s:${sv ? SEV[sv][0] : `var(${COLORS[k] || "--line"})`}"><span class="n">${esc(c.name || k)}</span>
       <span class="val num">${nf(v[k], c.decimals ?? 1)}<small>${esc(c.unit || "")}</small></span><span class="pid">${esc(k)}${d.value_ts?.[k] ? " · " + Math.max(0, Math.round((d.ts - d.value_ts[k]) / 1000)) + " s" : ""}</span></button>`; }).join("")
       : `<div class="empty" style="grid-column:1/-1">Aguardando a primeira leitura do OBD. Ligue a ignição com o adaptador conectado.</div>`;
     // banners de alerta recentes
     const crit = (d.alerts || []).filter((a) => Date.now() - a.ts < 10 * 60e3 && a.sev !== "info").slice(0, 3);
-    $("#banners").innerHTML = crit.map((a) => `<div class="banner" style="--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}</b><span class="muted">${esc(a.detail)} · ${tm(a.ts)}</span></div>`).join("");
+    $("#banners").innerHTML = crit.map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}</b><span class="muted">${esc(a.detail)} · ${tm(a.ts)}</span></div>`).join("");
     const nb = (d.alerts || []).filter((a) => Date.now() - a.ts < 24 * 3600e3 && a.sev === "crit").length;
     $("#badge").hidden = !nb; $("#badge").textContent = nb;
+  }
+
+  let summary = null;
+  async function loadSummary() { summary = await api("/api/summary?days=14"); if (live) renderEngine(live); return summary; }
+  function renderEngine(d) {
+    const on = d.engine_on; const now = d.ts || Date.now(); const S = summary || {};
+    const since = on && d.trip_start ? (now - d.trip_start) / 1000 : S.off_since_ts ? (now - S.off_since_ts) / 1000 : null;
+    const ign = d.state === "coletando" && !on;
+    const c = on ? "var(--ok)" : ign ? "var(--warn)" : "var(--muted)";
+    $("#engineCard").innerHTML = `<div class="st"><span class="pulse${on ? " on" : ""}" style="--c:${c}"></span><div><div class="big">${on ? "Motor ligado" : ign ? "Ignição ligada, motor desligado" : "Motor desligado"}</div>
+      <div class="muted">${since != null ? (on ? "há " : "desde ") + (on ? dur(since) : (since > 86400 ? dt(S.off_since_ts) : "há " + dur(since))) : "—"}</div></div></div>
+      <div class="kv"><span class="lbl">Esta viagem</span><b>${on ? nf(S.current_trip_km ?? 0, 1) + " km" : "—"}</b></div>
+      <div class="kv"><span class="lbl">Hoje</span><b>${nf(S.today?.km ?? 0, 1)} km</b><span class="muted" style="font-size:12px">${dur(S.today?.dur ?? 0)} ligado</span></div>
+      <div class="kv"><span class="lbl">Total registrado</span><b>${nf(S.total?.km ?? 0, 0)} km</b><span class="muted" style="font-size:12px">${S.total?.n ?? 0} viagens</span></div>
+      <div class="kv"><span class="lbl">Consumo agora</span><b>${d.values?.kml_inst != null ? nf(d.values.kml_inst, 1) + " km/L" : d.values?.fuel_lh != null ? nf(d.values.fuel_lh, 1) + " L/h" : "—"}</b><span class="muted" style="font-size:12px">${d.values?.fuel_lh != null ? nf(d.values.fuel_lh, 2) + " L/h" : ""}</span></div>`;
   }
 
   let es;
@@ -130,7 +160,7 @@
 
   // ------------------------------------------------------------ borboleta
   const RULES = {
-    R1: "Borboleta segue o comando", R2: "Sensores do pedal coerentes", R3: "Sem travamento / modo de emergência", R3b: "Pedal abre a borboleta",
+    R1: "Borboleta segue o comando", R2: "Sensores do pedal coerentes", R2t: "Sensores da borboleta A/B coerentes", R3: "Sem travamento / modo de emergência", R3b: "Pedal abre a borboleta",
     R4: "Marcha lenta estável (sem oscilar)", R5: "Marcha lenta regular", R5b: "Marcha lenta no alvo", R6: "Sem morrer em marcha lenta", R9: "Sinais sem saltos",
   };
   async function loadThrottle(target = "both") {
@@ -162,6 +192,15 @@
 
   // ------------------------------------------------------------ viagens
   async function loadTrips() {
+    const S = await loadSummary();
+    lineChart($("#engDayChart"), [{ pts: S.per_day.map((x) => [x.day + 43200e3, (x.dur || 0) / 3600]), c: "--rpm", bars: true }], { ymin: 0, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
+    const days = []; const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    for (let i = 13; i >= 0; i--) days.push(t0.getTime() - i * 86400e3);
+    $("#engTimeline").innerHTML = days.reverse().map((d0) => { const d1 = d0 + 86400e3;
+      const bars = S.history.filter((t) => t.start_ts < d1 && (t.end_ts || Date.now()) > d0).map((t) => { const a = Math.max(t.start_ts, d0), b = Math.min(t.end_ts || Date.now(), d1);
+        return `<i style="left:${(a - d0) / 864e3}%;width:${(b - a) / 864e3}%" title="${tm(t.start_ts)}–${t.end_ts ? tm(t.end_ts) : "agora"} · ${nf(t.distance_km, 1)} km"></i>`; }).join("");
+      return `<div class="d"><span>${new Date(d0).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" })}</span><div class="tr">${bars}</div></div>`; }).join("")
+      + `<div class="d"><span></span><div class="muted" style="display:flex;justify-content:space-between;font:10px var(--f-mono)"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>24h</span></div></div>`;
     const trips = await api("/api/trips?limit=100");
     $("#tripRows").innerHTML = trips.length ? trips.map((t) => { const s = t.tb_score; const c = s == null ? "var(--muted)" : s >= 85 ? "var(--ok)" : s >= 60 ? "var(--warn)" : "var(--bad)";
       return `<tr class="click" data-id="${t.id}"><td>${dt(t.start_ts)}${t.finalized ? "" : ' <span class="pill" style="--s:var(--ok)">agora</span>'}</td><td class="num">${dur(t.duration_s ?? ((t.end_ts - t.start_ts) / 1000))}</td>
@@ -190,6 +229,41 @@
     $("#tripDetail").scrollIntoView({ behavior: "smooth" });
   }
   $("#tripRows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) showTrip(tr.dataset.id).catch(console.error); });
+
+  // ------------------------------------------------------------ consumo
+  async function loadFuel() {
+    const f = await api("/api/fuel");
+    const sf = f.since_fill; const last = f.fills[0];
+    $("#fillHint").textContent = last ? `Último: ${dt(last.ts)} · ${last.fuel}${last.liters ? ", " + nf(last.liters, 1) + " L" : ""}` : "Toque ao encher o tanque. O 1º abastecimento inicia a medição.";
+    const mix = f.mix; const mixTxt = mix == null ? "—" : mix < 0.05 ? "Gasolina" : mix > 0.95 ? "Etanol" : `${Math.round(mix * 100)}% etanol`;
+    $("#fuelStats").innerHTML = `<div><span class="lbl">Desde o último tanque</span><b>${nf(sf.km, 0)} km</b></div>
+      <div><span class="lbl">Gasto estimado</span><b>${nf(sf.liters_est, 1)} L</b></div>
+      <div><span class="lbl">Média estimada</span><b>${nf(sf.kml_est, 1)} km/L</b></div>
+      <div><span class="lbl">Média real (5 tanques)</span><b>${nf(f.avg_real_kml, 1)} km/L</b></div>
+      <div><span class="lbl">Custo por km</span><b>${f.cost_per_km ? "R$ " + nf(f.cost_per_km, 2) : "—"}</b></div>
+      <div><span class="lbl">No tanque</span><b style="font-size:15px">${mixTxt}</b></div>
+      <div><span class="lbl">Restante estimado</span><b>${last?.full ? nf(Math.max(0, f.tank_l - sf.liters_est), 0) + " L" : "—"}</b></div>
+      <div><span class="lbl">Calibração</span><b>${nf(f.calib, 2)}×</b></div>`;
+    const real = f.fills.filter((x) => x.real_kml).reverse();
+    lineChart($("#fuelFillChart"), [{ pts: real.map((x) => [x.ts, x.real_kml]), c: "--ok", bars: true }], { ymin: 0, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
+    lineChart($("#fuelTripChart"), [{ pts: f.trips.slice().reverse().map((x) => [x.start_ts, x.km_l]), c: "--speed", dots: true, r: 4 }], { ymin: 0 });
+    $("#fillRows").innerHTML = f.fills.length ? f.fills.map((x) => `<tr><td>${dt(x.ts)}</td><td>${esc(x.fuel)}</td><td class="num">${nf(x.liters, 2)}</td><td class="num">${x.price_l ? "R$ " + nf(x.price_l, 2) : "—"}</td>
+      <td class="num">${nf(x.km_since_prev, 0)}</td><td class="num">${nf(x.real_kml, 1)}</td><td class="num">${x.mix_after == null ? "—" : Math.round(x.mix_after * 100) + "% etanol"}</td></tr>`).join("")
+      : `<tr><td colspan="7"><div class="empty">Nenhum abastecimento registrado.</div></td></tr>`;
+  }
+  $("#fillBtn").addEventListener("click", () => { $("#fillForm").hidden = false; $("#fillBtn").hidden = true; $("#fillL").focus(); });
+  $("#fillCancel").addEventListener("click", () => { $("#fillForm").hidden = true; $("#fillBtn").hidden = false; });
+  $("#fillForm").addEventListener("submit", async (e) => {
+    e.preventDefault(); $("#fillSave").disabled = true;
+    try {
+      const body = { fuel: document.querySelector('input[name="fuel"]:checked').value, liters: $("#fillL").value, price_l: $("#fillP").value, full: true };
+      const r = await fetch("/api/fuel/fill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status);
+      $("#fillForm").hidden = true; $("#fillBtn").hidden = false; $("#fillL").value = ""; $("#fillP").value = "";
+      $("#fillHint").textContent = j.real_kml ? `Salvo. Este tanque rendeu ${nf(j.real_kml, 1)} km/L (${nf(j.km_since_prev, 0)} km).` : "Salvo. O consumo real aparece no próximo tanque cheio.";
+      setTimeout(() => loadFuel().catch(console.error), 1500);
+    } catch (err) { $("#fillHint").textContent = "Não foi possível salvar: " + err.message; } finally { $("#fillSave").disabled = false; }
+  });
 
   // ------------------------------------------------------------ alertas / DTC
   async function loadAlerts() {
@@ -221,9 +295,51 @@
     lineChart($("#sigChart"), [{ pts: r.series[k] || [], c: COLORS[k] || "--speed", area: true }], { x0: to - span, x1: to });
     $("#sigChartCard").scrollIntoView({ behavior: "smooth" });
   }
-  $("#sigRows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-k]"); if (tr) showSignal(tr.dataset.k).catch(console.error); });
+  $("#sigRows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-k]"); if (tr) openModal(tr.dataset.k); });
   $("#sigRange").addEventListener("change", () => sigKey && showSignal(sigKey).catch(console.error));
-  $("#liveSensors").addEventListener("click", (e) => { const b = e.target.closest("[data-k]"); if (b) { location.hash = "sensores"; setTimeout(() => showSignal(b.dataset.k).catch(console.error), 50); } });
+  $("#liveSensors").addEventListener("click", (e) => { const b = e.target.closest("[data-k]"); if (b) openModal(b.dataset.k); });
+  document.querySelectorAll(".gauge").forEach((g, i) => { g.style.cursor = "pointer"; g.addEventListener("click", () => openModal(GAUGES[i].k)); });
+
+  // ------------------------------------------------------------ gráfico individual (tempo real + histórico)
+  let modalKey = null, modalMode = "rt", modalSpan = 3600e3, histCache = null;
+  const RANGES = [["1 h", 3600e3], ["6 h", 6 * 3600e3], ["24 h", 86400e3], ["7 dias", 7 * 86400e3], ["30 dias", 30 * 86400e3]];
+  $("#mRange").innerHTML = RANGES.map(([l, v]) => `<button class="rbtn" type="button" data-span="${v}" aria-pressed="${v === modalSpan}">${l}</button>`).join("");
+  $("#mRange").addEventListener("click", (e) => { const b = e.target.closest("[data-span]"); if (!b) return; modalSpan = +b.dataset.span;
+    $("#mRange").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); loadModalHist(); });
+  document.querySelectorAll('input[name="mmode"]').forEach((r) => r.addEventListener("change", () => { modalMode = r.value; $("#mRange").hidden = modalMode !== "hist"; modalMode === "hist" ? loadModalHist() : updateModal(); }));
+  $("#mClose").addEventListener("click", closeModal);
+  $("#sigModal").addEventListener("click", (e) => { if (e.target.id === "sigModal") closeModal(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && modalKey) closeModal(); });
+  function openModal(k) { modalKey = k; histCache = null; const c = catalog[k] || {}; $("#mTitle").textContent = c.name || k; $("#sigModal").hidden = false;
+    document.querySelector('input[name="mmode"][value="rt"]').checked = true; modalMode = "rt"; $("#mRange").hidden = true; updateModal(); }
+  function closeModal() { modalKey = null; $("#sigModal").hidden = true; }
+  function statsOf(pts) { const ys = pts.map((p) => p[1]).filter((y) => y != null); if (!ys.length) return null;
+    return { min: Math.min(...ys), max: Math.max(...ys), avg: ys.reduce((a, b) => a + b, 0) / ys.length, n: ys.length }; }
+  function updateModal() {
+    const k = modalKey; if (!k) return; const c = catalog[k] || {}; const v = live?.values?.[k]; const st = live?.status?.[k];
+    $("#mVal").textContent = `${nf(v, c.decimals ?? 1)} ${c.unit || ""}`;
+    const sev = st ? st[0] : null; const [col, lab] = sev && sev !== "ok" ? SEV[sev] : ["var(--ok)", "Normal"];
+    $("#mVal").style.color = sev && sev !== "ok" ? col : ""; $("#mPill").style.setProperty("--s", col); $("#mPill").textContent = st ? (sev === "ok" ? "Normal" : st[1] || lab) : "Sem faixa definida";
+    $("#mSub").textContent = `${k}${st?.[2] ? " · normal: " + st[2] + " " + (c.unit || "") : ""}`;
+    const rk = st && st[0] !== "ok" ? st[3] : null;
+    if (rk !== $("#mAdv").dataset.rule) { $("#mAdv").dataset.rule = rk || ""; $("#mAdv").innerHTML = "";
+      if (rk) getAdvice(rk, "").then((d) => { if (d && $("#mAdv").dataset.rule === rk) $("#mAdv").innerHTML = `<div class="adv card" style="--s:${col}">${advHtml(d)}</div>`; }); }
+    if (modalMode !== "rt") return;
+    const pts = hist[k] || []; const now = live?.ts || Date.now();
+    lineChart($("#mChart"), [{ pts, c: COLORS[k] || "--speed", area: true }], { x0: now - 15 * 60e3, x1: now });
+    renderModalStats(pts, "Últimos 15 min");
+  }
+  function renderModalStats(pts, label) { const s = statsOf(pts); const c = catalog[modalKey] || {}; const d = c.decimals ?? 1;
+    $("#mStats").innerHTML = s ? `<div><span class="lbl">Mínimo</span><b>${nf(s.min, d)}</b></div><div><span class="lbl">Média</span><b>${nf(s.avg, d)}</b></div><div><span class="lbl">Máximo</span><b>${nf(s.max, d)}</b></div><div><span class="lbl">${label}</span><b>${s.n}</b></div>` : `<div class="empty" style="grid-column:1/-1">Sem leituras neste período.</div>`; }
+  async function loadModalHist() {
+    const k = modalKey; if (!k) return; const to = Date.now();
+    const r = await api(`/api/series?signals=${encodeURIComponent(k)}&from=${to - modalSpan}&to=${to}&max_points=600`);
+    const pts = r.series[k] || [];
+    const series = [{ pts, c: COLORS[k] || "--speed", area: true }];
+    if (pts.length && pts[0].length === 4) series.unshift({ pts: pts.map((p) => [p[0], p[3]]), c: "--line", w: 1, end: false }, { pts: pts.map((p) => [p[0], p[2]]), c: "--line", w: 1, end: false });
+    lineChart($("#mChart"), series, { x0: to - modalSpan, x1: to });
+    renderModalStats(pts, "Pontos");
+  }
 
   // ------------------------------------------------------------ relatório
   async function loadReport() {
@@ -265,8 +381,14 @@
     $("#annText").value = ""; loadSystem().catch(console.error);
   });
 
+  // ------------------------------------------------------------ tema
+  const setTheme = (t) => { document.documentElement.dataset.theme = t; try { localStorage.setItem("theme", t); } catch { }
+    document.querySelectorAll("#theme button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.t === t)); };
+  $("#theme").addEventListener("click", (e) => { const b = e.target.closest("[data-t]"); if (b) setTheme(b.dataset.t); });
+  setTheme(document.documentElement.dataset.theme || "dark");
+
   // ------------------------------------------------------------ roteamento
-  const LOAD = { vivo: () => loadThrottle("live"), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: loadReport, sistema: loadSystem };
+  const LOAD = { consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: loadReport, sistema: loadSystem };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });
@@ -274,7 +396,7 @@
     LOAD[view]().catch((e) => console.error(view, e));
   }
   window.addEventListener("hashchange", route);
-  setInterval(() => { const v = (location.hash || "#vivo").slice(1); if (["vivo", "alertas", "viagens"].includes(v)) LOAD[v]?.().catch(() => { }); }, 30000);
+  setInterval(() => { const v = (location.hash || "#vivo").slice(1); if (["vivo", "alertas", "viagens", "consumo"].includes(v)) LOAD[v]?.().catch(() => { }); }, 30000);
 
   api("/api/signals").then((s) => { for (const x of s) catalog[x.key] = x; }).catch(() => { }).finally(() => { connectStream(); route(); });
 })();

@@ -44,3 +44,9 @@ CREATE TABLE IF NOT EXISTS baseline (
 CREATE TABLE IF NOT EXISTS system_event (id INTEGER PRIMARY KEY, ts INTEGER, level TEXT, kind TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY, ts INTEGER, title TEXT, body TEXT, priority INTEGER, tags TEXT, sent_ts INTEGER);
 CREATE TABLE IF NOT EXISTS annotation (id INTEGER PRIMARY KEY, ts INTEGER, kind TEXT, text TEXT);
+
+-- Abastecimentos (botão "Tanque cheio")
+CREATE TABLE IF NOT EXISTS fuel_fill (
+  id INTEGER PRIMARY KEY, ts INTEGER, fuel TEXT, liters REAL, price_l REAL, full INTEGER DEFAULT 1,
+  mix_after REAL,          -- fração de etanol hidratado no tanque após abastecer (0 = gasolina C, 1 = etanol)
+  km_since_prev REAL, est_l_since_prev REAL, real_kml REAL, calib REAL, note TEXT);

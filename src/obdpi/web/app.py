@@ -162,7 +162,20 @@ def alerts(days: int = 30, severity: str | None = None, limit: int = 200):
     if severity:
         q += " AND severity=?"
         args.append(severity)
-    return rows(con.execute(q + " ORDER BY ts DESC LIMIT ?", (*args, limit)))
+    from ..analytics.advice import advice_for
+    out = rows(con.execute(q + " ORDER BY ts DESC LIMIT ?", (*args, limit)))
+    for a in out:
+        a["has_advice"] = advice_for(a["rule"], a["source"]) is not None
+    return out
+
+
+@app.get("/api/advice")
+def advice(rule: str, source: str = ""):
+    from ..analytics.advice import advice_for
+    d = advice_for(rule, source)
+    if not d:
+        raise HTTPException(404, "sem recomendação para este alerta")
+    return d
 
 
 @app.get("/api/dtc")
@@ -243,6 +256,102 @@ def export_csv(frm: int | None = Query(None, alias="from"), to: int | None = Non
                              headers={"Content-Disposition": "attachment; filename=obd-civic.csv"})
 
 
+# ---------------------------------------------------------------- resumo: motor, km, histórico
+def _day_start(ts: int) -> int:
+    return ((ts + TZ) // DAY) * DAY - TZ
+
+
+@app.get("/api/summary")
+def summary(days: int = 14):
+    con = ro()
+    now = now_ms()
+    today = _day_start(now)
+    lv = read_live()
+
+    def agg(since):
+        r = con.execute("""SELECT COUNT(*) n, COALESCE(SUM(distance_km),0) km, COALESCE(SUM(duration_s),0) dur,
+                           COALESCE(SUM(fuel_l),0) fuel FROM trip WHERE start_ts >= ? AND finalized=1""", (since,)).fetchone()
+        return dict(r)
+    cur = con.execute("SELECT * FROM trip WHERE finalized=0 ORDER BY start_ts DESC LIMIT 1").fetchone()
+    cur_km = 0.0
+    if cur:
+        f = con.execute("SELECT ts, speed FROM fast_sample WHERE ts >= ? ORDER BY ts", (cur["start_ts"],)).fetchall()
+        for a, b in zip(f, f[1:]):
+            cur_km += (a["speed"] or 0) * min((b["ts"] - a["ts"]) / 1000, 5) / 3600
+    last = con.execute("SELECT end_ts FROM trip WHERE finalized=1 ORDER BY end_ts DESC LIMIT 1").fetchone()
+    t_today, t_all = agg(today), agg(0)
+    hist = rows(con.execute("""SELECT id, start_ts, end_ts, duration_s, distance_km, finalized FROM trip
+                               WHERE start_ts > ? ORDER BY start_ts""", (now - days * DAY,)))
+    per_day = rows(con.execute(f"""SELECT ((start_ts+({TZ}))/86400000)*86400000-({TZ}) day, COUNT(*) n,
+                                    SUM(COALESCE(duration_s,(end_ts-start_ts)/1000)) dur, SUM(distance_km) km
+                                    FROM trip WHERE start_ts > ? GROUP BY 1 ORDER BY 1""", (now - days * DAY,)))
+    return {
+        "engine_on": bool(lv.get("engine_on")), "trip_start": lv.get("trip_start"),
+        "engine_since_s": int((now - lv["trip_start"]) / 1000) if lv.get("engine_on") and lv.get("trip_start") else None,
+        "off_since_ts": None if lv.get("engine_on") else (last["end_ts"] if last else None),
+        "current_trip_km": round(cur_km, 2),
+        "today": {**t_today, "km": t_today["km"] + cur_km, "dur": t_today["dur"] + (int((now - cur["start_ts"]) / 1000) if cur else 0)},
+        "total": {**t_all, "km": t_all["km"] + cur_km},
+        "history": hist, "per_day": per_day,
+    }
+
+
+# ---------------------------------------------------------------- combustível
+@app.get("/api/fuel")
+def fuel_info():
+    from ..analytics import fuel as fm
+    con = ro()
+    fills = rows(con.execute("SELECT * FROM fuel_fill ORDER BY ts"))
+    last = fills[-1] if fills else None
+    since = last["ts"] if last else 0
+    t = con.execute("SELECT COALESCE(SUM(distance_km),0) km, COALESCE(SUM(fuel_l),0) l FROM trip WHERE start_ts >= ? AND finalized=1", (since,)).fetchone()
+    trips = rows(con.execute("SELECT id, start_ts, distance_km, fuel_l, km_l FROM trip WHERE finalized=1 AND km_l IS NOT NULL ORDER BY start_ts DESC LIMIT 60"))
+    real = [f for f in fills if f["real_kml"]]
+    prices = [f["price_l"] for f in fills if f["price_l"]]
+    kml_est = t["km"] / t["l"] if t["l"] > 0.1 else None
+    return {
+        "fills": fills[::-1], "mix": last["mix_after"] if last else None, "calib": fm.calib_from(fills),
+        "since_fill": {"ts": since or None, "km": round(t["km"], 1), "liters_est": round(t["l"], 2), "kml_est": round(kml_est, 1) if kml_est else None,
+                       "cost_est": round(t["l"] * last["price_l"], 2) if last and last["price_l"] else None},
+        "avg_real_kml": round(sum(f["real_kml"] for f in real[-5:]) / len(real[-5:]), 1) if real else None,
+        "cost_per_km": round(prices[-1] / (real[-1]["real_kml"] if real else kml_est), 3) if prices and (real or kml_est) else None,
+        "trips": trips, "tank_l": fm.TANK_L,
+    }
+
+
+@app.post("/api/fuel/fill")
+def fuel_fill(body: dict, x_token: str | None = Header(None)):
+    """Botão 'Tanque cheio'. body: {fuel: gasolina|etanol, liters?, price_l?, full?: true, note?}"""
+    from ..analytics import fuel as fm
+    check_admin(x_token)
+    fuel = body.get("fuel", "gasolina")
+    if fuel not in ("gasolina", "etanol"):
+        raise HTTPException(400, "combustível deve ser gasolina ou etanol")
+    liters = float(body["liters"]) if body.get("liters") not in (None, "") else None
+    price = float(body["price_l"]) if body.get("price_l") not in (None, "") else None
+    full = bool(body.get("full", True))
+    ts = now_ms()
+    con = db.connect(DB)
+    prev = con.execute("SELECT * FROM fuel_fill ORDER BY ts DESC LIMIT 1").fetchone()
+    km = est = kml = calib = None
+    if prev:
+        r = con.execute("SELECT COALESCE(SUM(distance_km),0) km, COALESCE(SUM(fuel_l),0) l FROM trip WHERE start_ts >= ? AND finalized=1",
+                        (prev["ts"],)).fetchone()
+        km, est = round(r["km"], 1), round(r["l"], 2)
+        if full and prev["full"] and liters and km > 20:   # método tanque a tanque
+            kml = round(km / liters, 2)
+            if est and est > 1:
+                old = fm.calib_from([dict(x) for x in con.execute("SELECT calib FROM fuel_fill")])
+                calib = round(liters / (est / old), 3)       # estimativa bruta (sem calibração) × fator = real
+    mix = fm.mix_after_fill(prev["mix_after"] if prev else None, fuel, liters)
+    con.execute("""INSERT INTO fuel_fill(ts, fuel, liters, price_l, full, mix_after, km_since_prev, est_l_since_prev, real_kml, calib, note)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (ts, fuel, liters, price, int(full), round(mix, 3), km, est, kml, calib, body.get("note")))
+    con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)",
+                (ts, "abastecimento", f"Tanque cheio: {fuel}" + (f", {liters:g} L" if liters else "") + (f" a R$ {price:.2f}/L" if price else "")))
+    con.commit()
+    return {"ok": True, "real_kml": kml, "km_since_prev": km, "mix_after": mix}
+
+
 # ---------------------------------------------------------------- diário de manutenção
 @app.get("/api/annotations")
 def annotations():
@@ -307,6 +416,11 @@ def system():
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/dirigir")
+def drive():
+    return FileResponse(STATIC / "drive.html", headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
