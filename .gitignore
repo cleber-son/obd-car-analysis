@@ -1,0 +1,10 @@
+secrets/
+os/boot/network-config
+os/boot/user-data
+*.img
+*.img.xz
+__pycache__/
+.venv/
+*.db
+*.db-wal
+*.db-shm

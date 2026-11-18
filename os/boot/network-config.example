@@ -1,0 +1,13 @@
+network:
+  version: 2
+  wifis:
+    renderer: NetworkManager
+    wlan0:
+      dhcp4: true
+      regulatory-domain: "BR"
+      access-points:
+        "SSID_1":
+          password: "SENHA_1"
+        "SSID_2":
+          password: "SENHA_2"
+      optional: true

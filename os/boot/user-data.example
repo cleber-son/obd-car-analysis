@@ -1,0 +1,30 @@
+#cloud-config
+hostname: obd
+manage_etc_hosts: true
+packages:
+- avahi-daemon
+apt:
+  conf: |
+    Acquire {
+      Check-Date "false";
+    };
+timezone: America/Sao_Paulo
+keyboard:
+  model: pc105
+  layout: "br"
+users:
+- name: obd
+  groups: users,adm,dialout,audio,netdev,video,plugdev,cdrom,games,input,gpio,spi,i2c,render,sudo,bluetooth
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: <HASH openssl passwd -6>
+  ssh_authorized_keys:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFNVf2pcJ4FDjYtzeJdgsw83P656bGFkGOWQgFwEdFXY cleberson.brasil@gmail.com
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDCvXHQnIUy4mvY1vfttDasqX26Z1z7IBoLCTmRDzQCY claude-code-deploy@PC-CLEBER
+  sudo: ALL=(ALL) NOPASSWD:ALL
+enable_ssh: true
+ssh_pwauth: true
+runcmd:
+- [ rfkill, unblock, wifi ]
+- [ rfkill, unblock, bluetooth ]
+- [ sh, -c, "for f in /etc/xdg/autostart/piwiz.desktop; do [ -f $f ] && rm -f $f; done; true" ]
