@@ -106,3 +106,25 @@ Testes:
   dispositivos da casa (OBD ainda fora de alcance).
 
 Bug corrigido nos testes: cooldown das regras da borboleta suprimia o 1º alerta.
+
+## 2026-11-18 — Primeira sessão no carro
+- Pi pareou sozinho com o adaptador **"OBD2"** (clone ELM327 v1.5, MAC AA:BB:CC:11:22:33). Protocolo **CAN 29 bits 500k**, 31 PIDs
+  (lista em `docs/pids-civic-2008.md`). VIN não lido (a investigar).
+- Achados do motor: marcha lenta ~830 rpm (oscilação 138 rpm), MAP 32 kPa, bateria 14,1 V carregando.
+  ⚠️ **STFT (PID 06) fixo em +46,88 % desde a partida** e λ medido 1,11–1,14 vs 0,98 comandado → indício de mistura pobre /
+  **entrada falsa de ar** (suspeita: junta do corpo de borboleta trocado). A confirmar comparando com outro scanner.
+- ⚠️ **O Pi reiniciou na partida** (subtensão `0x50005`): precisa de conversor 12→5 V 3 A de qualidade.
+- Problemas resolvidos:
+  - Adaptador ficava "preso" após reiniciar o coletor → `bluetoothctl disconnect` no início e após 2 falhas + fechamento no SIGTERM.
+  - Clone só devolve o **1º quadro** de respostas multi-frame em CAN 29 bits → PIDs agrupados para caber num quadro único
+    (`pack_single_frame`). Taxa do grupo rápido: 0,8 → 1,7 leitura/s (~10 pedidos/s no total).
+  - `obd-web` demorava a parar com SSE aberto → `timeout_graceful_shutdown=2`, `TimeoutStopSec=8`.
+- Funcionalidades novas (pedidos do dono): consumo (MAF + λ comandado, mistura gasolina/etanol, calibração tanque a tanque),
+  botão **⛽ Tanque cheio**, aba Consumo, km/L instantâneo/viagem/real; cartão do motor (ligado há, km hoje/total);
+  histórico de motor ligado (barras por dia + linha do tempo); **modo direção** `/dirigir` (iPhone 17 Pro Max, retrato/paisagem,
+  marcha calculada pelas relações do câmbio, dicas de troca, quadros configuráveis, vermelho fora do normal, previsão e autonomia);
+  **teste 0–100** (Pi mede só velocidade+rpm na taxa máxima, interpola 0–60/80/100); ajuste curto e avanço no Ao vivo;
+  **recomendações** completas por alerta (`analytics/advice.py`: o que é, causas, verificar, fazer, urgência);
+  alertas repetidos agrupados ("continua N×"); sensores com faixa normal escrita, verde/vermelho; gráfico individual de
+  qualquer sensor (tempo real 15 min + histórico 1 h–30 dias); tema Escuro/Claro/Auto (padrão escuro).
+- Coleta: todos os sensores a cada **5 s** (era 20 s), principais o mais rápido possível, DTCs a cada 20 s.
