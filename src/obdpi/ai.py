@@ -41,6 +41,49 @@ listadas em "observacoes" (ex.: PIDs que este ECU informa de forma não confiáv
 nos dados. Prefira causas comuns a raras."""
 
 
+SETTINGS = Path("/data/obd/ai.json")       # chaves salvas pelo painel (modo 600, fora do git)
+
+
+def settings() -> dict:
+    try:
+        return json.loads(SETTINGS.read_text())
+    except Exception:
+        return {}
+
+
+def save_settings(new: dict) -> dict:
+    cur = settings()
+    for k in ("provider", "openai_model"):
+        if new.get(k):
+            cur[k] = str(new[k]).strip()
+    for k in ("anthropic_key", "openai_key"):
+        if new.get(k) is not None:
+            v = str(new[k]).strip()
+            if v == "":
+                continue                    # campo vazio = mantém a chave atual
+            if v == "-":
+                cur.pop(k, None)            # "-" apaga
+            else:
+                cur[k] = v
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cur))
+    tmp.chmod(0o600)
+    tmp.replace(SETTINGS)
+    return public_settings()
+
+
+def public_settings() -> dict:
+    s = settings()
+    hint = lambda k: ("…" + s[k][-4:]) if s.get(k) else None
+    ak = s.get("anthropic_key") or _secrets_key()
+    return {"provider": s.get("provider", "anthropic"), "openai_model": s.get("openai_model", OPENAI_MODEL),
+            "anthropic_key": ("…" + ak[-4:]) if ak else None, "openai_key": hint("openai_key"), "anthropic_model": MODEL}
+
+
+OPENAI_MODEL = "gpt-5"
+
+
 def _secrets_key() -> str | None:
     try:
         import tomllib
@@ -53,9 +96,9 @@ def _secrets_key() -> str | None:
 
 
 def client() -> anthropic.Anthropic | None:
-    key = _secrets_key()
+    key = settings().get("anthropic_key") or _secrets_key()
     try:
-        return anthropic.Anthropic(api_key=key, max_retries=2, timeout=600) if key else anthropic.Anthropic(max_retries=2, timeout=600)
+        return anthropic.Anthropic(api_key=key, max_retries=2, timeout=600) if key else None
     except Exception:
         return None
 
@@ -171,11 +214,48 @@ def start(db_path: str, live: dict) -> dict:
     return job()
 
 
+def _run_openai(db_path: str, payload: str) -> None:
+    import urllib.error
+    import urllib.request
+    st = settings()
+    key, model = st.get("openai_key"), st.get("openai_model") or OPENAI_MODEL
+    if not key:
+        raise RuntimeError("Chave da OpenAI não configurada (aba Sistema → Análise por IA).")
+    body = json.dumps({"model": model, "messages": [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": "Dados do carro (JSON):\n" + payload + "\n\nFaça a análise completa: está tudo ok? O que merece atenção?"}]}).encode()
+    req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r:
+            j = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        msg = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"OpenAI respondeu {e.code}: {msg}") from None
+    except urllib.error.URLError:
+        raise RuntimeError("Sem internet no Pi (conecte no WiFi ou hotspot).") from None
+    text = (j["choices"][0]["message"].get("content") or "").strip()
+    usage = {"input": j.get("usage", {}).get("prompt_tokens"), "output": j.get("usage", {}).get("completion_tokens")}
+    _save(db_path, j.get("model", model), text, usage)
+
+
+def _save(db_path: str, model: str, text: str, usage: dict) -> None:
+    rw = sqlite3.connect(db_path, timeout=30)
+    rw.execute("CREATE TABLE IF NOT EXISTS ai_analysis (id INTEGER PRIMARY KEY, ts INTEGER, model TEXT, text TEXT, usage TEXT)")
+    rw.execute("INSERT INTO ai_analysis(ts, model, text, usage) VALUES (?,?,?,?)", (int(time.time() * 1000), model, text, json.dumps(usage)))
+    rw.commit()
+    rw.close()
+    _job.update(status="done", text=text, model=model, usage=usage, finished=time.time())
+
+
 def _run(db_path: str, live: dict) -> None:
     try:
+        if settings().get("provider") == "openai":
+            _run_openai(db_path, json.dumps(build_context(db_path, live), ensure_ascii=False, default=str))
+            return
         c = client()
         if c is None:
-            raise RuntimeError("Chave da API não configurada (/etc/obd/secrets.toml → [ai] api_key).")
+            raise RuntimeError("Chave da Anthropic não configurada (aba Sistema → Análise por IA).")
         ctx = build_context(db_path, live)
         payload = json.dumps(ctx, ensure_ascii=False, default=str)
         with c.beta.messages.stream(
@@ -195,14 +275,7 @@ def _run(db_path: str, live: dict) -> None:
         text = "".join(b.text for b in msg.content if b.type == "text").strip()
         if msg.stop_reason == "max_tokens":
             text += "\n\n_(resposta cortada por tamanho)_"
-        usage = {"input": msg.usage.input_tokens, "output": msg.usage.output_tokens}
-        rw = sqlite3.connect(db_path, timeout=30)
-        rw.execute("CREATE TABLE IF NOT EXISTS ai_analysis (id INTEGER PRIMARY KEY, ts INTEGER, model TEXT, text TEXT, usage TEXT)")
-        rw.execute("INSERT INTO ai_analysis(ts, model, text, usage) VALUES (?,?,?,?)",
-                   (int(time.time() * 1000), msg.model, text, json.dumps(usage)))
-        rw.commit()
-        rw.close()
-        _job.update(status="done", text=text, model=msg.model, usage=usage, finished=time.time())
+        _save(db_path, msg.model, text, {"input": msg.usage.input_tokens, "output": msg.usage.output_tokens})
     except anthropic.AuthenticationError:
         _job.update(status="error", error="Chave da API inválida.")
     except anthropic.RateLimitError:

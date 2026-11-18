@@ -397,6 +397,21 @@
     $("#annList").innerHTML = ann.length ? ann.map((x) => `<div class="alert" style="--s:var(--volt)"><span class="ic">✎</span><div><div class="t">${esc(x.text)}</div><div class="d">${dt(x.ts)}</div></div><span></span></div>`).join("") : `<div class="empty">Nenhuma anotação.</div>`;
     $("#sysEvents").innerHTML = s.events.map((e) => `<tr><td class="num muted">${dt(e.ts)}</td><td>${esc(e.kind)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join("");
   }
+  async function loadAiSettings() {
+    const a = await api("/api/ai/settings").catch(() => null); if (!a) return;
+    (a.provider === "openai" ? $("#provO") : $("#provA")).checked = true;
+    $("#aiHintA").textContent = a.anthropic_key ? `(salva ${a.anthropic_key})` : "(não configurada)";
+    $("#aiHintO").textContent = a.openai_key ? `(salva ${a.openai_key})` : "(não configurada)";
+    $("#aiModelO").value = a.openai_model || ""; $("#aiModelA").textContent = a.anthropic_model;
+  }
+  $("#aiForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = { provider: document.querySelector('input[name="aiprov"]:checked')?.value, anthropic_key: $("#aiKeyA").value, openai_key: $("#aiKeyO").value, openai_model: $("#aiModelO").value };
+    const r = await fetch("/api/ai/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    $("#aiMsg").textContent = r.ok ? "Salvo." : "Erro: " + (j.error || r.status);
+    if (r.ok) { $("#aiKeyA").value = ""; $("#aiKeyO").value = ""; loadAiSettings(); }
+  });
   $("#annForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const text = $("#annText").value.trim(); if (!text) return;
     await fetch("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
@@ -489,7 +504,7 @@
   setTheme(document.documentElement.dataset.theme || "dark");
 
   // ------------------------------------------------------------ roteamento
-  const LOAD = { diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: loadSystem };
+  const LOAD = { diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings()]) };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });

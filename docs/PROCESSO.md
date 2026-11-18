@@ -150,3 +150,6 @@ Bug corrigido nos testes: cooldown das regras da borboleta suprimia o 1º alerta
   estol só confirmado se a ECU continuar respondendo (desligar a chave não alerta), R3b exige 3 leituras, "sensor parou" só
   para sinais que já responderam, contagens escaladas para o período de 5 s.
 - Testado: 9 testes unitários + 70 s contra o emulador no Pi sem erros; instalado no carro e coletando.
+- Aba Sistema: cartão **Análise por IA** para escolher o provedor (Claude/Anthropic ou OpenAI), salvar as chaves
+  (em `/data/obd/ai.json`, modo 600, nunca devolvidas ao painel; vazio mantém, "-" apaga) e o modelo da OpenAI.
+  OpenAI via HTTP (`/v1/chat/completions`). Sem chave, o botão mostra o aviso de configuração (testado).

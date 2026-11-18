@@ -193,6 +193,20 @@
       <div class="card"><h2>Adaptador OBD</h2><div class="stats" id="adStats" style="margin-top:12px"></div></div>
     </div>
     <div class="grid2e">
+      <div class="card"><h2>Análise por IA</h2><div class="lbl" style="margin:4px 0 10px">Chaves salvas só no Pi; o painel nunca mostra a chave inteira</div>
+        <form id="aiForm" style="display:grid;gap:10px">
+          <div class="seg small" role="radiogroup" aria-label="Provedor">
+            <label><input type="radio" name="aiprov" value="anthropic" id="provA"><span>Claude (Anthropic)</span></label>
+            <label><input type="radio" name="aiprov" value="openai" id="provO"><span>OpenAI</span></label></div>
+          <label class="lbl" for="aiKeyA">Chave Anthropic <span id="aiHintA" class="muted"></span></label>
+          <input type="text" id="aiKeyA" autocomplete="off" spellcheck="false" placeholder="sk-ant-… (vazio = manter, - = apagar)">
+          <label class="lbl" for="aiKeyO">Chave OpenAI <span id="aiHintO" class="muted"></span></label>
+          <input type="text" id="aiKeyO" autocomplete="off" spellcheck="false" placeholder="sk-… (vazio = manter, - = apagar)">
+          <label class="lbl" for="aiModelO">Modelo OpenAI</label>
+          <input type="text" id="aiModelO" autocomplete="off" spellcheck="false">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="submit">Salvar</button><span class="muted" id="aiMsg" style="font-size:12px"></span></div>
+          <div class="muted" style="font-size:12px">Claude usa o modelo <span id="aiModelA"></span>. Chaves: console.anthropic.com ou platform.openai.com.</div>
+        </form></div>
       <div class="card"><h2>Notificações no iPhone</h2><div id="ntfy" style="margin-top:10px"></div></div>
       <div class="card"><h2>Diário de manutenção</h2>
         <form id="annForm" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">

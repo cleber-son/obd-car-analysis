@@ -386,6 +386,26 @@ def ai_analyze(x_token: str | None = Header(None)):
     return ai.start(DB, read_live())
 
 
+@app.get("/api/ai/settings")
+def ai_settings():
+    from .. import ai
+    return ai.public_settings()
+
+
+@app.post("/api/ai/settings")
+def ai_settings_save(body: dict, x_token: str | None = Header(None)):
+    """Salva provedor/chaves. Campo vazio mantém a chave atual; "-" apaga. As chaves nunca são devolvidas."""
+    check_admin(x_token)
+    from .. import ai
+    if body.get("provider") not in (None, "", "anthropic", "openai"):
+        raise HTTPException(400, "provedor deve ser anthropic ou openai")
+    for k in ("anthropic_key", "openai_key"):
+        v = (body.get(k) or "").strip()
+        if v and v != "-" and (len(v) < 20 or len(v) > 300 or any(c.isspace() for c in v)):
+            raise HTTPException(400, f"chave {k} parece inválida")
+    return ai.save_settings(body)
+
+
 @app.get("/api/ai/analysis")
 def ai_analysis():
     from .. import ai

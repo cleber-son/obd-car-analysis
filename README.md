@@ -29,7 +29,7 @@ eletrônico**, que foi trocado recentemente.
 | 🩺 **Diagnóstico** | **Entrada falsa de ar × MAF** (MAF medido ÷ ar esperado por carga, com veredito por viagem), **bateria na partida** (repouso e queda ao dar partida), **válvula termostática** (tempo até 80 °C), **autotestes da ECU** (monitores prontos/pendentes). |
 | 🌱 **Direção econômica** | Nota 0–100 por viagem (giro alto, arrancadas e freadas bruscas, tempo parado ligado, acima de 110 km/h, marcha alta forçando) com dicas. |
 | 🗓 **Relatórios** | Semanal e mensal no painel, comparados com o período anterior, e **enviados no iPhone** toda segunda e todo dia 1º. |
-| 🤖 **Analisar dados (IA)** | Um botão envia o resumo de tudo (sensores por condição, viagens, diagnósticos, alertas, códigos) para o **Claude Opus 5.5**, que devolve um laudo completo: veredito, pontos de atenção, sistema por sistema e o que fazer. Requer chave da API. |
+| 🤖 **Analisar dados (IA)** | Um botão envia o resumo de tudo (sensores por condição, viagens, diagnósticos, alertas, códigos) para o **Claude Opus 5.5** (ou OpenAI, à escolha), que devolve um laudo completo: veredito, pontos de atenção, sistema por sistema e o que fazer. Chave configurada no próprio painel. |
 | 📲 **Notificações** | Push no iPhone via [ntfy](https://ntfy.sh) para alertas e para avisar o IP sempre que o Pi entra em uma rede. |
 | 📶 **Rede** | Prioridade sempre para o **hotspot do celular** (troca sozinho quando ele aparece), com **IP fixo `172.20.10.14`** nele; em casa, `obd.local`. |
 
@@ -49,7 +49,7 @@ Prévia da interface (dados simulados): https://claude.ai/artifact/1NkrbnkLgDTzT
 | Em casa | `http://obd.local` (ou o IP que chega no ntfy) |
 | No hotspot do iPhone | **`http://172.20.10.14`** (IP fixo) ou a notificação **"Civic OBD online"**. Ative *Maximizar Compatibilidade*: o Pi 3 só enxerga 2,4 GHz |
 | Dirigindo | `http://172.20.10.14/dirigir` → Compartilhar → *Adicionar à Tela de Início*. Bloqueio automático do iPhone em "Nunca" |
-| Análise por IA | chave em `/etc/obd/secrets.toml` → `[ai]` `api_key = "sk-ant-..."` e reiniciar `obd-web` |
+| Análise por IA | aba **Sistema → Análise por IA**: escolha Claude (Anthropic) ou OpenAI e cole a chave (salva só no Pi em `/data/obd/ai.json`, modo 600) |
 | Notificações | app **ntfy** → assinar o tópico em *Sistema* no painel |
 
 ## Instalação
