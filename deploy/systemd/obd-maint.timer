@@ -3,7 +3,7 @@ Description=OBD Civic - manutenção periódica
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=6h
+OnUnitActiveSec=1h
 
 [Install]
 WantedBy=timers.target

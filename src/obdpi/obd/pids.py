@@ -142,11 +142,25 @@ def parse_supported(base: int, data: bytes) -> set[int]:
     return {base + i + 1 for i in range(32) if bits & (1 << (31 - i))}
 
 
+CONT_MON = [("misfire", "Falhas de ignição", 0), ("fuel", "Sistema de combustível", 1), ("components", "Componentes", 2)]
+SPARK_MON = [("catalyst", "Catalisador", 0), ("heated_cat", "Catalisador aquecido", 1), ("evap", "Sistema EVAP (cânister)", 2),
+             ("sec_air", "Ar secundário", 3), ("ac", "Gás do A/C", 4), ("o2", "Sondas lambda", 5), ("o2_heater", "Aquecedor das sondas", 6),
+             ("egr", "EGR / VVT", 7)]
+
+
 def decode_status(data: bytes) -> dict:
-    """PID 01: MIL, número de DTCs e monitores."""
+    """PID 01: MIL, número de DTCs e prontidão dos monitores (autotestes da ECU)."""
     a, b, c, d = (data + b"\0\0\0\0")[:4]
-    return {"mil": bool(a & 0x80), "dtc_count": a & 0x7F, "spark": not bool(b & 0x08),
-            "raw": data.hex()}
+    mons = []
+    for key, name, bit in CONT_MON:
+        if b & (1 << bit):
+            mons.append({"key": key, "name": name, "ready": not bool(b & (1 << (bit + 4)))})
+    if not (b & 0x08):                       # motor a gasolina/flex (ignição por centelha)
+        for key, name, bit in SPARK_MON:
+            if c & (1 << bit):
+                mons.append({"key": key, "name": name, "ready": not bool(d & (1 << bit))})
+    return {"mil": bool(a & 0x80), "dtc_count": a & 0x7F, "spark": not bool(b & 0x08), "monitors": mons,
+            "ready": sum(m["ready"] for m in mons), "total": len(mons), "raw": data.hex()}
 
 SIGNALS["fuel_lh"] = Signal("fuel_lh", "Consumo instantâneo (estimado)", "L/h", 2, lambda d: None, -1)
 SIGNALS["kml_inst"] = Signal("kml_inst", "Consumo instantâneo (estimado)", "km/L", 1, lambda d: None, -1)

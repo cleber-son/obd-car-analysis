@@ -196,6 +196,33 @@ A: dict[str, dict] = {
     },
 }
 
+A.update({
+    "air_leak": {
+        "o_que": "O sensor de fluxo de ar (MAF) mede bem menos ar do que o motor está admitindo, principalmente em marcha lenta. É a assinatura de ar entrando depois do MAF.",
+        "causas": ["Junta/anel do corpo de borboleta (muito comum logo após a troca)", "Duto de ar entre o MAF e a borboleta solto, abraçadeira frouxa ou trincado",
+                   "Mangueira do servofreio, PCV ou respiro do cárter solta/trincada", "Junta do coletor de admissão", "Válvula de purga do cânister presa aberta"],
+        "verificar": ["Abraçadeiras e encaixe do duto de admissão", "Junta e aperto (em cruz) dos parafusos do corpo de borboleta",
+                      "Assobio com motor em marcha lenta", "Painel: MAF e λ ao borrifar limpa-carburador em volta das juntas (rotação/λ mudam no ponto do vazamento)"],
+        "fazer": ["Corrigir o vazamento (junta nova do corpo de borboleta é barata)", "Teste de fumaça em oficina se não achar",
+                  "Depois: reaprendizado da marcha lenta e rodar 30–50 km"],
+        "urgencia": "logo", "rodar": "Pode rodar; consumo aumenta, marcha lenta pode oscilar e a ECU vai acusar P0171 com o tempo.",
+    },
+    "maf_low": {
+        "o_que": "O MAF está medindo abaixo do esperado em todas as cargas (erro proporcional, não vazamento).",
+        "causas": ["MAF sujo (óleo do filtro esportivo, poeira)", "Conector do MAF com mau contato", "MAF com defeito/paralelo", "Filtro de ar muito sujo"],
+        "verificar": ["Filtro de ar", "Conector do MAF"], "fazer": ["Limpar com spray próprio para MAF (sem tocar no elemento)", "Se não melhorar, substituir o MAF"],
+        "urgencia": "logo", "rodar": "Pode rodar; consumo e desempenho pioram.",
+    },
+    "crank_weak": {
+        "o_que": "A tensão da bateria caiu muito durante a partida. É o teste mais confiável de bateria fraca.",
+        "causas": ["Bateria no fim da vida (3–5 anos)", "Terminais/cabos oxidados ou frouxos", "Motor de partida puxando corrente demais", "Frio (piora a bateria)"],
+        "verificar": ["Idade da bateria", "Terminais e cabo massa", "Se a partida está mais lenta"],
+        "fazer": ["Teste de bateria (condutância) em autoelétrica", "Limpar e apertar terminais", "Trocar a bateria se reprovada"],
+        "urgencia": "logo", "rodar": "Risco de não pegar na próxima partida, principalmente em dia frio.",
+    },
+    "thermostat": {"alias": "P0128"},
+})
+
 DTC: dict[str, dict] = {
     "P2135": {"alias": "R2t"}, "P2138": {"alias": "R2"}, "P2122": {"alias": "R2"}, "P2123": {"alias": "R2"}, "P2127": {"alias": "R2"}, "P2128": {"alias": "R2"},
     "P2101": {"alias": "R1"}, "P2118": {"alias": "R1"}, "P2119": {"alias": "R3"}, "P2100": {"alias": "R3"}, "P2111": {"alias": "R3"}, "P2112": {"alias": "R3"},

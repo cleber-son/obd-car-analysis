@@ -1,0 +1,124 @@
+"""Relatórios semanal e mensal (painel + push automático via ntfy)."""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import sqlite3
+import time
+
+DAY = 86400_000
+
+
+def period_bounds(kind: str, offset: int = 0, now: dt.datetime | None = None) -> tuple[int, int, str]:
+    """kind 'week' (segunda a domingo) ou 'month'. offset 0 = atual, -1 = anterior..."""
+    now = now or dt.datetime.now()
+    if kind == "week":
+        start = (now - dt.timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0) + dt.timedelta(weeks=offset)
+        end = start + dt.timedelta(weeks=1)
+        label = f"Semana {start:%d/%m} a {(end - dt.timedelta(days=1)):%d/%m/%Y}"
+    else:
+        y, m = now.year, now.month + offset
+        while m < 1:
+            y, m = y - 1, m + 12
+        while m > 12:
+            y, m = y + 1, m - 12
+        start = dt.datetime(y, m, 1)
+        end = dt.datetime(y + (m == 12), m % 12 + 1, 1)
+        meses = "janeiro fevereiro março abril maio junho julho agosto setembro outubro novembro dezembro".split()
+        label = f"{meses[m - 1].capitalize()} de {y}"
+    return int(start.timestamp() * 1000), int(end.timestamp() * 1000), label
+
+
+def _one(con, q, args=()):
+    r = con.execute(q, args).fetchone()
+    return dict(r) if r else {}
+
+
+def build(con: sqlite3.Connection, kind: str, offset: int = 0) -> dict:
+    con.row_factory = sqlite3.Row
+    a, b, label = period_bounds(kind, offset)
+    pa, pb, _ = period_bounds(kind, offset - 1)
+
+    def totals(x, y):
+        return _one(con, """SELECT COUNT(*) trips, COALESCE(SUM(distance_km),0) km, COALESCE(SUM(duration_s),0) dur, COALESCE(SUM(idle_s),0) idle,
+                            COALESCE(SUM(fuel_l),0) fuel, MAX(max_speed) vmax, MAX(max_ect) ect_max, MIN(min_volt) volt_min,
+                            AVG(tb_score) tb_score, AVG(eco_score) eco_score, AVG(avg_speed) avg_speed, MIN(crank_v) crank_min,
+                            AVG(warmup_s) warmup_avg FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<?""", (x, y))
+    cur, prev = totals(a, b), totals(pa, pb)
+    for t in (cur, prev):
+        t["kml"] = round(t["km"] / t["fuel"], 1) if t["fuel"] and t["fuel"] > 0.3 else None
+    fills = [dict(r) for r in con.execute("SELECT * FROM fuel_fill WHERE ts>=? AND ts<? ORDER BY ts", (a, b))]
+    spent = sum((f["liters"] or 0) * (f["price_l"] or 0) for f in fills)
+    price = con.execute("SELECT price_l FROM fuel_fill WHERE price_l IS NOT NULL ORDER BY ts DESC LIMIT 1").fetchone()
+    est_cost = round(cur["fuel"] * price[0], 2) if price and cur["fuel"] else None
+    real = [f["real_kml"] for f in fills if f["real_kml"]]
+    alerts = [dict(r) for r in con.execute("""SELECT severity, title, rule, SUM(COALESCE(count,1)) n, MAX(COALESCE(ts_end, ts)) last_ts FROM alert
+                                               WHERE ts>=? AND ts<? GROUP BY title ORDER BY CASE severity WHEN 'crit' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, n DESC""", (a, b))]
+    sev = {r["severity"]: r["n"] for r in con.execute("SELECT severity, SUM(COALESCE(count,1)) n FROM alert WHERE ts>=? AND ts<? GROUP BY 1", (a, b))}
+    dtcs = [dict(r) for r in con.execute("SELECT code, kind, event, ts FROM dtc_event WHERE ts>=? AND ts<? ORDER BY ts", (a, b))]
+    air = [dict(r) for r in con.execute("SELECT air_verdict v, COUNT(*) n FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<? AND air_verdict IS NOT NULL GROUP BY 1", (a, b))]
+    tips: dict[str, int] = {}
+    for (ej,) in con.execute("SELECT eco_json FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<? AND eco_json IS NOT NULL", (a, b)):
+        for t in json.loads(ej).get("dicas", []):
+            tips[t] = tips.get(t, 0) + 1
+    daily = [dict(r) for r in con.execute("""SELECT ((start_ts+?)/86400000)*86400000-? day, COUNT(*) trips, SUM(distance_km) km, SUM(duration_s) dur,
+                                               SUM(fuel_l) fuel, AVG(eco_score) eco FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<? GROUP BY 1 ORDER BY 1""",
+                                            (TZ, TZ, a, b))]
+    accel = _one(con, "SELECT MIN(t100) best FROM accel_run WHERE ts>=? AND ts<? AND t100 IS NOT NULL", (a, b))
+
+    def delta(k):
+        c, p = cur.get(k), prev.get(k)
+        return None if c is None or not p else round((c - p) / p * 100, 1)
+    return {"kind": kind, "offset": offset, "label": label, "from": a, "to": b, "cur": cur, "prev": prev,
+            "delta": {k: delta(k) for k in ("km", "dur", "fuel", "kml", "eco_score", "tb_score")},
+            "fills": fills, "spent": round(spent, 2) if spent else None, "est_cost": est_cost,
+            "real_kml": round(sum(real) / len(real), 1) if real else None,
+            "alerts": alerts, "alerts_by_severity": sev, "dtc_events": dtcs, "air": air,
+            "tips": sorted(tips, key=lambda t: -tips[t])[:4], "daily": daily, "best_0_100": accel.get("best")}
+
+
+TZ = time.localtime().tm_gmtoff * 1000
+
+
+def to_text(r: dict) -> tuple[str, str]:
+    c, d = r["cur"], r["delta"]
+    f = lambda v, n=1: "—" if v is None else f"{v:,.{n}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    arrow = lambda x: "" if x is None else f" ({'+' if x > 0 else ''}{f(x, 0)}%)"
+    lines = [f"🚗 {c['trips']} viagens · {f(c['km'], 0)} km{arrow(d['km'])} · {int(c['dur'] // 3600)}h{int(c['dur'] % 3600 // 60):02d} ligado",
+             f"⛽ {f(c['fuel'], 1)} L estimados · {f(c['kml'])} km/L" + (f" · real {f(r['real_kml'])} km/L" if r["real_kml"] else "")
+             + (f" · ≈ R$ {f(r['est_cost'], 2)}" if r["est_cost"] else ""),
+             f"🌱 Direção econômica {f(c['eco_score'], 0)}/100 · 🦋 borboleta {f(c['tb_score'], 0)}/100"]
+    sev = r["alerts_by_severity"]
+    lines.append(f"🚨 {sev.get('crit', 0)} crítico(s), {sev.get('warn', 0)} aviso(s)" +
+                 (": " + "; ".join(a["title"] for a in r["alerts"][:3]) if r["alerts"] else ""))
+    if r["dtc_events"]:
+        lines.append("⚠️ Códigos: " + ", ".join(sorted({e["code"] for e in r["dtc_events"]})))
+    if r["tips"]:
+        lines.append("💡 " + r["tips"][0])
+    return f"Relatório {'semanal' if r['kind'] == 'week' else 'mensal'} — {r['label']}", "\n".join(lines)
+
+
+def queue_due(db_path: str) -> list[str]:
+    """Coloca na fila de push os relatórios do período que acabou de fechar (uma vez cada)."""
+    con = sqlite3.connect(db_path, timeout=30)
+    con.row_factory = sqlite3.Row
+    sent = []
+    try:
+        for kind in ("week", "month"):
+            a, b, label = period_bounds(kind, -1)
+            key = f"report_sent_{kind}_{a}"
+            if con.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone():
+                continue
+            first = con.execute("SELECT MIN(start_ts) FROM trip").fetchone()[0]
+            if first is None or first > b:            # sem dados nesse período
+                con.execute("INSERT OR REPLACE INTO meta VALUES (?, '0')", (key,))
+                continue
+            title, body = to_text(build(con, kind, -1))
+            con.execute("INSERT INTO outbox(ts, title, body, priority, tags) VALUES (?,?,?,?,?)",
+                        (int(time.time() * 1000), title, body, 3, "bar_chart,car"))
+            con.execute("INSERT OR REPLACE INTO meta VALUES (?, '1')", (key,))
+            sent.append(label)
+        con.commit()
+    finally:
+        con.close()
+    return sent

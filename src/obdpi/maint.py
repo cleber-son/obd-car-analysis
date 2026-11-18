@@ -17,6 +17,12 @@ def main():
     if not Path(dbp).exists():
         return
     bdir.mkdir(parents=True, exist_ok=True)
+    from . import reports
+    try:
+        for lbl in reports.queue_due(dbp):
+            print("relatório na fila:", lbl)
+    except Exception as e:
+        print("relatório falhou:", e)
     backups = sorted(bdir.glob("obd-*.db"))
     if not backups or time.time() - backups[-1].stat().st_mtime > 7 * 86400:
         tmp = bdir / f"obd-{time.strftime('%Y%m%d')}.db.tmp"

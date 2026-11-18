@@ -16,6 +16,7 @@
 <header class="top"><div class="in">
   <div class="brand"><div class="logo"><i></i></div><div><h1>Civic 1.8 Flex</h1><small>2008 · R18A · Manual</small></div></div>
   <div class="theme" id="theme" role="group" aria-label="Tema"><button type="button" data-t="dark">Escuro</button><button type="button" data-t="light">Claro</button><button type="button" data-t="auto">Auto</button></div>
+  <button class="btn" type="button" id="aiBtn" style="background:var(--volt);color:#fff;border:0">🤖 Analisar dados</button>
   <a class="btn" href="/dirigir" style="background:var(--speed);color:#04121a;border:0">▶ Modo direção</a>
   <div class="chips" id="chips"><span class="chip"><span class="dot" style="--c:var(--muted)"></span>Conectando ao Pi…</span></div>
   <nav class="tabs" id="tabs">
@@ -24,6 +25,7 @@
     <a href="#viagens" data-v="viagens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19l5-14h6l5 14"/><path d="M12 9v2M12 14v2"/></svg>Viagens</a>
     <a href="#consumo" data-v="consumo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M14 9h2a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V8l-3-3"/><path d="M7 7h4v4H7z"/></svg>Consumo</a>
     <a href="#alertas" data-v="alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>Alertas<span class="badge" id="badge" hidden></span></a>
+    <a href="#diagnostico" data-v="diagnostico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>Diagnóstico</a>
     <a href="#sensores" data-v="sensores"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Sensores</a>
     <a href="#relatorio" data-v="relatorio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Relatório</a>
     <a href="#sistema" data-v="sistema"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg>Sistema</a>
@@ -137,6 +139,25 @@
     </div>
   </section>
 
+  <!-- DIAGNÓSTICO -->
+  <section class="view" id="v-diagnostico" hidden>
+    <div class="grid2e">
+      <div class="card"><h2>Entrada falsa de ar × MAF</h2><div class="lbl" style="margin:4px 0 10px">MAF medido ÷ ar que o motor deveria admitir, por carga (última viagem)</div>
+        <div id="airBox"></div></div>
+      <div class="card"><h2>Autotestes da ECU (monitores)</h2><div class="lbl" style="margin:4px 0 10px">Ficam prontos depois de rodar; só então a ECU confirma falhas</div>
+        <div class="list" id="monBox"></div></div>
+    </div>
+    <div class="grid2e">
+      <div class="card"><h2>Bateria na partida</h2><div class="legend" style="margin:6px 0 10px"><span style="--c:var(--volt)">Em repouso</span><span style="--c:var(--bad)">Mínimo na partida (bom &gt; 9,6 V)</span></div>
+        <svg class="chart sm" id="crankChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+      <div class="card"><h2>Aquecimento do motor</h2><div class="lbl" style="margin:4px 0 10px">Minutos até 80 °C nas partidas a frio (típico 5–12 min rodando)</div>
+        <svg class="chart sm" id="warmChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+    </div>
+    <div class="card"><div class="row-head"><div><h2>Direção econômica</h2><div class="lbl" style="margin-top:4px">Nota por viagem: giro, arrancadas, freadas, tempo parado, velocidade</div></div><b class="num big2" id="ecoNow">—</b></div>
+      <svg class="chart sm" id="ecoChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:8px"></svg>
+      <div class="list" id="ecoTips" style="margin-top:10px"></div></div>
+  </section>
+
   <!-- SENSORES -->
   <section class="view" id="v-sensores" hidden>
     <div class="card" id="sigChartCard" hidden><div class="row-head"><h2 id="sigTitle"></h2>
@@ -148,6 +169,13 @@
 
   <!-- RELATÓRIO -->
   <section class="view" id="v-relatorio" hidden>
+    <div class="card"><div class="row-head"><div><h2 id="perTitle">Relatório da semana</h2><div class="lbl" style="margin-top:4px">Comparado com o período anterior · enviado no iPhone toda segunda e todo dia 1º</div></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><div class="theme" id="perKind"><button type="button" data-k="week" aria-pressed="true">Semanal</button><button type="button" data-k="month">Mensal</button></div>
+      <button class="btn" type="button" id="perPrev" aria-label="Anterior">◀</button><button class="btn" type="button" id="perNext" aria-label="Próximo">▶</button></div></div>
+      <div class="stats" id="perStats" style="margin-top:12px"></div>
+      <div class="grid2e" style="margin-top:12px"><div><h3 class="lbl">Km por dia</h3><svg class="chart sm" id="perChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+        <div><h3 class="lbl">Alertas e dicas</h3><div class="list" id="perList" style="margin-top:8px"></div></div></div>
+    </div>
     <div class="card"><div class="row-head"><h2>Relatório</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><select id="repDays" aria-label="Período"><option value="1">Hoje</option><option value="7" selected>7 dias</option><option value="30">30 dias</option><option value="90">90 dias</option><option value="365">1 ano</option></select>
       <a class="btn" id="csvLink" href="/api/export.csv">Baixar CSV</a></div></div>
@@ -184,6 +212,13 @@
     <svg class="chart" id="mChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg>
     <div class="stats" id="mStats"></div>
     <div id="mAdv"></div>
+  </div>
+</div>
+<div class="modal" id="aiModal" hidden role="dialog" aria-modal="true" aria-labelledby="aiTitle">
+  <div class="sheet card">
+    <div class="row-head"><div><h2 id="aiTitle">Análise completa por IA</h2><div class="lbl" id="aiSub" style="margin-top:4px"></div></div>
+      <div style="display:flex;gap:8px"><button class="btn" type="button" id="aiRun">Analisar agora</button><button class="btn" type="button" id="aiClose" aria-label="Fechar">✕</button></div></div>
+    <div id="aiBody" class="md"></div>
   </div>
 </div>
 <script src="/static/app.js"></script>

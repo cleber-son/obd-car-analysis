@@ -149,7 +149,9 @@ def trip(tid: int):
     end = t["end_ts"] or now_ms()
     t["alerts"] = rows(con.execute("SELECT * FROM alert WHERE trip_id=? ORDER BY ts", (tid,)))
     t["dtc_events"] = rows(con.execute("SELECT * FROM dtc_event WHERE ts BETWEEN ? AND ? ORDER BY ts", (t["start_ts"], end)))
-    t["series"] = series("rpm,speed,tps,tps_cmd,pedal_d,ect,ltft1,stft1,batt", t["start_ts"], end, 800)["series"]
+    t["series"] = series("rpm,speed,tps,tps_cmd,pedal_d,ect,ltft1,stft1,batt,maf,fuel_lh", t["start_ts"], end, 800)["series"]
+    for k in ("air_json", "eco_json"):
+        t[k] = json.loads(t[k]) if t.get(k) else None
     return t
 
 
@@ -219,6 +221,20 @@ def throttle(days: int = 30):
             "idle": idle, "scatter": scatter, "events": ev}
 
 
+# ---------------------------------------------------------------- diagnósticos
+@app.get("/api/diagnostics")
+def diagnostics(days: int = 60):
+    con = ro()
+    since = now_ms() - days * DAY
+    tr = rows(con.execute("""SELECT id, start_ts, duration_s, distance_km, air_verdict, air_json, warmup_s, start_ect, crank_v, rest_v,
+                             eco_score, eco_json FROM trip WHERE finalized=1 AND start_ts>? ORDER BY start_ts""", (since,)))
+    for t in tr:
+        for k in ("air_json", "eco_json"):
+            t[k] = json.loads(t[k]) if t.get(k) else None
+    lv = read_live()
+    return {"trips": tr, "readiness": lv.get("readiness")}
+
+
 # ---------------------------------------------------------------- relatórios
 @app.get("/api/report")
 def report(days: int = 7):
@@ -232,6 +248,16 @@ def report(days: int = 7):
     daily = rows(con.execute(f"""SELECT ((start_ts+({TZ}))/86400000)*86400000-({TZ}) day, COUNT(*) trips, SUM(distance_km) km, SUM(duration_s) dur, AVG(tb_score) score
                                 FROM trip WHERE start_ts>? AND finalized=1 GROUP BY 1 ORDER BY 1""", (since,)))
     return {"days": days, "totals": dict(t), "alerts_by_severity": sev, "top_alerts": top, "daily": daily}
+
+
+@app.get("/api/report/period")
+def report_period(kind: str = "week", offset: int = 0):
+    from .. import reports
+    if kind not in ("week", "month"):
+        raise HTTPException(400, "kind = week ou month")
+    r = reports.build(ro(), kind, offset)
+    r["text"] = reports.to_text(r)
+    return r
 
 
 @app.get("/api/export.csv")
@@ -350,6 +376,26 @@ def fuel_fill(body: dict, x_token: str | None = Header(None)):
                 (ts, "abastecimento", f"Tanque cheio: {fuel}" + (f", {liters:g} L" if liters else "") + (f" a R$ {price:.2f}/L" if price else "")))
     con.commit()
     return {"ok": True, "real_kml": kml, "km_since_prev": km, "mix_after": mix}
+
+
+# ---------------------------------------------------------------- análise por IA
+@app.post("/api/ai/analyze")
+def ai_analyze(x_token: str | None = Header(None)):
+    check_admin(x_token)
+    from .. import ai
+    return ai.start(DB, read_live())
+
+
+@app.get("/api/ai/analysis")
+def ai_analysis():
+    from .. import ai
+    j = ai.job()
+    if j.get("status") in ("idle", None):
+        last = ai.last(DB)
+        return {"status": "done", **last} if last else {"status": "idle"}
+    if j.get("status") == "running":
+        j["elapsed_s"] = int(time.time() - j["started"])
+    return j
 
 
 # ---------------------------------------------------------------- teste 0–100

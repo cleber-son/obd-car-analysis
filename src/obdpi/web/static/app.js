@@ -403,6 +403,85 @@
     $("#annText").value = ""; loadSystem().catch(console.error);
   });
 
+  // ------------------------------------------------------------ diagnóstico
+  const AIRV = { entrada_de_ar: ["var(--bad)", "Assinatura de entrada falsa de ar"], suspeito: ["var(--warn)", "Suspeito: MAF baixo em marcha lenta"], maf_baixo: ["var(--warn)", "MAF lendo baixo em todas as cargas"], normal: ["var(--ok)", "Normal"] };
+  async function loadDiag() {
+    const d = await api("/api/diagnostics?days=60");
+    const tr = d.trips; const last = [...tr].reverse().find((t) => t.air_json);
+    if (last) { const b = last.air_json.buckets; const [c, l] = AIRV[last.air_verdict] || ["var(--muted)", "Dados insuficientes"];
+      $("#airBox").innerHTML = `<div class="alert" style="--s:${c}"><span class="ic">${last.air_verdict === "normal" ? "✓" : "!"}</span><div><div class="t">${l}</div><div class="d">${esc(last.air_json.txt)} · viagem de ${dt(last.start_ts)}</div></div><span></span></div>
+        <div class="tbl" style="margin-top:10px"><table><thead><tr><th>Condição</th><th>MAF ÷ esperado</th><th>Típico</th><th>Leituras</th></tr></thead><tbody>${Object.entries(b).map(([k, x]) => { const ok = x.ratio == null || (x.ratio >= x.typical[0] && x.ratio <= x.typical[1]);
+          return `<tr><td>${({ marcha_lenta: "Marcha lenta", leve: "Carga leve", media: "Carga média", alta: "Carga alta" })[k]}</td><td class="num" style="color:${x.ratio == null ? "" : ok ? "var(--ok)" : "var(--bad)"}">${x.ratio == null ? "—" : Math.round(x.ratio * 100) + "%"}</td><td class="num">${Math.round(x.typical[0] * 100)}–${Math.round(x.typical[1] * 100)}%</td><td class="num">${x.n}</td></tr>`; }).join("")}</tbody></table></div>`;
+    } else $("#airBox").innerHTML = `<div class="empty">Aparece após a primeira viagem com motor quente (precisa de marcha lenta e de carga).</div>`;
+    const r = d.readiness || live?.readiness;
+    $("#monBox").innerHTML = r && r.monitors?.length ? `<div class="muted" style="font-size:13px">${r.ready} de ${r.total} prontos</div>` + r.monitors.map((m) => `<div class="alert" style="--s:${m.ready ? "var(--ok)" : "var(--warn)"}"><span class="ic">${m.ready ? "✓" : "…"}</span><div><div class="t">${esc(m.name)}</div><div class="d">${m.ready ? "Concluído" : "Ainda não concluído: rode mais para a ECU testar"}</div></div><span class="pill">${m.ready ? "Pronto" : "Pendente"}</span></div>`).join("")
+      : `<div class="empty">Lido a cada 20 s com a ignição ligada.</div>`;
+    lineChart($("#crankChart"), [{ pts: tr.filter((t) => t.rest_v).map((t) => [t.start_ts, t.rest_v]), c: "--volt", dots: true, r: 4 }, { pts: tr.filter((t) => t.crank_v).map((t) => [t.start_ts, t.crank_v]), c: "--bad", dots: true, r: 4 }, { pts: tr.length ? [[tr[0].start_ts, 9.6], [tr.at(-1).start_ts, 9.6]] : [], c: "--line", w: 1, end: false }], { ymin: 7, ymax: 13.5 });
+    lineChart($("#warmChart"), [{ pts: tr.filter((t) => t.warmup_s).map((t) => [t.start_ts, t.warmup_s / 60]), c: "--temp", bars: true }], { ymin: 0 });
+    const eco = tr.filter((t) => t.eco_score != null);
+    $("#ecoNow").textContent = eco.length ? Math.round(eco.slice(-5).reduce((a, t) => a + t.eco_score, 0) / Math.min(5, eco.length)) + "/100" : "—";
+    lineChart($("#ecoChart"), [{ pts: eco.map((t) => [t.start_ts, t.eco_score]), c: "--ok", area: true }], { ymin: 0, ymax: 100 });
+    const tips = {}; for (const t of eco.slice(-10)) for (const x of t.eco_json?.dicas || []) tips[x] = (tips[x] || 0) + 1;
+    $("#ecoTips").innerHTML = Object.keys(tips).length ? Object.entries(tips).sort((a, b) => b[1] - a[1]).map(([t, n]) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(t)}</div><div class="d">em ${n} das últimas viagens</div></div><span></span></div>`).join("") : `<div class="empty">Sem dicas por enquanto.</div>`;
+  }
+
+  // ------------------------------------------------------------ relatório semanal / mensal
+  let perKind = "week", perOff = 0;
+  async function loadPeriod() {
+    const r = await api(`/api/report/period?kind=${perKind}&offset=${perOff}`);
+    const c = r.cur, d = r.delta, sv = r.alerts_by_severity || {};
+    const dl = (x, inv) => x == null ? "" : `<span style="font-size:12px;color:${(x > 0) !== !!inv ? "var(--ok)" : "var(--bad)"}"> ${x > 0 ? "▲" : "▼"}${nf(Math.abs(x), 0)}%</span>`;
+    $("#perTitle").textContent = r.label;
+    $("#perNext").disabled = perOff >= 0;
+    $("#perStats").innerHTML = `<div><span class="lbl">Viagens</span><b>${c.trips}</b></div><div><span class="lbl">Distância</span><b>${nf(c.km, 0)} km${dl(d.km)}</b></div>
+      <div><span class="lbl">Motor ligado</span><b>${dur(c.dur)}</b></div><div><span class="lbl">Combustível</span><b>${nf(c.fuel, 1)} L${dl(d.fuel, true)}</b></div>
+      <div><span class="lbl">Consumo</span><b>${nf(c.kml, 1)} km/L${dl(d.kml)}</b></div><div><span class="lbl">Real (tanques)</span><b>${nf(r.real_kml, 1)} km/L</b></div>
+      <div><span class="lbl">Gasto</span><b>${r.spent ? "R$ " + nf(r.spent, 2) : r.est_cost ? "≈ R$ " + nf(r.est_cost, 2) : "—"}</b></div><div><span class="lbl">Vel. média</span><b>${nf(c.avg_speed)} km/h</b></div>
+      <div><span class="lbl">Direção econômica</span><b>${nf(c.eco_score)}${dl(d.eco_score)}</b></div><div><span class="lbl">Borboleta</span><b>${nf(c.tb_score)}${dl(d.tb_score)}</b></div>
+      <div><span class="lbl">Alertas</span><b><span style="color:var(--bad)">${sv.crit || 0}</span> / <span style="color:var(--warn)">${sv.warn || 0}</span></b></div><div><span class="lbl">Melhor 0–100</span><b>${r.best_0_100 ? nf(r.best_0_100, 2) + " s" : "—"}</b></div>`;
+    lineChart($("#perChart"), [{ pts: r.daily.map((x) => [x.day + 43200e3, x.km || 0]), c: "--speed", bars: true }], { ymin: 0, x0: r.from, x1: r.to, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
+    $("#perList").innerHTML = (r.alerts.slice(0, 5).map((a) => alertItem({ ...a, ts: a.last_ts, detail: `${a.n}× no período`, count: 1 })).join("") +
+      r.tips.map((t) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(t)}</div></div><span></span></div>`).join("")) || `<div class="empty">Nada a destacar no período.</div>`;
+  }
+  $("#perKind").addEventListener("click", (e) => { const b = e.target.closest("[data-k]"); if (!b) return; perKind = b.dataset.k; perOff = 0;
+    $("#perKind").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); loadPeriod().catch(console.error); });
+  $("#perPrev").addEventListener("click", () => { perOff--; loadPeriod().catch(console.error); });
+  $("#perNext").addEventListener("click", () => { if (perOff < 0) { perOff++; loadPeriod().catch(console.error); } });
+
+  // ------------------------------------------------------------ análise por IA
+  function md(src) {
+    const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/(^|\s)_(.+?)_(?=\s|$)/g, "$1<i>$2</i>");
+    let html = "", list = null;
+    const close = () => { if (list) { html += `</${list}>`; list = null; } };
+    for (const line of src.split("\n")) {
+      let m;
+      if ((m = line.match(/^(#{1,3})\s+(.*)/))) { close(); html += `<h${Math.min(3, m[1].length + 1)}>${inline(m[2])}</h${Math.min(3, m[1].length + 1)}>`; }
+      else if ((m = line.match(/^\s*[-*•]\s+(.*)/))) { if (list !== "ul") { close(); html += "<ul>"; list = "ul"; } html += `<li>${inline(m[1])}</li>`; }
+      else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { if (list !== "ol") { close(); html += "<ol>"; list = "ol"; } html += `<li>${inline(m[1])}</li>`; }
+      else if (!line.trim()) close();
+      else { close(); html += `<p>${inline(line)}</p>`; }
+    }
+    close(); return html;
+  }
+  let aiTimer = null;
+  async function aiPoll() {
+    clearTimeout(aiTimer);
+    const j = await api("/api/ai/analysis").catch((e) => ({ status: "error", error: e.message }));
+    if (j.status === "running") {
+      $("#aiSub").textContent = "Analisando…"; $("#aiRun").disabled = true;
+      $("#aiBody").innerHTML = `<p><span class="spin"></span>O Claude está lendo sensores, viagens, alertas e diagnósticos (${j.elapsed_s || 0} s). Costuma levar 1–3 min.</p>`;
+      aiTimer = setTimeout(aiPoll, 3000); return;
+    }
+    $("#aiRun").disabled = false;
+    if (j.status === "error") { $("#aiSub").textContent = "Erro"; $("#aiBody").innerHTML = `<div class="alert" style="--s:var(--bad)"><span class="ic">!</span><div><div class="t">Não foi possível analisar</div><div class="d">${esc(j.error)}</div></div><span></span></div>`; return; }
+    if (j.status === "done" && j.text) { $("#aiSub").textContent = `${j.ts ? dt(j.ts) : "agora"} · ${j.model || ""}`; $("#aiBody").innerHTML = md(j.text); return; }
+    $("#aiSub").textContent = ""; $("#aiBody").innerHTML = `<div class="empty">Nenhuma análise ainda. Toque em <b>Analisar agora</b>: o Pi envia o resumo dos dados para o Claude (precisa de internet).</div>`;
+  }
+  $("#aiBtn").addEventListener("click", () => { $("#aiModal").hidden = false; aiPoll(); });
+  $("#aiClose").addEventListener("click", () => { $("#aiModal").hidden = true; clearTimeout(aiTimer); });
+  $("#aiModal").addEventListener("click", (e) => { if (e.target.id === "aiModal") { $("#aiModal").hidden = true; clearTimeout(aiTimer); } });
+  $("#aiRun").addEventListener("click", async () => { $("#aiRun").disabled = true; await fetch("/api/ai/analyze", { method: "POST" }); aiPoll(); });
+
   // ------------------------------------------------------------ tema
   const setTheme = (t) => { document.documentElement.dataset.theme = t; try { localStorage.setItem("theme", t); } catch { }
     document.querySelectorAll("#theme button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.t === t)); };
@@ -410,7 +489,7 @@
   setTheme(document.documentElement.dataset.theme || "dark");
 
   // ------------------------------------------------------------ roteamento
-  const LOAD = { consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: loadReport, sistema: loadSystem };
+  const LOAD = { diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: loadSystem };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });

@@ -164,3 +164,8 @@ details.alert[open] > summary { border-bottom: 1px solid var(--line) }
 .sensor.bad .val { color: var(--bad) } .sensor.bad .rng { color: var(--bad) }
 
 .big2 { font-size: 28px; font-weight: 700 }
+
+/* laudo da IA */
+.md { font-size: 14px; line-height: 1.6; max-width: 75ch } .md h2 { font-size: 17px; margin: 18px 0 6px } .md h3 { font-size: 15px; margin: 14px 0 4px }
+.md ul, .md ol { padding-left: 20px; margin: 6px 0 } .md li { margin: 3px 0 } .md p { margin: 8px 0 } .md code { font: 12px var(--f-mono); background: var(--panel2); padding: 1px 5px; border-radius: 5px }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--volt); border-radius: 50%; animation: sp 1s linear infinite; vertical-align: -2px; margin-right: 6px } @keyframes sp { to { transform: rotate(360deg) } }

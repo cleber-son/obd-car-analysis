@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 import os
 import socket
 import sys
@@ -17,6 +18,7 @@ from pathlib import Path
 from .. import __version__, config, db, notify
 from ..analytics import SEV_ORDER, Alert
 from ..analytics import fuel as fuelmod
+from ..analytics import tripdiag
 from ..analytics.limits import LimitsEngine
 from ..analytics.throttle import ThrottleEngine, trip_score
 from ..elm.elm327 import ELM327, EcuSilent, ElmError, ElmNeedsReset
@@ -27,7 +29,7 @@ from . import bt
 
 log = logging.getLogger("collector")
 
-FAST_COLS = ("rpm", "speed", "map", "tps", "tps_rel", "tps_b", "tps_cmd", "pedal_d", "pedal_e", "fuel_lh")
+FAST_COLS = ("rpm", "speed", "map", "tps", "tps_rel", "tps_b", "tps_cmd", "pedal_d", "pedal_e", "fuel_lh", "load", "gear", "maf")
 
 
 def sd_notify(msg: str) -> None:
@@ -120,6 +122,9 @@ class Collector:
         self.fuel_mix, self.fuel_calib = 0.0, 1.0
         self.trip_live = {"km": 0.0, "fuel_l": 0.0, "moving_s": 0.0, "max_speed": 0, "last_ts": None}
         self.accel: dict | None = None
+        self.readiness: dict | None = None
+        self.volt_hist: list[tuple[int, float]] = []      # ATRV recentes (para medir a queda na partida)
+        self.pending_crank: dict | None = None
         self.load_fuel()
         self.finalize_open_trips()
         self._load_dtc_state()
@@ -326,9 +331,19 @@ class Collector:
     def start_trip(self, ts: int) -> None:
         self.trip_live = {"km": 0.0, "fuel_l": 0.0, "moving_s": 0.0, "max_speed": 0, "last_ts": None}
         cold = self.values.get("ect")
-        cur = self.con.execute("INSERT INTO trip(session_id, start_ts, end_ts, cold_start) VALUES (?,?,?,?)",
-                               (self.session_id, ts, ts, int(cold is not None and cold < 50)))
-        self.trip_id, self.trip_start = cur.lastrowid, ts
+        # o Pi caiu (energia) e voltou em < 3 min com o motor ligado: continua a mesma viagem
+        last = self.con.execute("SELECT id, start_ts, end_ts, end_reason FROM trip ORDER BY start_ts DESC LIMIT 1").fetchone()
+        if last and last["end_reason"] in ("corte_de_energia", "sem_conexao") and ts - (last["end_ts"] or 0) < 180_000:
+            self.con.execute("UPDATE trip SET finalized=0, end_reason=NULL WHERE id=?", (last["id"],))
+            self.trip_id, self.trip_start = last["id"], last["start_ts"]
+            self.event("info", "viagem_continuada", f"viagem {last['id']} retomada após queda de {int((ts - last['end_ts']) / 1000)} s")
+        else:
+            cur = self.con.execute("INSERT INTO trip(session_id, start_ts, end_ts, cold_start, start_ect) VALUES (?,?,?,?,?)",
+                                   (self.session_id, ts, ts, int(cold is not None and cold < 50), cold))
+            self.trip_id, self.trip_start = cur.lastrowid, ts
+        # bateria: repouso (antes) e mínimo durante a partida
+        before = [v for t, v in self.volt_hist if ts - 15000 <= t <= ts - 1500]
+        self.pending_crank = {"ts": ts, "rest": statistics.median(before) if before else None}
         self.trip_alerts = []
         self.notified = {}
         self.con.commit()
@@ -382,6 +397,27 @@ class Collector:
                    sagg("batt", "MIN"), sagg("batt", "MAX"), sagg("ltft1", "AVG"), score, len(alerts), tid))
         c.execute("UPDATE trip SET fuel_l=?, km_l=? WHERE id=?",
                   (round(fuel_l, 3) if fuel_l else None, round(dist / fuel_l, 1) if fuel_l > 0.05 else None, tid))
+        self.trip_diagnostics(tid, a, b)
+
+    def trip_diagnostics(self, tid: int, a: int, b: int) -> None:
+        c = self.con
+        try:
+            rows = c.execute("SELECT ts, speed, rpm, load, gear, maf, map FROM fast_sample WHERE ts BETWEEN ? AND ? ORDER BY ts", (a, b)).fetchall()
+            sid_ect, sid_iat = self.sig_ids.get("ect"), self.sig_ids.get("iat")
+            iat = c.execute("SELECT AVG(value) FROM sample WHERE signal_id=? AND ts BETWEEN ? AND ?", (sid_iat, a, b)).fetchone()[0] if sid_iat else None
+            warm = c.execute("SELECT MIN(ts) FROM sample WHERE signal_id=? AND ts BETWEEN ? AND ? AND value >= 80", (sid_ect, a, b)).fetchone()[0] if sid_ect else None
+            t = dict(c.execute("SELECT * FROM trip WHERE id=?", (tid,)).fetchone())
+            warmup = int((warm - a) / 1000) if warm and (t.get("start_ect") or 99) < 50 else None
+            buckets, verdict, txt = tripdiag.air_check(rows, iat)
+            eco, eco_d = tripdiag.eco_score(rows)
+            c.execute("UPDATE trip SET warmup_s=?, air_json=?, air_verdict=?, eco_score=?, eco_json=? WHERE id=?",
+                      (warmup, json.dumps({"buckets": buckets, "txt": txt}, ensure_ascii=False), verdict, eco,
+                       json.dumps(eco_d, ensure_ascii=False) if eco_d else None, tid))
+            t.update(warmup_s=warmup, air_verdict=verdict, air_txt=txt)
+            if t.get("duration_s", 0) and t["duration_s"] > 300:
+                self.handle_alerts(tripdiag.trip_alerts(t, b))
+        except Exception as e:                      # diagnóstico nunca derruba o coletor
+            log.warning("diagnóstico da viagem %s falhou: %s", tid, e)
 
     def finalize_open_trips(self) -> None:
         for r in self.con.execute("SELECT id FROM trip WHERE finalized=0").fetchall():
@@ -454,6 +490,7 @@ class Collector:
         st = e.request(0x01, [0x01])
         if 0x01 in st:
             s = decode_status(st[0x01])
+            self.readiness = {"ready": s["ready"], "total": s["total"], "monitors": s["monitors"]}
             if s["mil"] != self.mil:
                 self.mil = s["mil"]
                 self.event("warn" if self.mil else "info", "luz_injecao", "acesa" if self.mil else "apagada")
@@ -512,6 +549,7 @@ class Collector:
                         "multi_pid": self.elm.multi_pid if self.elm else None,
                         "name": self.state.get("adapter_name")},
             "trip": self._trip_live_view(),
+            "readiness": self.readiness,
             "accel": {k: v for k, v in self.accel.items() if k != "pts"} if self.accel else None,
             "supported": len(self.supported), "clock_synced": self.clock.synced, "version": __version__,
         }
@@ -599,6 +637,17 @@ class Collector:
             self.trip_live_update(vals, ts)
             return
         raw = self.read_pids(self.fast_pids or [0x0C])
+        if not self.engine_on or (self.pending_crank and ts - self.pending_crank["ts"] < 4000):
+            bv = self.elm.voltage()
+            if bv is not None:
+                self.volt_hist = [(t, v) for t, v in self.volt_hist if ts - t < 20000] + [(ts, bv)]
+                self.values["batt"] = bv
+        if self.pending_crank and ts - self.pending_crank["ts"] >= 4000 and self.trip_id:
+            pc = self.pending_crank
+            dip = [v for t, v in self.volt_hist if pc["ts"] - 6000 <= t <= pc["ts"] + 4000]
+            self.con.execute("UPDATE trip SET rest_v=COALESCE(rest_v, ?), crank_v=COALESCE(crank_v, ?) WHERE id=?",
+                             (pc["rest"], min(dip) if dip else None, self.trip_id))
+            self.pending_crank = None
         vals: dict[str, float] = {}
         for pid, data in raw.items():
             vals.update(decode(pid, data))

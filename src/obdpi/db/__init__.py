@@ -52,3 +52,8 @@ def migrate(con) -> None:
     _add_col(con, "trip", "fuel_l", "REAL")
     _add_col(con, "trip", "km_l", "REAL")
     _add_col(con, "alert", "count", "INTEGER DEFAULT 1")
+    for col in ("load", "gear", "maf"):
+        _add_col(con, "fast_sample", col, "REAL")
+    for col, decl in (("eco_score", "INTEGER"), ("eco_json", "TEXT"), ("warmup_s", "INTEGER"), ("start_ect", "REAL"),
+                      ("crank_v", "REAL"), ("rest_v", "REAL"), ("air_json", "TEXT"), ("air_verdict", "TEXT")):
+        _add_col(con, "trip", col, decl)
