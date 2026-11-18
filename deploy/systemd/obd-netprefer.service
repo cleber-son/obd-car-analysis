@@ -1,0 +1,12 @@
+[Unit]
+Description=OBD Civic - prefere o hotspot do celular quando estiver ao alcance
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+ExecStart=/opt/obd/deploy/obd-netprefer.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

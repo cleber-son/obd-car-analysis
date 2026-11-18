@@ -33,11 +33,19 @@ echo "== mDNS e anúncio de IP"
 install -m 644 deploy/avahi-obd.service /etc/avahi/services/obd.service
 install -m 755 deploy/90-obd-announce /etc/NetworkManager/dispatcher.d/90-obd-announce
 
+echo "== hotspot do celular com IP fixo e prioridade"
+if ! nmcli -t -f NAME con show | grep -qx "hotspot-iphone"; then
+  PSK=$(grep -A1 '"Android 17"' /etc/netplan/*.yaml 2>/dev/null | sed -n 's/.*password: "\(.*\)"/\1/p' | head -1)
+  [ -n "$PSK" ] && nmcli con add type wifi ifname wlan0 con-name hotspot-iphone ssid "Android 17" wifi-sec.key-mgmt wpa-psk \
+    wifi-sec.psk "$PSK" ipv4.method manual ipv4.addresses 172.20.10.14/28 ipv4.gateway 172.20.10.1 \
+    ipv4.dns "172.20.10.1 1.1.1.1" connection.autoconnect yes connection.autoconnect-priority 20 >/dev/null
+fi
+
 echo "== serviços"
 install -m 644 deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl restart systemd-journald
-systemctl enable --now obd-btagent.service obd-collector.service obd-web.service obd-maint.timer
+systemctl enable --now obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service
 systemctl restart obd-collector.service obd-web.service
 echo "== OK"
 systemctl --no-pager --lines=0 status obd-collector obd-web obd-btagent | grep -E "●|Active"
