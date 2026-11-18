@@ -70,3 +70,11 @@ Ver `docs/ARQUITETURA.md`.
 - Celular iPhone → notificações via app ntfy. Hotspot "Android 17" adicionado ao `network-config`
   do cartão (3 redes: casa, garagem, hotspot).
 - iPhone: ativar **Ajustes → Acesso Pessoal → Maximizar Compatibilidade** (o Pi 3 só enxerga 2,4 GHz).
+
+## 2026-11-18 — Primeiro boot OK
+- `obd.local` → 192.168.200.105 (cabo) e 192.168.200.205 (WiFi "Wake Up 2"). SSH por chave funcionando.
+- Kernel 6.18.50 aarch64, cloud-init `done`, root expandido (29 GB, 10% usado), 905 MB RAM (764 livres).
+- Bluetooth `hci0` B8:27:EB:15:60:6B ligado; avahi, ssh ativos; relógio sincronizado (NTP); Python 3.13.5.
+- ⚠️ `vcgencmd get_throttled = 0x50005` → **subtensão agora e CPU limitada**. A fonte atual é fraca;
+  trocar por 5,1 V / 2,5 A (oficial) em casa e um conversor 12→5 V de 3 A reais no carro.
+- Obs.: o PC está em 192.168.17.x e o Pi em 192.168.200.x (redes diferentes), mas há rota entre elas.
