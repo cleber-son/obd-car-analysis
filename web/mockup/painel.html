@@ -1,0 +1,263 @@
+<title>Painel Civic OBD</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: mobile-first instrument panel — status bar, live gauges, throttle-body health, sensors grid, trips & DTCs. Dark-first (car at night). */
+:root {
+  --bg: #0d1117; --panel: #151b24; --panel2: #1c2430; --line: #263041;
+  --fg: #e8edf4; --muted: #8592a6;
+  --rpm: #ff6b3d; --speed: #2ec8ff; --temp: #ffb020; --volt: #8b7bff; --pedal: #ff4fa3; --tps: #2ee59d;
+  --ok: #2ee59d; --warn: #ffb020; --bad: #ff4d5e;
+  --f-display: "Sora", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Inter", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #eef2f7; --panel: #ffffff; --panel2: #f4f7fb; --line: #dbe2ec; --fg: #121826; --muted: #5d6b80;
+  --rpm: #e8521f; --speed: #0596d6; --temp: #d98a00; --volt: #6a58f0; --pedal: #e0287f; --tps: #10a86c;
+  --ok: #10a86c; --warn: #d98a00; --bad: #e02d3f; color-scheme: light } }
+:root[data-theme="light"] {
+  --bg: #eef2f7; --panel: #ffffff; --panel2: #f4f7fb; --line: #dbe2ec; --fg: #121826; --muted: #5d6b80;
+  --rpm: #e8521f; --speed: #0596d6; --temp: #d98a00; --volt: #6a58f0; --pedal: #e0287f; --tps: #10a86c;
+  --ok: #10a86c; --warn: #d98a00; --bad: #e02d3f; color-scheme: light }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 14px; line-height: 1.45 }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel) }
+.wrap { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 48px; display: grid; gap: 16px }
+h1, h2, h3 { font-family: var(--f-display); margin: 0; text-wrap: balance }
+h2 { font-size: 15px; font-weight: 600 }
+.lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600 }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; min-width: 0 }
+
+/* top bar */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line) }
+.top .in { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between }
+.brand { display: flex; align-items: center; gap: 10px }
+.brand .logo { width: 34px; height: 34px; border-radius: 10px; background: conic-gradient(from 200deg, var(--rpm), var(--temp), var(--tps), var(--speed), var(--volt), var(--pedal), var(--rpm)); display: grid; place-items: center }
+.brand .logo i { width: 22px; height: 22px; border-radius: 7px; background: var(--panel) }
+.brand h1 { font-size: 17px } .brand small { color: var(--muted); display: block; font-size: 12px }
+.chips { display: flex; flex-wrap: wrap; gap: 8px }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 5px 10px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); white-space: nowrap }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent) }
+.dot.warn { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent) }
+.tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none }
+.tabs button { font: 600 13px var(--f-body); color: var(--muted); background: none; border: 0; padding: 8px 12px; border-radius: 10px; cursor: pointer; white-space: nowrap }
+.tabs button[aria-selected="true"] { color: var(--fg); background: var(--panel2) }
+.tabs button:focus-visible, .btn:focus-visible { outline: 2px solid var(--speed); outline-offset: 2px }
+.demo { font-size: 12px; color: var(--muted); text-align: center }
+
+/* gauges */
+.gauges { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px }
+.gauge { display: grid; justify-items: center; gap: 2px; padding: 14px 10px 12px }
+.gauge svg { width: 100%; max-width: 150px; height: auto }
+.gauge .v { font-size: 26px; font-weight: 700; margin-top: -42px }
+.gauge .u { font-size: 11px; color: var(--muted); margin-bottom: 8px }
+.gauge .sub { font-size: 12px; color: var(--muted) }
+
+/* throttle */
+.grid2 { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px }
+.tb-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: var(--c) }
+.chart { width: 100%; height: 190px; display: block }
+.chart text { fill: var(--muted); font: 10px var(--f-mono) }
+.tbstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px }
+.tbstats div { background: var(--panel2); border-radius: 12px; padding: 10px 12px }
+.tbstats b { display: block; font: 700 18px var(--f-mono) }
+
+.health { display: grid; gap: 14px }
+.ring { display: flex; align-items: center; gap: 16px }
+.ring svg { width: 112px; height: 112px; flex: none }
+.ring .score { font: 700 30px var(--f-display) }
+.checks { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none }
+.checks li { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; background: var(--panel2); border-radius: 12px; border-left: 3px solid var(--s) }
+.checks li .t { font-weight: 600; font-size: 13px } .checks li .d { font-size: 12px; color: var(--muted) }
+.pill { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; color: var(--s); background: color-mix(in srgb, var(--s) 16%, transparent) }
+.ic { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--s) 18%, transparent); color: var(--s); font-weight: 800; font-size: 12px }
+
+/* sensors */
+.sensors { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px }
+.sensor { background: var(--panel2); border-radius: 12px; padding: 10px 12px; display: grid; gap: 2px; border-top: 3px solid var(--c, var(--line)) }
+.sensor .n { font-size: 12px; color: var(--muted) } .sensor .pid { font: 500 10px var(--f-mono); color: var(--muted) }
+.sensor .val { font: 700 18px var(--f-mono) } .sensor .val small { font: 500 11px var(--f-body); color: var(--muted); margin-left: 3px }
+.spark { width: 100%; height: 22px }
+.row-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap }
+
+/* trips & dtc */
+.grid3 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px }
+.tbl { overflow-x: auto; margin-top: 10px }
+table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 480px }
+th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; padding: 8px }
+td { padding: 10px 8px; border-top: 1px solid var(--line) } td.num { white-space: nowrap }
+.bar { height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; width: 80px } .bar i { display: block; height: 100%; background: var(--c) }
+.dtc { display: grid; gap: 10px; margin-top: 10px }
+.dtc .it { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 12px; border-radius: 12px; background: var(--panel2); border-left: 3px solid var(--s) }
+.dtc code { font: 700 15px var(--f-mono); color: var(--s); grid-row: span 2; align-self: center }
+.dtc .d { font-size: 12px; color: var(--muted) }
+.btn { font: 600 12px var(--f-body); color: var(--fg); background: var(--panel2); border: 1px solid var(--line); padding: 7px 12px; border-radius: 10px; cursor: pointer }
+.view[hidden] { display: none !important }
+
+@media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr } .gauges { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important } }
+</style>
+
+<header class="top"><div class="in">
+  <div class="brand"><div class="logo"><i></i></div><div><h1>Civic 1.8 Flex</h1><small>2008 · R18A · Manual</small></div></div>
+  <div class="chips">
+    <span class="chip"><span class="dot"></span>ELM327 conectado</span>
+    <span class="chip"><span class="dot"></span>Ao vivo · próxima leitura <b class="num" id="cd">20</b>s</span>
+    <span class="chip num">obd.local · 192.168.0.42</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-v="vivo">Ao vivo</button>
+    <button role="tab" aria-selected="false" data-v="borboleta">Corpo de borboleta</button>
+    <button role="tab" aria-selected="false" data-v="viagens">Viagens e alertas</button>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <p class="demo">Prévia da interface com dados simulados. No carro, os valores virão do adaptador OBD a cada 20 s.</p>
+
+  <section class="view" id="v-vivo" style="display:grid;gap:16px">
+    <div class="gauges" id="gauges"></div>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="tb-head">
+          <div><h2>Pedal × Borboleta</h2><div class="lbl" style="margin-top:4px">Últimos 10 minutos · amostra rápida 1 Hz</div></div>
+          <div class="legend"><span style="--c:var(--pedal)">Pedal (PID 49)</span><span style="--c:var(--tps)">Borboleta (PID 11)</span><span style="--c:var(--speed)">Comandado (PID 4C)</span></div>
+        </div>
+        <svg class="chart" id="tbChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg>
+        <div class="tbstats">
+          <div><span class="lbl">Diferença média</span><b class="num" id="sDiff">2,1%</b></div>
+          <div><span class="lbl">Tempo de resposta</span><b class="num">180 ms</b></div>
+          <div><span class="lbl">Marcha lenta</span><b class="num" id="sIdle">780 rpm</b></div>
+        </div>
+      </div>
+
+      <div class="card health">
+        <h2>Saúde do corpo de borboleta</h2>
+        <div class="ring">
+          <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" fill="none" stroke="var(--panel2)" stroke-width="12"/>
+            <circle cx="60" cy="60" r="50" fill="none" stroke="var(--ok)" stroke-width="12" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="44" transform="rotate(-90 60 60)"/></svg>
+          <div><div class="score num">86<span style="font-size:16px;color:var(--muted)">/100</span></div><div class="d" style="color:var(--muted);font-size:13px">Bom. Uma oscilação de marcha lenta registrada ontem.</div></div>
+        </div>
+        <ul class="checks">
+          <li style="--s:var(--ok)"><span class="ic">✓</span><div><div class="t">Pedal e borboleta alinhados</div><div class="d">Desvio máx. 4% (limite 10%)</div></div><span class="pill">OK</span></li>
+          <li style="--s:var(--warn)"><span class="ic">!</span><div><div class="t">Marcha lenta oscilando</div><div class="d">±140 rpm em 3 de 40 paradas</div></div><span class="pill">Atenção</span></li>
+          <li style="--s:var(--ok)"><span class="ic">✓</span><div><div class="t">Sem modo de emergência</div><div class="d">Borboleta não travou em ~6%</div></div><span class="pill">OK</span></li>
+          <li style="--s:var(--ok)"><span class="ic">✓</span><div><div class="t">Sensores TPS A/B coerentes</div><div class="d">P2135 não reapareceu há 12 dias</div></div><span class="pill">OK</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-head"><div><h2>Todos os sensores</h2><div class="lbl" style="margin-top:4px">31 PIDs suportados pela ECU</div></div>
+        <button class="btn" type="button">Exportar CSV</button></div>
+      <div class="sensors" id="sensors"></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-borboleta" hidden style="gap:16px">
+    <div class="card"><h2>Histórico do corpo de borboleta</h2>
+      <p style="color:var(--muted);max-width:65ch">Aqui ficam a tendência da nota de saúde por dia, a abertura da borboleta em marcha lenta (sinal de sujeira acumulada), cada evento de desalinhamento pedal × borboleta com o trecho do gráfico no momento, e o histórico dos códigos P2101, P2135, P2176 e P0505.</p>
+      <svg class="chart" id="trend" viewBox="0 0 600 190" preserveAspectRatio="none"></svg>
+      <div class="legend" style="margin-top:8px"><span style="--c:var(--ok)">Nota diária</span><span style="--c:var(--temp)">Abertura em marcha lenta (%)</span></div>
+    </div>
+  </section>
+
+  <section class="view grid3" id="v-viagens" hidden>
+    <div class="card"><h2>Viagens recentes</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>Quando</th><th>Duração</th><th>Km</th><th>Vel. média</th><th>Temp. máx</th><th>Borboleta</th></tr></thead>
+        <tbody>
+          <tr><td>Hoje 07:42</td><td class="num">32 min</td><td class="num">18,4</td><td class="num">34 km/h</td><td class="num">92 °C</td><td><div class="bar" style="--c:var(--ok)"><i style="width:92%"></i></div></td></tr>
+          <tr><td>Ontem 18:10</td><td class="num">41 min</td><td class="num">21,9</td><td class="num">32 km/h</td><td class="num">94 °C</td><td><div class="bar" style="--c:var(--warn)"><i style="width:68%"></i></div></td></tr>
+          <tr><td>Ontem 07:38</td><td class="num">29 min</td><td class="num">18,1</td><td class="num">37 km/h</td><td class="num">91 °C</td><td><div class="bar" style="--c:var(--ok)"><i style="width:90%"></i></div></td></tr>
+          <tr><td>16/11 15:02</td><td class="num">1 h 54</td><td class="num">142,6</td><td class="num">75 km/h</td><td class="num">96 °C</td><td><div class="bar" style="--c:var(--ok)"><i style="width:88%"></i></div></td></tr>
+        </tbody></table></div>
+    </div>
+    <div class="card"><div class="row-head"><h2>Códigos de falha</h2><span class="chip"><span class="dot"></span>Luz de injeção apagada</span></div>
+      <div class="dtc">
+        <div class="it" style="--s:var(--warn)"><code>P2135</code><b>Sensores de posição da borboleta A/B divergentes</b><span class="d">Histórico · última vez 06/11 · 3 ocorrências</span></div>
+        <div class="it" style="--s:var(--warn)"><code>P0505</code><b>Controle de ar da marcha lenta</b><span class="d">Pendente em 28/10 · apagou sozinho</span></div>
+        <div class="it" style="--s:var(--ok)"><code>—</code><b>Nenhum código ativo agora</b><span class="d">Leitura dos modos 03 e 07 a cada 20 s</span></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const fmt = (v, d = 0) => v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const G = [
+    { k: 'rpm', n: 'Rotação', u: 'rpm', max: 7000, c: '--rpm', v: 2150, sub: 'Corte 6800' },
+    { k: 'spd', n: 'Velocidade', u: 'km/h', max: 200, c: '--speed', v: 62, sub: '4ª marcha' },
+    { k: 'ect', n: 'Temp. motor', u: '°C', max: 130, c: '--temp', v: 89, sub: 'Normal 85–95' },
+    { k: 'bat', n: 'Bateria', u: 'V', max: 16, c: '--volt', v: 14.1, d: 1, sub: 'Alternador OK' },
+  ];
+  const arc = (p) => { const a = Math.PI * (0.75 + 1.5 * p), r = 58, cx = 75, cy = 75; return `${cx + r * Math.cos(a)} ${cy + r * Math.sin(a)}`; };
+  $('#gauges').innerHTML = G.map(g => `<div class="card gauge"><svg viewBox="0 0 150 130">
+      <path d="M ${arc(0)} A 58 58 0 1 1 ${arc(1)}" fill="none" stroke="var(--panel2)" stroke-width="12" stroke-linecap="round"/>
+      <path id="a-${g.k}" fill="none" stroke="var(${g.c})" stroke-width="12" stroke-linecap="round"/></svg>
+      <div class="v num" id="v-${g.k}"></div><div class="u">${g.u}</div><div class="lbl">${g.n}</div><div class="sub">${g.sub}</div></div>`).join('');
+  const drawG = () => G.forEach(g => {
+    const p = Math.max(0.001, Math.min(1, g.v / g.max)), large = p > 2 / 3 ? 1 : 0;
+    $('#a-' + g.k).setAttribute('d', `M ${arc(0)} A 58 58 0 ${large} 1 ${arc(p)}`);
+    $('#v-' + g.k).textContent = fmt(g.v, g.d || 0);
+  });
+
+  const S = [
+    ['Carga do motor', '04', 34, '%', '--rpm'], ['Pressão coletor (MAP)', '0B', 41, 'kPa', '--speed'], ['Temp. ar admissão', '0F', 31, '°C', '--temp'],
+    ['Avanço de ignição', '0E', 14.5, '°', '--volt'], ['Trim curto B1', '06', 1.6, '%', '--tps'], ['Trim longo B1', '07', -3.1, '%', '--tps'],
+    ['Sonda O2 B1S1', '14', 0.62, 'V', '--pedal'], ['Borboleta relativa', '45', 9.8, '%', '--tps'], ['Borboleta abs. B', '47', 28.2, '%', '--tps'],
+    ['Pedal D', '49', 15.3, '%', '--pedal'], ['Pedal E', '4A', 7.6, '%', '--pedal'], ['Atuador comandado', '4C', 10.4, '%', '--speed'],
+    ['Tensão módulo', '42', 14.08, 'V', '--volt'], ['Temp. ambiente', '46', 26, '°C', '--temp'], ['Etanol no tanque', '52', 62, '%', '--ok'],
+    ['Tempo motor ligado', '1F', 1284, 's', '--muted'],
+  ].map(([n, pid, v, u, c]) => ({ n, pid, v, u, c, h: Array.from({ length: 24 }, () => v * (1 + (Math.random() - .5) * .12)) }));
+  const spark = (h, c) => { const mn = Math.min(...h), mx = Math.max(...h) || 1, r = mx - mn || 1;
+    const pts = h.map((y, i) => `${(i / (h.length - 1)) * 100},${20 - ((y - mn) / r) * 18}`).join(' ');
+    return `<svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none"><polygon points="0,22 ${pts} 100,22" fill="var(${c})" opacity=".14"/><polyline points="${pts}" fill="none" stroke="var(${c})" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`; };
+  const drawS = () => $('#sensors').innerHTML = S.map(s => `<div class="sensor" style="--c:var(${s.c})"><span class="n">${s.n}</span>
+      <span class="val num">${fmt(s.v, Math.abs(s.v) < 20 && s.v % 1 ? (Math.abs(s.v) < 2 ? 2 : 1) : 0)}<small>${s.u}</small></span>${spark(s.h, s.c)}<span class="pid">PID 01 ${s.pid}</span></div>`).join('');
+
+  // pedal vs throttle series
+  const N = 120; let pedal = [], tps = [], cmd = [];
+  for (let i = 0; i < N; i++) { const base = 8 + 22 * Math.max(0, Math.sin(i / 9)) + (i > 70 && i < 82 ? 25 : 0); pedal.push(base); cmd.push(base * .82 + 6); tps.push(base * .8 + 6 + (Math.random() - .5) * 1.5); }
+  const line = (arr, max, w, h) => arr.map((v, i) => `${(i / (arr.length - 1)) * w},${h - (v / max) * h}`).join(' ');
+  const drawChart = () => {
+    const W = 600, H = 170, top = 10; let g = '';
+    [0, 25, 50, 75, 100].forEach(t => { const y = top + H - (t / 100) * H; g += `<line x1="28" x2="${W}" y1="${y}" y2="${y}" stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/><text x="0" y="${y + 3}">${t}%</text>`; });
+    const L = (a, c, wdt) => `<g transform="translate(28 ${top})"><polyline points="${line(a, 100, W - 28, H)}" fill="none" stroke="var(${c})" stroke-width="${wdt}" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></g>`;
+    $('#tbChart').innerHTML = g + L(cmd, '--speed', 1.5) + L(pedal, '--pedal', 2.5) + L(tps, '--tps', 2.5);
+  };
+  const drawTrend = () => {
+    const W = 600, H = 170, top = 10, d = 30; const sc = [], op = []; let g = '';
+    for (let i = 0; i < d; i++) { sc.push(Math.min(100, 70 + i * .7 + (Math.random() - .5) * 8 - (i === 22 ? 14 : 0))); op.push(6.2 - i * .02 + (Math.random() - .5) * .3); }
+    [0, 50, 100].forEach(t => { const y = top + H - (t / 100) * H; g += `<line x1="28" x2="${W}" y1="${y}" y2="${y}" stroke="var(--line)" vector-effect="non-scaling-stroke"/><text x="0" y="${y + 3}">${t}</text>`; });
+    const L = (a, max, c) => `<g transform="translate(28 ${top})"><polyline points="${line(a, max, W - 28, H)}" fill="none" stroke="var(${c})" stroke-width="2.5" vector-effect="non-scaling-stroke"/></g>`;
+    $('#trend').innerHTML = g + L(sc, 100, '--ok') + L(op, 12, '--temp');
+  };
+
+  const tick = () => {
+    const t = Date.now() / 1000;
+    G[0].v = Math.round(2100 + 600 * Math.sin(t / 3) + Math.random() * 80); G[1].v = Math.round(60 + 8 * Math.sin(t / 5));
+    G[2].v = 89 + Math.round(Math.sin(t / 30)); G[3].v = 14 + Math.random() * .2; drawG();
+    S.forEach(s => { s.v = +(s.v * (1 + (Math.random() - .5) * .03)).toFixed(2); s.h.push(s.v); s.h.shift(); }); drawS();
+    const p = 8 + 22 * Math.max(0, Math.sin(t / 2)); pedal.push(p); cmd.push(p * .82 + 6); tps.push(p * .8 + 6 + (Math.random() - .5) * 1.5);
+    pedal.shift(); cmd.shift(); tps.shift(); drawChart();
+    $('#sIdle').textContent = (770 + Math.round(Math.random() * 25)) + ' rpm';
+  };
+  let cd = 20; setInterval(() => { cd = cd <= 1 ? 20 : cd - 1; $('#cd').textContent = cd; }, 1000);
+  drawG(); drawS(); drawChart(); drawTrend(); setInterval(tick, 2000);
+
+  document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-selected', x === b));
+    document.querySelectorAll('.view').forEach(v => { v.hidden = v.id !== 'v-' + b.dataset.v; if (!v.hidden) v.style.display = 'grid'; });
+  }));
+})();
+</script>

@@ -47,3 +47,10 @@ O WSL não enxerga leitores USB, então a gravação foi feita pelo lado Windows
 
 ## Próximas fases
 Ver `docs/ARQUITETURA.md`.
+
+## 2026-11-18 — Prévia da interface
+- Mockup navegável (dados simulados) em `web/mockup/painel.html`, publicado como artefato:
+  https://claude.ai/artifact/1NkrbnkLgDTzTbuu9sXMSY
+- Telas: Ao vivo (rotação, velocidade, temperatura, bateria; gráfico pedal × borboleta; nota de
+  saúde da borboleta; grade de todos os PIDs), Corpo de borboleta (tendência), Viagens e alertas (DTCs).
+- WiFi alternativo "garagem" adicionado ao `network-config` do cartão.
