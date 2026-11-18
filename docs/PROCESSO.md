@@ -78,3 +78,31 @@ Ver `docs/ARQUITETURA.md`.
 - ⚠️ `vcgencmd get_throttled = 0x50005` → **subtensão agora e CPU limitada**. A fonte atual é fraca;
   trocar por 5,1 V / 2,5 A (oficial) em casa e um conversor 12→5 V de 3 A reais no carro.
 - Obs.: o PC está em 192.168.17.x e o Pi em 192.168.200.x (redes diferentes), mas há rota entre elas.
+
+## 2026-11-18 — Sistema completo instalado no Pi (v0.1.0)
+Implementado (`src/obdpi/`), seguindo a arquitetura com simplificações conscientes:
+- **Driver ELM327** próprio (`elm/`) com socket RFCOMM direto; cabeçalhos desligados (ATH0) e
+  remontagem do multi-frame CAN pelo formato `0:`/`1:` do ELM (mais simples que ATH1, funciona em qualquer protocolo).
+- **Coletor** (`collector/main.py`): procura e pareia sozinho qualquer adaptador com nome de OBD
+  (OBD, ELM, V-LINK, Vgate…; PIN 1234 via `bt-agent`), descobre os PIDs, grupo rápido da borboleta a ~1 Hz,
+  **todos os sensores a cada 20 s**, DTCs 03/07 + luz de injeção a cada 20 s, freeze frame, viagens,
+  relógio com correção retroativa, commit a cada 5 s, watchdog systemd.
+  Simplificação: uma thread só escreve no banco (sem thread escritora separada).
+- **Alertas** (`analytics/limits.py`): faixas absolutas por sensor + linha de base aprendida (|z| > 4,5)
+  + sensor que sumiu. **Borboleta** (`analytics/throttle.py`): regras R1–R6, R9 + DTCs da lista de vigilância; nota 0–100 por viagem.
+- **Notificações** no iPhone via ntfy (fila `outbox`, envia quando houver internet) e aviso de IP a cada conexão WiFi
+  (`/etc/NetworkManager/dispatcher.d/90-obd-announce`). Tópico em `/etc/obd/secrets.toml`.
+- **Painel web** (`web/`): FastAPI + SSE, front em JS puro sem build (simplificação: em vez de Svelte/Vite).
+  Abas: Ao vivo, Borboleta, Viagens, Alertas/DTCs, Sensores (histórico de qualquer sinal), Relatório (+CSV), Sistema (+diário de manutenção).
+- **Serviços**: `obd-collector`, `obd-web` (porta 80), `obd-btagent`, `obd-maint.timer` (backup semanal).
+  journald só em RAM, timers apt/man-db e cloud-init desativados.
+- Deploy: `scripts/deploy.sh` (rsync + `deploy/install.sh`, idempotente).
+
+Testes:
+- `tests/test_parsing.py` (parser, multi-frame, erros, DTC, regras R4/R6, limites) — ok.
+- Ponta a ponta no Pi com `ELM327-emulator` (TCP): conectou, CAN 11/500, multi-PID, 47 PIDs descobertos,
+  ~1 leitura/s, 38 sinais a cada 20 s, viagem detectada; todas as rotas da API 200, SSE ok.
+- Instalação real: serviços ativos, painel em `http://obd.local`, push de teste enviado, varredura BT vendo os
+  dispositivos da casa (OBD ainda fora de alcance).
+
+Bug corrigido nos testes: cooldown das regras da borboleta suprimia o 1º alerta.

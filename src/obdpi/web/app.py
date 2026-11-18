@@ -26,6 +26,7 @@ LIVE = Path(CFG["runtime"]["live_sock"]).parent / "live.json"
 STATIC = Path(__file__).parent / "static"
 FAST_COLS = {"rpm", "speed", "map", "tps", "tps_rel", "tps_b", "tps_cmd", "pedal_d", "pedal_e"}
 DAY = 86400_000
+TZ = time.localtime().tm_gmtoff * 1000   # dias agrupados no fuso local (America/Sao_Paulo)
 
 app = FastAPI(title="OBD Civic", version=__version__)
 
@@ -187,7 +188,7 @@ def throttle(days: int = 30):
     recent = [t["tb_score"] for t in tr if t["start_ts"] > now_ms() - 7 * DAY and t["tb_score"] is not None]
     rules = rows(con.execute("""SELECT substr(rule,1,instr(rule||':',':')-1) rule, severity, COUNT(*) n, MAX(ts) last_ts, MAX(title) title
                                 FROM alert WHERE source IN ('throttle','dtc_throttle') AND ts>? GROUP BY 1, 2""", (since,)))
-    idle = rows(con.execute("""SELECT (ts/86400000)*86400000 day, AVG(rpm) rpm, AVG(tps) tps, COUNT(*) n,
+    idle = rows(con.execute(f"""SELECT ((ts+({TZ}))/86400000)*86400000-({TZ}) day, AVG(rpm) rpm, AVG(tps) tps, COUNT(*) n,
                                AVG(rpm*rpm)-AVG(rpm)*AVG(rpm) var
                                FROM fast_sample WHERE ts>? AND speed=0 AND rpm BETWEEN 400 AND 1500
                                AND (pedal_d IS NULL OR pedal_d < (SELECT MIN(pedal_d)+2 FROM fast_sample WHERE pedal_d IS NOT NULL))
@@ -215,7 +216,7 @@ def report(days: int = 7):
                        FROM trip WHERE start_ts>? AND finalized=1""", (since,)).fetchone()
     sev = rows(con.execute("SELECT severity, COUNT(*) n FROM alert WHERE ts>? GROUP BY 1", (since,)))
     top = rows(con.execute("SELECT title, severity, COUNT(*) n, MAX(ts) last_ts FROM alert WHERE ts>? GROUP BY title ORDER BY n DESC LIMIT 10", (since,)))
-    daily = rows(con.execute("""SELECT (start_ts/86400000)*86400000 day, COUNT(*) trips, SUM(distance_km) km, SUM(duration_s) dur, AVG(tb_score) score
+    daily = rows(con.execute(f"""SELECT ((start_ts+({TZ}))/86400000)*86400000-({TZ}) day, COUNT(*) trips, SUM(distance_km) km, SUM(duration_s) dur, AVG(tb_score) score
                                 FROM trip WHERE start_ts>? AND finalized=1 GROUP BY 1 ORDER BY 1""", (since,)))
     return {"days": days, "totals": dict(t), "alerts_by_severity": sev, "top_alerts": top, "daily": daily}
 
