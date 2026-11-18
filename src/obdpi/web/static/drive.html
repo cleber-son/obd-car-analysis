@@ -79,12 +79,19 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .cfg li input { width: 20px; height: 20px; vertical-align: middle; margin-right: 8px } .cfg li button { font-size: 14px; background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 8px; padding: 4px 9px; margin-left: 4px }
 .t.good .v { color: var(--ok) }
 .lam.trim { background: linear-gradient(90deg, var(--bad), var(--warn) 30%, var(--o2) 40% 60%, var(--warn) 70%, var(--bad)) }
+.graphs { display: grid; grid-template-columns: 1fr; gap: 8px; align-content: start; min-height: 0; overflow: auto }
+.graphs[hidden] { display: none } .g { background: var(--tile); border: 1px solid var(--line); border-radius: 16px; padding: 8px 10px 6px }
+.g .h { display: flex; justify-content: space-between; font: 600 11px var(--disp); color: var(--muted); text-transform: uppercase; letter-spacing: .06em }
+.g .h b { font: 700 15px var(--mono); color: var(--fg); text-transform: none; letter-spacing: 0 } .g canvas { width: 100%; height: 74px; display: block }
+.g.bad { border-color: var(--bad) } .g.bad .h b { color: var(--bad) }
+.app.graphmode .core { grid-template-columns: 1fr auto } .app.graphmode .spd b { font-size: clamp(70px, 22vw, 120px) } .app.graphmode .gear { width: 70px; height: 70px; font-size: 40px }
+@media (orientation: landscape) { .graphs { grid-row: 3; grid-template-columns: 1fr 1fr } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
 </style>
 </head>
 <body>
 <div class="app">
-  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="accBtn">⏱ 0–100</a><a href="/">Painel</a></span></div>
+  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="grBtn" aria-label="Modo gráfico">📈</a><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="accBtn">⏱ 0–100</a><a href="/">Painel</a></span></div>
   <div class="rpmbar" id="rpmbar"><i id="rpmfill"></i><div class="ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></div>
   <div class="alert" id="alert"></div>
   <div class="core">
@@ -96,6 +103,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     </div>
   </div>
   <div class="tiles" id="tiles"></div>
+  <div class="graphs" id="graphs" hidden></div>
   <div class="acc" id="acc" hidden><div class="accin">
     <div class="acst" id="acst">Pare o carro</div>
     <div class="actime" id="actime">0,00</div>
@@ -177,6 +185,59 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   $("cfgReset").addEventListener("click", () => { chosen = DEFAULT.slice(); try { localStorage.removeItem("driveTiles"); } catch { } buildTiles(); $("cfg").hidden = true; });
   let lastD = null;
 
+  // ---- modo gráfico: séries em tempo real enquanto dirige
+  const GR = [
+    { id: "spd", l: "Velocidade", u: "km/h", lines: [["speed", "--speed"]] },
+    { id: "rpm", l: "Rotação", u: "rpm", lines: [["rpm", "--rpm"]], k: "rpm" },
+    { id: "thr", l: "Pedal × borboleta", u: "%", lines: [["pedal_d", "--pedal"], ["tps", "--o2"], ["tps_cmd", "--speed"]], min: 0 },
+    { id: "fuel", l: "Consumo", u: "L/h", lines: [["fuel_lh", "--o2"]], min: 0 },
+    { id: "maf", l: "Fluxo de ar (MAF)", u: "g/s", lines: [["maf", "--speed"]], min: 0 },
+    { id: "lam", l: "Sonda λ (real × alvo)", u: "λ", lines: [["o2c1_lambda", "--o2"], ["lambda_cmd", "--muted"]], k: "o2c1_lambda" },
+    { id: "tim", l: "Avanço", u: "°", lines: [["timing", "--volt"]], k: "timing" },
+    { id: "load", l: "Carga / MAP", u: "%", lines: [["load", "--rpm"], ["map", "--speed"]], min: 0 },
+    { id: "ect", l: "Temp. motor", u: "°C", lines: [["ect", "--temp"]], k: "ect" },
+    { id: "stft", l: "Ajuste curto", u: "%", lines: [["stft1", "--o2"]], k: "stft1" },
+  ];
+  let grSpan = 120e3;
+  const H = {};                                   // key -> [[t, v]]
+  const css = getComputedStyle(document.documentElement);
+  const col = (v) => css.getPropertyValue(v).trim() || "#888";
+  function buildGraphs() {
+    $("graphs").innerHTML = `<div class="g" style="padding:6px 10px;display:flex;gap:6px;justify-content:flex-end">${[[60e3, "1 min"], [120e3, "2 min"], [300e3, "5 min"]].map(([v, l]) => `<button type="button" class="rb" data-s="${v}" style="font:600 12px var(--disp);background:${v === grSpan ? "var(--line)" : "none"};color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:5px 10px">${l}</button>`).join("")}</div>`
+      + GR.map((g) => `<div class="g" id="g-${g.id}"><div class="h"><span>${g.l}</span><b id="gv-${g.id}">—</b></div><canvas id="gc-${g.id}"></canvas></div>`).join("");
+  }
+  buildGraphs();
+  $("graphs").addEventListener("click", (e) => { const b = e.target.closest("[data-s]"); if (b) { grSpan = +b.dataset.s; buildGraphs(); drawGraphs(); } });
+  let graphMode = false; try { graphMode = localStorage.getItem("driveGraph") === "1"; } catch { }
+  const applyMode = () => { $("graphs").hidden = !graphMode; $("tiles").hidden = graphMode; document.querySelector(".app").classList.toggle("graphmode", graphMode); $("grBtn").textContent = graphMode ? "▦" : "📈"; };
+  applyMode();
+  $("grBtn").addEventListener("click", (e) => { e.preventDefault(); graphMode = !graphMode; try { localStorage.setItem("driveGraph", graphMode ? "1" : "0"); } catch { } applyMode(); drawGraphs(); });
+  function pushHist(d) {
+    const v = d.values || {}; const t = d.ts;
+    for (const g of GR) for (const [k] of g.lines) { if (v[k] == null) continue; const h = (H[k] ??= []); const tk = d.value_ts?.[k] || t; if (!h.length || h.at(-1)[0] !== tk) h.push([tk, v[k]]); while (h.length && h[0][0] < t - 300e3) h.shift(); }
+  }
+  function drawGraphs() {
+    if (!graphMode || !lastD) return;
+    const now = lastD.ts, x0 = now - grSpan;
+    for (const g of GR) {
+      const c = $("gc-" + g.id); if (!c) continue;
+      const W = c.clientWidth * devicePixelRatio, Hh = c.clientHeight * devicePixelRatio; if (c.width !== W) { c.width = W; c.height = Hh; }
+      const ctx = c.getContext("2d"); ctx.clearRect(0, 0, W, Hh);
+      const all = g.lines.flatMap(([k]) => (H[k] || []).filter((p) => p[0] >= x0).map((p) => p[1]));
+      if (!all.length) continue;
+      let lo = g.min ?? Math.min(...all), hi = Math.max(...all); if (hi - lo < 1e-6) { hi += 1; lo -= g.min != null ? 0 : 1; }
+      const pad = (hi - lo) * 0.1; lo = g.min != null ? lo : lo - pad; hi += pad;
+      ctx.strokeStyle = col("--line"); ctx.lineWidth = 1; ctx.beginPath(); for (let i = 1; i < 4; i++) { const y = Hh * i / 4; ctx.moveTo(0, y); ctx.lineTo(W, y); } ctx.stroke();
+      ctx.fillStyle = col("--muted"); ctx.font = `${10 * devicePixelRatio}px ui-monospace, monospace`; ctx.fillText(nf(hi, hi < 10 ? 1 : 0), 4, 11 * devicePixelRatio); ctx.fillText(nf(lo, hi < 10 ? 1 : 0), 4, Hh - 3);
+      g.lines.forEach(([k, cv], i) => { const h = (H[k] || []).filter((p) => p[0] >= x0); if (!h.length) return;
+        ctx.strokeStyle = col(cv); ctx.lineWidth = (i === 0 ? 2.4 : 1.6) * devicePixelRatio; ctx.beginPath();
+        h.forEach((p, j) => { const x = (p[0] - x0) / grSpan * W, y = Hh - (p[1] - lo) / (hi - lo) * Hh; j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); });
+      const v0 = lastD.values?.[g.lines[0][0]];
+      $("gv-" + g.id).textContent = v0 == null ? "—" : `${nf(v0, Math.abs(v0) < 10 ? 2 : 0)} ${g.u}`;
+      const st = g.k ? lastD.status?.[g.k]?.[0] : null; $("g-" + g.id).classList.toggle("bad", st === "warn" || st === "crit");
+    }
+  }
+
   // ---- teste 0–100
   const acc = $("acc");
   const post = (c) => fetch("/api/accel/" + c, { method: "POST" });
@@ -215,7 +276,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     if (v.gear && v.gear < 5 && rpm > 2800 && (v.load ?? 100) < 55) hint = "↑ Suba a marcha";
     else if (v.gear && v.gear > 1 && rpm < 1300 && (v.load ?? 0) > 80) hint = "↓ Reduza a marcha";
     $("hint").textContent = hint;
-    lastD = d; renderTiles(d);
+    lastD = d; pushHist(d); if (graphMode) drawGraphs(); else renderTiles(d);
     // alerta recente (10 min)
     const a = (d.alerts || []).find((x) => Date.now() - x.ts < 10 * 60e3 && x.sev !== "info");
     const al = $("alert"); al.classList.toggle("on", !!a);
