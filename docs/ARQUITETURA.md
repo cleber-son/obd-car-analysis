@@ -441,6 +441,32 @@ Página "Borboleta": semáforo grande com frase em linguagem simples, tendência
 
 ---
 
+## 7A. Alertas para qualquer sensor fora do padrão (requisito do dono)
+
+Pedido explícito: **todo sensor que a ECU expõe é monitorado, e qualquer valor fora do padrão gera alerta no celular**, não só os da borboleta.
+
+Módulo `src/obdpi/analytics/limits.py`, avaliado a cada leitura no coletor:
+
+1. **Faixas absolutas (dia 1).** Tabela `config/limits.toml` com faixa normal, aviso e crítico por sinal, já ajustada ao R18A flex. Exemplos iniciais (calibrar):
+
+| Sinal | Normal | Aviso | Crítico |
+|---|---|---|---|
+| ECT (motor quente) | 80–98 °C | > 102 °C | > 108 °C |
+| Tensão (motor ligado) | 13,5–14,7 V | < 13,0 ou > 15,0 V | < 12,4 ou > 15,5 V |
+| Tensão (motor desligado) | ≥ 12,4 V | < 12,2 V | < 11,8 V |
+| STFT / LTFT | ±10 % | ±15 % | ±25 % (ou soma > ±25 %) |
+| IAT | < 55 °C | > 60 °C | > 70 °C |
+| RPM em marcha lenta quente | 650–850 | fora por > 20 s | < 550 ou > 1100 |
+| Sonda O2 B1S1 | oscilando 0,1–0,9 V | parada > 30 s em malha fechada | — |
+| MAP em marcha lenta | 25–40 kPa | > 45 kPa | — |
+| Avanço em marcha lenta | 0–20° | < −5° | — |
+
+2. **Faixas aprendidas (após a linha de base).** Para cada sinal, por contexto (marcha lenta quente / cruzeiro / partida a frio), guardar média e desvio. Valor fora de ±4σ por mais de N leituras gera aviso "fora do comportamento habitual". Isso cobre automaticamente PIDs sem faixa na tabela.
+3. **Sensor sumiu.** PID que era suportado e passa a responder `NO DATA` repetidamente vira aviso.
+4. **Entrega.** Evento em `limit_event` (mesmo formato de `tb_event`), selo vermelho/âmbar na aba Ao vivo, push no iPhone via app **ntfy** (funciona no iOS). Anti-spam: um alerta por sinal por viagem, com resumo no fim da viagem. Críticos (temperatura, tensão, borboleta, DTC) sempre notificam na hora quando há internet (hotspot); sem internet ficam no `outbox`.
+
+Contexto do dono: o **corpo de borboleta foi trocado**. A linha de base da borboleta deve ser aprendida a partir de agora e o diário de manutenção começa com a anotação "troca do corpo de borboleta".
+
 ## 8. API e dashboard
 
 ### 8.1 Canal ao vivo

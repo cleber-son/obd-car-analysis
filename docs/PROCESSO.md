@@ -63,3 +63,10 @@ Ver `docs/ARQUITETURA.md`.
 - Divergência a resolver: a arquitetura sugere partição `/data` separada, mas o cartão já foi
   gravado com expansão automática do root no 1º boot. Opções: aceitar `/data` como diretório
   no root (mais simples) ou encolher o root depois em outra máquina Linux.
+
+## 2026-11-18 — Respostas do dono
+- Corpo de borboleta foi **trocado** → linha de base nova; 1ª anotação do diário de manutenção.
+- Requisito: **monitorar todos os sensores e alertar qualquer valor fora do padrão** → seção 7A da arquitetura.
+- Celular iPhone → notificações via app ntfy. Hotspot "Android 17" adicionado ao `network-config`
+  do cartão (3 redes: casa, garagem, hotspot).
+- iPhone: ativar **Ajustes → Acesso Pessoal → Maximizar Compatibilidade** (o Pi 3 só enxerga 2,4 GHz).

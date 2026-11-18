@@ -10,4 +10,6 @@ network:
           password: "SENHA_1"
         "SSID_2":
           password: "SENHA_2"
+        "SSID_HOTSPOT":
+          password: "SENHA_HOTSPOT"
       optional: true
