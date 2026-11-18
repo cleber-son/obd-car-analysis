@@ -1,0 +1,13 @@
+# /etc/obd/obd.toml — veja src/obdpi/config.py para todos os padrões
+[adapter]
+transport = "rfcomm"     # rfcomm (Bluetooth) | tcp (emulador)
+mac = ""                 # vazio = procura automaticamente um dispositivo com nome de OBD
+rfcomm_channel = 1
+protocol = "auto"
+
+[collector]
+full_period_s = 20       # todos os sensores a cada 20 s
+fast_period_s = 1.0      # grupo do corpo de borboleta ~1 Hz
+
+[notify]
+min_severity = "warn"    # info | warn | crit

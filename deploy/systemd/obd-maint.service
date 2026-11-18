@@ -1,0 +1,10 @@
+[Unit]
+Description=OBD Civic - manutenção (backup semanal do banco, limpeza)
+
+[Service]
+Type=oneshot
+User=obd
+Environment=PYTHONPATH=/opt/obd/src
+ExecStart=/opt/obd/venv/bin/python -m obdpi.maint
+IOSchedulingClass=idle
+Nice=19

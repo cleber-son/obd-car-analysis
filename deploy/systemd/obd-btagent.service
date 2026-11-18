@@ -1,0 +1,13 @@
+[Unit]
+Description=OBD Civic - agente Bluetooth (responde o PIN do adaptador)
+After=bluetooth.service
+Requires=bluetooth.service
+
+[Service]
+ExecStartPre=/usr/bin/bluetoothctl power on
+ExecStart=/usr/bin/bt-agent --capability=NoInputNoOutput --pin=/etc/obd/bt-pins.txt
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+#!/bin/sh
+# NetworkManager dispatcher: avisa no iPhone o IP do Pi sempre que conectar em uma rede.
+[ "$2" = "up" ] || [ "$2" = "dhcp4-change" ] || exit 0
+[ "$1" = "lo" ] && exit 0
+TOPIC=$(sed -n 's/^ntfy_topic *= *"\(.*\)"/\1/p' /etc/obd/secrets.toml 2>/dev/null)
+[ -n "$TOPIC" ] || exit 0
+(
+  sleep 8
+  IP=$(ip -4 -o addr show "$1" | awk '{print $4}' | cut -d/ -f1 | head -1)
+  SSID=$(nmcli -t -f GENERAL.CONNECTION dev show "$1" 2>/dev/null | cut -d: -f2)
+  [ -n "$IP" ] || exit 0
+  curl -s -m 15 -H "Title: Civic OBD online" -H "Tags: oncoming_automobile" -H "Click: http://$IP" \
+    -d "Painel em http://$IP  (rede: ${SSID:-$1})  ou http://obd.local" "https://ntfy.sh/$TOPIC" >/dev/null
+) &
+exit 0

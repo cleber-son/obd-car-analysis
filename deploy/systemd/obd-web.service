@@ -1,0 +1,18 @@
+[Unit]
+Description=OBD Civic - painel web (porta 80)
+After=network.target obd-collector.service
+
+[Service]
+User=obd
+Group=obd
+WorkingDirectory=/opt/obd
+Environment=PYTHONPATH=/opt/obd/src PYTHONUNBUFFERED=1
+ExecStart=/opt/obd/venv/bin/python -m obdpi.web.app
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Restart=always
+RestartSec=3
+MemoryMax=200M
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
