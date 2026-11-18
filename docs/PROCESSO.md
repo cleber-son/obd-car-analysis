@@ -54,3 +54,12 @@ Ver `docs/ARQUITETURA.md`.
 - Telas: Ao vivo (rotação, velocidade, temperatura, bateria; gráfico pedal × borboleta; nota de
   saúde da borboleta; grade de todos os PIDs), Corpo de borboleta (tendência), Viagens e alertas (DTCs).
 - WiFi alternativo "garagem" adicionado ao `network-config` do cartão.
+
+## 2026-11-18 — Arquitetura (Claude Fable)
+- Plano completo em `docs/ARQUITETURA.md`: driver ELM327 próprio via socket RFCOMM, coletor
+  Python síncrono (varredura completa a cada 20 s + grupo rápido da borboleta a 1–2 Hz),
+  SQLite WAL, FastAPI + SSE, SPA Svelte + uPlot compilada no PC, mDNS + ntfy com o IP,
+  10 regras para o corpo de borboleta (R1–R10) e roteiro em fases com critérios de aceite.
+- Divergência a resolver: a arquitetura sugere partição `/data` separada, mas o cartão já foi
+  gravado com expansão automática do root no 1º boot. Opções: aceitar `/data` como diretório
+  no root (mais simples) ou encolher o root depois em outra máquina Linux.
