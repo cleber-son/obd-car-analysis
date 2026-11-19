@@ -266,7 +266,9 @@ def report(days: int = 7):
     top = rows(con.execute("SELECT title, severity, COUNT(*) n, MAX(ts) last_ts FROM alert WHERE ts>? GROUP BY title ORDER BY n DESC LIMIT 10", (since,)))
     daily = rows(con.execute(f"""SELECT ((start_ts+({TZ}))/86400000)*86400000-({TZ}) day, COUNT(*) trips, SUM(distance_km) km, SUM(duration_s) dur, AVG(tb_score) score
                                 FROM trip WHERE start_ts>? AND finalized=1 GROUP BY 1 ORDER BY 1""", (since,)))
-    return {"days": days, "totals": dict(t), "alerts_by_severity": sev, "top_alerts": top, "daily": daily}
+    from ..reports import recommendations
+    return {"days": days, "totals": dict(t), "alerts_by_severity": sev, "top_alerts": top, "daily": daily,
+            "recommendations": recommendations(con, since, now_ms() + 1, dict(t))}
 
 
 @app.get("/api/report/period")

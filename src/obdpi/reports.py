@@ -69,7 +69,8 @@ def build(con: sqlite3.Connection, kind: str, offset: int = 0) -> dict:
     def delta(k):
         c, p = cur.get(k), prev.get(k)
         return None if c is None or not p else round((c - p) / p * 100, 1)
-    return {"kind": kind, "offset": offset, "label": label, "from": a, "to": b, "cur": cur, "prev": prev,
+    recs = recommendations(con, a, b, cur)
+    return {"kind": kind, "offset": offset, "label": label, "from": a, "to": b, "cur": cur, "prev": prev, "recommendations": recs,
             "delta": {k: delta(k) for k in ("km", "dur", "fuel", "kml", "eco_score", "tb_score")},
             "fills": fills, "spent": round(spent, 2) if spent else None, "est_cost": est_cost,
             "real_kml": round(sum(real) / len(real), 1) if real else None,
@@ -78,6 +79,57 @@ def build(con: sqlite3.Connection, kind: str, offset: int = 0) -> dict:
 
 
 TZ = time.localtime().tm_gmtoff * 1000
+
+
+SEV_RANK = {"crit": 0, "warn": 1, "info": 2}
+URG_RANK = {"parar": 0, "logo": 1, "acompanhar": 2, "info": 3}
+
+
+def recommendations(con: sqlite3.Connection, a: int, b: int, cur: dict) -> list[dict]:
+    """Um item por problema do período (alertas, DTCs, diagnósticos), com o que fazer (base em analytics/advice.py)."""
+    from .analytics.advice import advice_for
+    items: dict[str, dict] = {}
+
+    def add(key, rule, title, severity, n, evidence, source=""):
+        adv = advice_for(rule, source)
+        if not adv:
+            return
+        k = key or rule
+        it = items.get(k)
+        if it:
+            it["n"] += n
+            it["evidence"] = it["evidence"] or evidence
+            if SEV_RANK[severity] < SEV_RANK[it["severity"]]:
+                it["severity"] = severity
+            return
+        if severity != "crit" and adv.get("urgencia") == "parar":     # aviso leve: resolver logo, "pare" só no nível crítico
+            adv = dict(adv, urgencia="logo", urgencia_txt="Resolver nos próximos dias (pare se piorar)")
+        items[k] = {"title": title, "severity": severity, "n": n, "evidence": evidence, "rule": rule,
+                    "o_que": adv.get("o_que"), "causas": adv.get("causas", [])[:4], "fazer": adv.get("fazer", []),
+                    "verificar": adv.get("verificar", [])[:3], "urgencia": adv.get("urgencia"),
+                    "urgencia_txt": adv.get("urgencia_txt"), "rodar": adv.get("rodar")}
+    for r in con.execute("""SELECT rule, source, title, severity, SUM(COALESCE(count,1)) n, MAX(detail) detail FROM alert
+                            WHERE ts>=? AND ts<? AND severity IN ('crit','warn') GROUP BY rule""", (a, b)):
+        head = r["rule"].split(":")[0]
+        group = "z" if head == "z" else "missing" if head == "missing" else head if head.startswith("R") or head[:1] == "P" else r["rule"]
+        add(group, r["rule"], r["title"], r["severity"], r["n"], r["detail"], r["source"])
+    for e in con.execute("SELECT DISTINCT code, kind FROM dtc_event WHERE ts>=? AND ts<? AND event='apareceu'", (a, b)):
+        add(e["code"], e["code"], f"Código {e['code']}", "crit" if e["kind"] == "confirmed" else "warn", 1, f"{'confirmado' if e['kind'] == 'confirmed' else 'pendente'}")
+    for v, n in con.execute("""SELECT air_verdict, COUNT(*) FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<?
+                               AND air_verdict IN ('entrada_de_ar','suspeito','maf_baixo') GROUP BY 1""", (a, b)):
+        rule = "maf_low" if v == "maf_baixo" else "air_leak"
+        add(rule, rule, "MAF lendo baixo" if v == "maf_baixo" else "Entrada falsa de ar", "warn", n, f"em {n} viagem(ns)")
+    eco = cur.get("eco_score")
+    if eco is not None and eco < 70:
+        tips = {}
+        for (ej,) in con.execute("SELECT eco_json FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<? AND eco_json IS NOT NULL", (a, b)):
+            for t in json.loads(ej).get("dicas", []):
+                tips[t] = tips.get(t, 0) + 1
+        items["eco"] = {"title": f"Direção pouco econômica ({eco:.0f}/100)", "severity": "info", "n": len(tips), "evidence": "",
+                        "rule": "eco", "o_que": "A forma de dirigir aumentou o consumo neste período.", "causas": [],
+                        "fazer": sorted(tips, key=lambda t: -tips[t]) or ["Suba a marcha mais cedo e evite arrancadas fortes."],
+                        "verificar": [], "urgencia": "info", "urgencia_txt": "Informativo", "rodar": None}
+    return sorted(items.values(), key=lambda x: (SEV_RANK[x["severity"]], URG_RANK.get(x["urgencia"] or "info", 3), -x["n"]))
 
 
 def to_text(r: dict) -> tuple[str, str]:
@@ -93,7 +145,12 @@ def to_text(r: dict) -> tuple[str, str]:
                  (": " + "; ".join(a["title"] for a in r["alerts"][:3]) if r["alerts"] else ""))
     if r["dtc_events"]:
         lines.append("⚠️ Códigos: " + ", ".join(sorted({e["code"] for e in r["dtc_events"]})))
-    if r["tips"]:
+    recs = [x for x in r.get("recommendations", []) if x["severity"] != "info"][:3]
+    if recs:
+        lines.append("🔧 O que fazer:")
+        for x in recs:
+            lines.append(f"• {x['title']} ({x['urgencia_txt'].lower()}): {x['fazer'][0] if x['fazer'] else x['o_que']}")
+    elif r["tips"]:
         lines.append("💡 " + r["tips"][0])
     return f"Relatório {'semanal' if r['kind'] == 'week' else 'mensal'} — {r['label']}", "\n".join(lines)
 

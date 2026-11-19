@@ -410,6 +410,7 @@
       <div><span class="lbl">Bateria mín</span><b>${nf(t.vmin, 1)} V</b></div><div><span class="lbl">Ajuste longo médio</span><b>${nf(t.ltft, 1)}%</b></div>
       <div><span class="lbl">Nota borboleta</span><b>${nf(t.score)}</b></div><div><span class="lbl">Alertas</span><b style="color:var(--bad)">${sev.crit || 0}<span class="muted"> / </span><span style="color:var(--warn)">${sev.warn || 0}</span></b></div>`;
     lineChart($("#repChart"), [{ pts: r.daily.map((d) => [d.day, d.km || 0]), c: "--speed", bars: true }], { ymin: 0, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
+    $("#repRecs").innerHTML = recsHtml(r.recommendations);
     $("#repTop").innerHTML = r.top_alerts.length ? r.top_alerts.map((a) => alertItem({ ...a, detail: `${a.n}× no período, último` , ts: a.last_ts })).join("") : `<div class="empty">Nenhum alerta no período.</div>`;
   }
   $("#repDays").addEventListener("change", () => loadReport().catch(console.error));
@@ -483,6 +484,19 @@
     $("#ecoTips").innerHTML = Object.keys(tips).length ? Object.entries(tips).sort((a, b) => b[1] - a[1]).map(([t, n]) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(t)}</div><div class="d">em ${n} das últimas viagens</div></div><span></span></div>`).join("") : `<div class="empty">Sem dicas por enquanto.</div>`;
   }
 
+  // recomendações ("o que fazer") para os dados negativos de um período
+  function recsHtml(recs) {
+    if (!recs || !recs.length) return `<div class="alert" style="--s:var(--ok)"><span class="ic">✓</span><div><div class="t">Nada negativo no período</div><div class="d">Sem alertas, códigos ou diagnósticos ruins. Continue acompanhando.</div></div><span class="pill">OK</span></div>`;
+    return recs.map((x) => { const [c, l, i] = SEV[x.severity] || SEV.info;
+      return `<details class="alert" style="--s:${c}"><summary><span class="ic">${i}</span><div><div class="t">${esc(x.title)}${x.n > 1 ? ` · ${x.n}×` : ""}</div>
+        <div class="d">${esc(x.urgencia_txt || "")}${x.fazer?.[0] ? " · " + esc(x.fazer[0]) : ""}</div></div><span style="display:grid;justify-items:end;gap:4px"><span class="pill">${l}</span><span class="more">Detalhes ▾</span></span></summary>
+        <div class="adv">${x.evidence ? `<div><h4>O que os dados mostraram</h4>${esc(x.evidence)}</div>` : ""}<div><h4>O que significa</h4>${esc(x.o_que || "")}</div>
+        ${x.causas?.length ? `<div><h4>Causas prováveis</h4><ul>${x.causas.map((y) => `<li>${esc(y)}</li>`).join("")}</ul></div>` : ""}
+        ${x.verificar?.length ? `<div><h4>O que verificar</h4><ul>${x.verificar.map((y) => `<li>${esc(y)}</li>`).join("")}</ul></div>` : ""}
+        <div><h4>O que fazer</h4><ol>${(x.fazer || []).map((y) => `<li>${esc(y)}</li>`).join("")}</ol></div>
+        <div><h4>Urgência</h4><span class="urg">${esc(x.urgencia_txt || "")}</span>${x.rodar ? ` · ${esc(x.rodar)}` : ""}</div></div></details>`; }).join("");
+  }
+
   // ------------------------------------------------------------ relatório semanal / mensal
   let perKind = "week", perOff = 0;
   async function loadPeriod() {
@@ -498,6 +512,7 @@
       <div><span class="lbl">Direção econômica</span><b>${nf(c.eco_score)}${dl(d.eco_score)}</b></div><div><span class="lbl">Borboleta</span><b>${nf(c.tb_score)}${dl(d.tb_score)}</b></div>
       <div><span class="lbl">Alertas</span><b><span style="color:var(--bad)">${sv.crit || 0}</span> / <span style="color:var(--warn)">${sv.warn || 0}</span></b></div><div><span class="lbl">Melhor 0–100</span><b>${r.best_0_100 ? nf(r.best_0_100, 2) + " s" : "—"}</b></div>`;
     lineChart($("#perChart"), [{ pts: r.daily.map((x) => [x.day + 43200e3, x.km || 0]), c: "--speed", bars: true }], { ymin: 0, x0: r.from, x1: r.to, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
+    $("#perRecs").innerHTML = recsHtml(r.recommendations);
     $("#perList").innerHTML = (r.alerts.slice(0, 5).map((a) => alertItem({ ...a, ts: a.last_ts, detail: `${a.n}× no período`, count: 1 })).join("") +
       r.tips.map((t) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(t)}</div></div><span></span></div>`).join("")) || `<div class="empty">Nada a destacar no período.</div>`;
   }

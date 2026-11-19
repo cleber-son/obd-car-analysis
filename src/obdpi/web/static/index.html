@@ -176,6 +176,7 @@
       <div style="display:flex;gap:6px;flex-wrap:wrap"><div class="theme" id="perKind"><button type="button" data-k="week" aria-pressed="true">Semanal</button><button type="button" data-k="month">Mensal</button></div>
       <button class="btn" type="button" id="perPrev" aria-label="Anterior">◀</button><button class="btn" type="button" id="perNext" aria-label="Próximo">▶</button></div></div>
       <div class="stats" id="perStats" style="margin-top:12px"></div>
+      <h3 class="lbl" style="margin-top:16px">🔧 O que fazer</h3><div class="list" id="perRecs" style="margin-top:8px"></div>
       <div class="grid2e" style="margin-top:12px"><div><h3 class="lbl">Km por dia</h3><svg class="chart sm" id="perChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
         <div><h3 class="lbl">Alertas e dicas</h3><div class="list" id="perList" style="margin-top:8px"></div></div></div>
     </div>
@@ -186,6 +187,9 @@
     <div class="grid2e">
       <div class="card"><h2>Km por dia</h2><svg class="chart" id="repChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:10px"></svg></div>
       <div class="card"><h2>Alertas mais frequentes</h2><div class="list" id="repTop" style="margin-top:10px"></div></div>
+    </div>
+    <div class="card"><h2>🔧 O que fazer (período selecionado)</h2><div class="lbl" style="margin:4px 0 10px">Para cada dado negativo: o que significa, causas, o que fazer e urgência</div>
+      <div class="list" id="repRecs"></div>
     </div>
   </section>
 
