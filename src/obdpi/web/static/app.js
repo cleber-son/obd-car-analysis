@@ -223,33 +223,60 @@
         return `<i style="left:${(a - d0) / 864e3}%;width:${(b - a) / 864e3}%" title="${tm(t.start_ts)}–${t.end_ts ? tm(t.end_ts) : "agora"} · ${nf(t.distance_km, 1)} km"></i>`; }).join("");
       return `<div class="d"><span>${new Date(d0).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" })}</span><div class="tr">${bars}</div></div>`; }).join("")
       + `<div class="d"><span></span><div class="muted" style="display:flex;justify-content:space-between;font:10px var(--f-mono)"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>24h</span></div></div>`;
-    const trips = await api("/api/trips?limit=100");
-    $("#tripRows").innerHTML = trips.length ? trips.map((t) => { const s = t.tb_score; const c = s == null ? "var(--muted)" : s >= 85 ? "var(--ok)" : s >= 60 ? "var(--warn)" : "var(--bad)";
-      return `<tr class="click" data-id="${t.id}"><td>${dt(t.start_ts)}${t.finalized ? "" : ' <span class="pill" style="--s:var(--ok)">agora</span>'}</td><td class="num">${dur(t.duration_s ?? ((t.end_ts - t.start_ts) / 1000))}</td>
-      <td class="num">${nf(t.distance_km, 1)}</td><td class="num">${nf(t.avg_speed)} km/h</td><td class="num">${nf(t.max_ect)} °C</td><td class="num">${t.n_alerts ?? 0}</td>
-      <td><div class="bar" style="--s:${c}" title="${s ?? "—"}/100"><i style="width:${s ?? 0}%"></i></div></td></tr>`; }).join("")
-      : `<tr><td colspan="7"><div class="empty">Nenhuma viagem ainda. A primeira aparece quando o motor ligar com o OBD conectado.</div></td></tr>`;
+    const trips = await api("/api/trips?limit=1000");
+    const showHidden = $("#tripHidden")?.checked;
+    const vis = trips.filter((t) => showHidden || !t.hidden);
+    $("#tripCount").textContent = `${vis.length} viagens${trips.length - vis.length ? ` · ${trips.length - vis.length} ocultas` : ""}`;
+    $("#tripRows").innerHTML = vis.length ? vis.map((t) => { const s = t.tb_score; const c = s == null ? "var(--muted)" : s >= 85 ? "var(--ok)" : s >= 60 ? "var(--warn)" : "var(--bad)";
+      return `<tr class="click" data-id="${t.id}" style="${t.hidden ? "opacity:.5" : ""}"><td><b>${esc(t.title || "")}</b>${t.title ? "<br>" : ""}${dt(t.start_ts)}${t.finalized ? "" : ' <span class="pill" style="--s:var(--ok)">agora</span>'}${t.note ? ` <span title="${esc(t.note)}">📝</span>` : ""}</td><td class="num">${dur(t.duration_s ?? ((t.end_ts - t.start_ts) / 1000))}</td>
+      <td class="num">${nf(t.distance_km, 1)}</td><td class="num">${nf(t.avg_speed)} km/h</td><td class="num">${nf(t.km_l, 1)}</td><td class="num">${nf(t.max_ect)} °C</td><td class="num">${t.n_alerts ?? 0}</td>
+      <td class="num">${t.eco_score ?? "—"}</td><td><div class="bar" style="--s:${c}" title="${s ?? "—"}/100"><i style="width:${s ?? 0}%"></i></div></td></tr>`; }).join("")
+      : `<tr><td colspan="9"><div class="empty">Nenhuma viagem ainda. A primeira aparece quando o motor ligar com o OBD conectado.</div></td></tr>`;
   }
+  const AIRL = { entrada_de_ar: "Possível entrada falsa de ar", suspeito: "Suspeito (MAF baixo parado)", maf_baixo: "MAF lendo baixo", normal: "Normal" };
   async function showTrip(id) {
     const t = await api(`/api/trips/${id}`);
-    const S = t.series;
-    $("#tripDetail").innerHTML = `<div class="card"><div class="row-head"><h2>Viagem de ${dt(t.start_ts)}</h2><span class="muted">${esc(t.end_reason || "em andamento")}</span></div>
+    const S = t.series; const eco = t.eco_json || {}; const air = t.air_json || {};
+    $("#tripDetail").innerHTML = `<div class="card"><div class="row-head"><h2>${esc(t.title || "Viagem de " + dt(t.start_ts))}</h2><span class="muted">${dt(t.start_ts)} → ${t.end_ts ? tm(t.end_ts) : "agora"} · ${esc(t.end_reason || "em andamento")}</span></div>
+      <form id="tripEdit" data-id="${t.id}" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <input type="text" id="tTitle" value="${esc(t.title || "")}" placeholder="Nome (ex.: Casa → trabalho)" aria-label="Nome da viagem" style="flex:1 1 180px">
+        <input type="text" id="tNote" value="${esc(t.note || "")}" placeholder="Anotação" aria-label="Anotação" style="flex:2 1 220px">
+        <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="tHidden" ${t.hidden ? "checked" : ""}> Ocultar</label>
+        <button class="btn" type="submit">Salvar</button><span class="muted" id="tMsg" style="font-size:12px;align-self:center"></span></form>
       <div class="stats" style="margin-top:12px">
         <div><span class="lbl">Duração</span><b>${dur(t.duration_s)}</b></div><div><span class="lbl">Distância</span><b>${nf(t.distance_km, 1)} km</b></div>
-        <div><span class="lbl">Parado</span><b>${dur(t.idle_s)}</b></div><div><span class="lbl">Vel. máx</span><b>${nf(t.max_speed)} km/h</b></div>
+        <div><span class="lbl">Parado ligado</span><b>${dur(t.idle_s)}</b></div><div><span class="lbl">Vel. média / máx</span><b>${nf(t.avg_speed)} / ${nf(t.max_speed)}</b></div>
         <div><span class="lbl">Rot. máx</span><b>${nf(t.max_rpm)}</b></div><div><span class="lbl">Temp. máx</span><b>${nf(t.max_ect)} °C</b></div>
-        <div><span class="lbl">Bateria</span><b>${nf(t.min_volt, 1)}–${nf(t.max_volt, 1)} V</b></div><div><span class="lbl">Borboleta</span><b>${t.tb_score ?? "—"}/100</b></div></div></div>
+        <div><span class="lbl">Combustível</span><b>${nf(t.fuel_l, 2)} L</b></div><div><span class="lbl">Consumo</span><b>${nf(t.km_l, 1)} km/L</b></div>
+        <div><span class="lbl">Custo estimado</span><b>${t.cost ? "R$ " + nf(t.cost, 2) : "—"}</b></div><div><span class="lbl">Bateria</span><b>${nf(t.min_volt, 1)}–${nf(t.max_volt, 1)} V</b></div>
+        <div><span class="lbl">Partida</span><b>${t.crank_v ? nf(t.crank_v, 1) + " V" : "—"}</b></div><div><span class="lbl">Aquecimento</span><b>${t.warmup_s ? Math.round(t.warmup_s / 60) + " min" : t.start_ect != null && t.start_ect >= 50 ? "já quente" : "—"}</b></div>
+        <div><span class="lbl">Direção econômica</span><b>${t.eco_score ?? "—"}/100</b></div><div><span class="lbl">Borboleta</span><b>${t.tb_score ?? "—"}/100</b></div>
+        <div><span class="lbl">Ar × MAF</span><b style="font-size:14px">${esc(AIRL[t.air_verdict] || "—")}</b></div><div><span class="lbl">Arrancadas / freadas bruscas</span><b>${eco.aceleracoes_bruscas ?? "—"} / ${eco.freadas_bruscas ?? "—"}</b></div></div>
+      ${(eco.dicas || []).length ? `<div class="list" style="margin-top:10px">${eco.dicas.map((x) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(x)}</div></div><span></span></div>`).join("")}</div>` : ""}
+      ${air.txt ? `<div class="muted" style="font-size:12px;margin-top:8px">Ar × MAF: ${esc(air.txt)}</div>` : ""}</div>
       <div class="grid2e"><div class="card"><h2>Rotação e velocidade</h2><div class="legend" style="margin:6px 0"><span style="--c:var(--rpm)">rpm ÷ 50</span><span style="--c:var(--speed)">km/h</span></div><svg class="chart" id="tc1" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
       <div class="card"><h2>Pedal × borboleta</h2><div class="legend" style="margin:6px 0"><span style="--c:var(--pedal)">Pedal</span><span style="--c:var(--tps)">Borboleta</span><span style="--c:var(--speed)">Comandado</span></div><svg class="chart" id="tc2" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
       <div class="card"><h2>Temperatura do motor</h2><svg class="chart" id="tc3" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
-      <div class="card"><h2>Ajustes de combustível</h2><div class="legend" style="margin:6px 0"><span style="--c:var(--tps)">Curto</span><span style="--c:var(--volt)">Longo</span></div><svg class="chart" id="tc4" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div></div>
+      <div class="card"><h2>Consumo e marcha</h2><div class="legend" style="margin:6px 0"><span style="--c:var(--tps)">L/h</span><span style="--c:var(--volt)">Marcha</span></div><svg class="chart" id="tc4" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+      <div class="card"><h2>Sonda λ e avanço</h2><div class="legend" style="margin:6px 0"><span style="--c:var(--tps)">λ × 10</span><span style="--c:var(--volt)">Avanço °</span></div><svg class="chart" id="tc5" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+      <div class="card"><h2>MAF e carga</h2><div class="legend" style="margin:6px 0"><span style="--c:var(--speed)">MAF g/s</span><span style="--c:var(--rpm)">Carga %</span></div><svg class="chart" id="tc6" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div></div>
       <div class="card"><h2>Alertas desta viagem</h2><div class="list" style="margin-top:10px">${t.alerts.length ? t.alerts.map(alertItem).join("") : '<div class="empty">Nenhum alerta.</div>'}</div></div>`;
     lineChart($("#tc1"), [{ pts: (S.rpm || []).map((p) => [p[0], p[1] / 50]), c: "--rpm" }, { pts: S.speed || [], c: "--speed" }], { ymin: 0 });
     lineChart($("#tc2"), [{ pts: S.tps_cmd || [], c: "--speed", w: 1.5 }, { pts: S.pedal_d || [], c: "--pedal" }, { pts: S.tps || [], c: "--tps" }], { ymin: 0, ymax: 100 });
     lineChart($("#tc3"), [{ pts: S.ect || [], c: "--temp", area: true }]);
-    lineChart($("#tc4"), [{ pts: S.stft1 || [], c: "--tps" }, { pts: S.ltft1 || [], c: "--volt" }]);
+    lineChart($("#tc4"), [{ pts: S.fuel_lh || [], c: "--tps", area: true }, { pts: S.gear || [], c: "--volt", w: 1.5 }], { ymin: 0 });
+    lineChart($("#tc5"), [{ pts: (S.o2c1_lambda || []).map((p) => [p[0], p[1] * 10]), c: "--tps" }, { pts: S.timing || [], c: "--volt" }]);
+    lineChart($("#tc6"), [{ pts: S.maf || [], c: "--speed" }, { pts: S.load || [], c: "--rpm", w: 1.5 }], { ymin: 0 });
+    $("#tripEdit").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const r = await fetch(`/api/trips/${t.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: $("#tTitle").value, note: $("#tNote").value, hidden: $("#tHidden").checked }) });
+      const j = await r.json().catch(() => ({}));
+      $("#tMsg").textContent = r.ok ? (j.queued ? "Salvo; aplicado no Pi na próxima conexão." : "Salvo.") : "Erro: " + (j.error || r.status);
+      if (r.ok && !j.queued) loadTrips().catch(console.error);
+    });
     $("#tripDetail").scrollIntoView({ behavior: "smooth" });
   }
+  document.addEventListener("change", (e) => { if (e.target.id === "tripHidden") loadTrips().catch(console.error); });
   $("#tripRows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) showTrip(tr.dataset.id).catch(console.error); });
 
   // ------------------------------------------------------------ consumo
@@ -278,11 +305,11 @@
   $("#fillForm").addEventListener("submit", async (e) => {
     e.preventDefault(); $("#fillSave").disabled = true;
     try {
-      const body = { fuel: document.querySelector('input[name="fuel"]:checked').value, liters: $("#fillL").value, price_l: $("#fillP").value, full: true };
+      const body = { fuel: document.querySelector('input[name="fuel"]:checked').value, liters: $("#fillL").value, price_l: $("#fillP").value, full: true, ts: Date.now() };
       const r = await fetch("/api/fuel/fill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status);
       $("#fillForm").hidden = true; $("#fillBtn").hidden = false; $("#fillL").value = ""; $("#fillP").value = "";
-      $("#fillHint").textContent = j.real_kml ? `Salvo. Este tanque rendeu ${nf(j.real_kml, 1)} km/L (${nf(j.km_since_prev, 0)} km).` : "Salvo. O consumo real aparece no próximo tanque cheio.";
+      $("#fillHint").textContent = j.queued ? "Registrado. Será aplicado no Pi na próxima conexão (com a hora de agora)." : j.real_kml ? `Salvo. Este tanque rendeu ${nf(j.real_kml, 1)} km/L (${nf(j.km_since_prev, 0)} km).` : "Salvo. O consumo real aparece no próximo tanque cheio.";
       setTimeout(() => loadFuel().catch(console.error), 1500);
     } catch (err) { $("#fillHint").textContent = "Não foi possível salvar: " + err.message; } finally { $("#fillSave").disabled = false; }
   });
@@ -313,7 +340,7 @@
     sigKey = k; $("#sigChartCard").hidden = false;
     const c = catalog[k] || {}; $("#sigTitle").textContent = `${c.name || k} (${c.unit || ""})`;
     const span = +$("#sigRange").value, to = Date.now();
-    const r = await api(`/api/series?signals=${encodeURIComponent(k)}&from=${to - span}&to=${to}&max_points=500`);
+    const r = await api(`/api/series?signals=${encodeURIComponent(k)}&span=${span}&max_points=500`);
     lineChart($("#sigChart"), [{ pts: r.series[k] || [], c: COLORS[k] || "--speed", area: true }], { x0: to - span, x1: to });
     $("#sigChartCard").scrollIntoView({ behavior: "smooth" });
   }
@@ -355,7 +382,7 @@
     $("#mStats").innerHTML = s ? `<div><span class="lbl">Mínimo</span><b>${nf(s.min, d)}</b></div><div><span class="lbl">Média</span><b>${nf(s.avg, d)}</b></div><div><span class="lbl">Máximo</span><b>${nf(s.max, d)}</b></div><div><span class="lbl">${label}</span><b>${s.n}</b></div>` : `<div class="empty" style="grid-column:1/-1">Sem leituras neste período.</div>`; }
   async function loadModalHist() {
     const k = modalKey; if (!k) return; const to = Date.now();
-    const r = await api(`/api/series?signals=${encodeURIComponent(k)}&from=${to - modalSpan}&to=${to}&max_points=600`);
+    const r = await api(`/api/series?signals=${encodeURIComponent(k)}&span=${modalSpan}&max_points=600`);
     const pts = r.series[k] || [];
     const series = [{ pts, c: COLORS[k] || "--speed", area: true }];
     if (pts.length && pts[0].length === 4) series.unshift({ pts: pts.map((p) => [p[0], p[3]]), c: "--line", w: 1, end: false }, { pts: pts.map((p) => [p[0], p[2]]), c: "--line", w: 1, end: false });
@@ -414,7 +441,7 @@
   });
   $("#annForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const text = $("#annText").value.trim(); if (!text) return;
-    await fetch("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    await fetch("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, ts: Date.now() }) });
     $("#annText").value = ""; loadSystem().catch(console.error);
   });
 
@@ -495,7 +522,8 @@
   $("#aiBtn").addEventListener("click", () => { $("#aiModal").hidden = false; aiPoll(); });
   $("#aiClose").addEventListener("click", () => { $("#aiModal").hidden = true; clearTimeout(aiTimer); });
   $("#aiModal").addEventListener("click", (e) => { if (e.target.id === "aiModal") { $("#aiModal").hidden = true; clearTimeout(aiTimer); } });
-  $("#aiRun").addEventListener("click", async () => { $("#aiRun").disabled = true; await fetch("/api/ai/analyze", { method: "POST" }); aiPoll(); });
+  $("#aiRun").addEventListener("click", async () => { $("#aiRun").disabled = true; const r = await fetch("/api/ai/analyze", { method: "POST" }); const j = await r.json().catch(() => ({}));
+    if (j.queued) { $("#aiRun").disabled = false; $("#aiSub").textContent = "Pedido enviado: o Pi faz a análise quando conectar na internet e o laudo aparece aqui."; return; } aiPoll(); });
 
   // ------------------------------------------------------------ tema
   const setTheme = (t) => { document.documentElement.dataset.theme = t; try { localStorage.setItem("theme", t); } catch { }
@@ -514,5 +542,20 @@
   window.addEventListener("hashchange", route);
   setInterval(() => { const v = (location.hash || "#vivo").slice(1); if (["vivo", "alertas", "viagens", "consumo"].includes(v)) LOAD[v]?.().catch(() => { }); }, 30000);
 
-  api("/api/signals").then((s) => { for (const x of s) catalog[x.key] = x; }).catch(() => { }).finally(() => { connectStream(); route(); });
+  // ------------------------------------------------------------ modo nuvem (painel online com a cópia dos dados)
+  let CLOUD = null;
+  function applyCloud(env) {
+    CLOUD = env; document.documentElement.classList.add("cloud");
+    const age = env.last_sync_ts ? (Date.now() - env.last_sync_ts) / 1000 : null;
+    const on = age != null && age < 120;
+    $("#cloudBar").hidden = false;
+    $("#cloudBar").innerHTML = `<span class="dot" style="--c:${on ? "var(--ok)" : "var(--muted)"}"></span>
+      <b>Painel online</b> · ${on ? "Pi conectado agora (dados ao vivo)" : env.last_sync_ts ? "Pi offline · dados até " + dt(env.last_sync_ts) : "aguardando a primeira sincronização do Pi"}
+      ${env.pending_cmds ? ` · ${env.pending_cmds} ação(ões) esperando o Pi` : ""}
+      <a href="/logout" style="margin-left:auto">Sair</a>`;
+    for (const id of ["#accGo", "#csvLink"]) { const el = $(id); if (el) el.hidden = true; }
+    const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
+  }
+  fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env && env.cloud) { applyCloud(env); setInterval(() => fetch("/api/env").then((r) => r.json()).then(applyCloud).catch(() => { }), 60000); } }).catch(() => { })
+    .finally(() => api("/api/signals").then((s) => { for (const x of s) catalog[x.key] = x; }).catch(() => { }).finally(() => { connectStream(); route(); }));
 })();

@@ -291,6 +291,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 
   let es;
   const connect = () => { try { es?.close(); } catch { } es = new EventSource("/api/stream"); es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch (x) { console.error(x); } }; };
+  fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env?.cloud) { $("accBtn").hidden = true; } }).catch(() => { });
   connect();
   if (location.hash === "#acc") { acc.hidden = false; post("arm"); }
   document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else { connect(); lock(); } });

@@ -116,10 +116,11 @@ def _bucket(points: list[tuple], max_points: int) -> list[list]:
 
 
 @app.get("/api/series")
-def series(signals: str, frm: int | None = Query(None, alias="from"), to: int | None = None, max_points: int = 600):
+def series(signals: str, frm: int | None = Query(None, alias="from"), to: int | None = None, max_points: int = 600,
+           span: int | None = None):
     con = ro()
     to = to or now_ms()
-    frm = frm or to - 3600_000
+    frm = frm or to - (span or 3600_000)
     out = {}
     for key in signals.split(","):
         key = key.strip()
@@ -139,6 +140,22 @@ def trips(limit: int = 50, offset: int = 0):
     return rows(con.execute("SELECT * FROM trip ORDER BY start_ts DESC LIMIT ? OFFSET ?", (limit, offset)))
 
 
+@app.post("/api/trips/{tid}")
+def trip_edit(tid: int, body: dict, x_token: str | None = Header(None)):
+    """Gerenciar viagem: {title?, note?, hidden?}"""
+    check_admin(x_token)
+    con = db.connect(DB)
+    if not con.execute("SELECT 1 FROM trip WHERE id=?", (tid,)).fetchone():
+        raise HTTPException(404, "viagem não encontrada")
+    for k in ("title", "note"):
+        if k in body:
+            con.execute(f"UPDATE trip SET {k}=? WHERE id=?", ((str(body[k])[:300] or None), tid))
+    if "hidden" in body:
+        con.execute("UPDATE trip SET hidden=? WHERE id=?", (int(bool(body["hidden"])), tid))
+    con.commit()
+    return {"ok": True}
+
+
 @app.get("/api/trips/{tid}")
 def trip(tid: int):
     con = ro()
@@ -149,7 +166,9 @@ def trip(tid: int):
     end = t["end_ts"] or now_ms()
     t["alerts"] = rows(con.execute("SELECT * FROM alert WHERE trip_id=? ORDER BY ts", (tid,)))
     t["dtc_events"] = rows(con.execute("SELECT * FROM dtc_event WHERE ts BETWEEN ? AND ? ORDER BY ts", (t["start_ts"], end)))
-    t["series"] = series("rpm,speed,tps,tps_cmd,pedal_d,ect,ltft1,stft1,batt,maf,fuel_lh", t["start_ts"], end, 800)["series"]
+    t["series"] = series("rpm,speed,tps,tps_cmd,pedal_d,ect,ltft1,stft1,batt,maf,fuel_lh,o2c1_lambda,timing,load,gear", t["start_ts"], end, 800)["series"]
+    price = con.execute("SELECT price_l FROM fuel_fill WHERE price_l IS NOT NULL AND ts <= ? ORDER BY ts DESC LIMIT 1", (end,)).fetchone()
+    t["cost"] = round(t["fuel_l"] * price[0], 2) if price and t.get("fuel_l") else None
     for k in ("air_json", "eco_json"):
         t[k] = json.loads(t[k]) if t.get(k) else None
     return t
@@ -356,13 +375,13 @@ def fuel_fill(body: dict, x_token: str | None = Header(None)):
     liters = float(body["liters"]) if body.get("liters") not in (None, "") else None
     price = float(body["price_l"]) if body.get("price_l") not in (None, "") else None
     full = bool(body.get("full", True))
-    ts = now_ms()
+    ts = int(body.get("ts") or now_ms())          # abastecimento registrado no painel online chega depois, com a hora do clique
     con = db.connect(DB)
-    prev = con.execute("SELECT * FROM fuel_fill ORDER BY ts DESC LIMIT 1").fetchone()
+    prev = con.execute("SELECT * FROM fuel_fill WHERE ts < ? ORDER BY ts DESC LIMIT 1", (ts,)).fetchone()
     km = est = kml = calib = None
     if prev:
-        r = con.execute("SELECT COALESCE(SUM(distance_km),0) km, COALESCE(SUM(fuel_l),0) l FROM trip WHERE start_ts >= ? AND finalized=1",
-                        (prev["ts"],)).fetchone()
+        r = con.execute("SELECT COALESCE(SUM(distance_km),0) km, COALESCE(SUM(fuel_l),0) l FROM trip WHERE start_ts >= ? AND start_ts < ? AND finalized=1",
+                        (prev["ts"], ts)).fetchone()
         km, est = round(r["km"], 1), round(r["l"], 2)
         if full and prev["full"] and liters and km > 20:   # método tanque a tanque
             kml = round(km / liters, 2)

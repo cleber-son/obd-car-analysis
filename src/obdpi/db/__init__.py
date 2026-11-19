@@ -57,3 +57,5 @@ def migrate(con) -> None:
     for col, decl in (("eco_score", "INTEGER"), ("eco_json", "TEXT"), ("warmup_s", "INTEGER"), ("start_ect", "REAL"),
                       ("crank_v", "REAL"), ("rest_v", "REAL"), ("air_json", "TEXT"), ("air_verdict", "TEXT")):
         _add_col(con, "trip", col, decl)
+    for col, decl in (("title", "TEXT"), ("note", "TEXT"), ("hidden", "INTEGER DEFAULT 0")):
+        _add_col(con, "trip", col, decl)

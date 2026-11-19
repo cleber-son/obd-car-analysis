@@ -1,0 +1,20 @@
+[Unit]
+Description=OBD Civic - sincroniza o painel online (Cloudflare) quando há internet
+After=network-online.target obd-web.service
+Wants=obd-web.service
+
+[Service]
+User=obd
+Group=obd
+WorkingDirectory=/opt/obd
+Environment=PYTHONPATH=/opt/obd/src PYTHONUNBUFFERED=1
+ExecStart=/opt/obd/venv/bin/python -m obdpi.sync
+Restart=always
+RestartSec=20
+TimeoutStopSec=8
+MemoryMax=120M
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+{
+  "name": "civic-obd-cloud",
+  "private": true,
+  "scripts": {
+    "build": "./build.sh",
+    "deploy": "./build.sh && wrangler deploy",
+    "test": "node --test test/"
+  },
+  "devDependencies": { "wrangler": "4.86.0" }
+}
