@@ -132,6 +132,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   const CAT = {
     kml: { l: "Consumo", c: "--o2", r: (v) => v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" : ""] : [nf(v.fuel_lh, 1), "L/h", "parado"] },
     kmlavg: { l: "Média viagem", c: "--o2", r: (v, t) => [nf(t.kml, 1), "km/L", t.fuel_l ? nf(t.fuel_l, 2) + " L" + (t.cost ? " · R$ " + nf(t.cost, 2) : "") : "calculando…"] },
+    kmltank: { l: "Média do tanque", c: "--o2", r: (v, t) => { const sf = fuelInfo?.since_fill; if (!sf) return ["—", "km/L", ""];
+      const km = (sf.km || 0) + (t.km || 0), l = (sf.liters_est || 0) + (t.fuel_l || 0);     // viagens fechadas desde o tanque + a viagem de agora
+      return [l > 0.3 ? nf(km / l, 1) : "—", "km/L", `${nf(km, 0)} km · ${nf(l, 1)} L desde o tanque`]; } },
     prev: { l: "Previsão da viagem", c: "--o2", wide: true, r: (v, t) => {
       const el = t.elapsed_s || 0, lh = el > 60 ? t.fuel_l / (el / 3600) : v.fuel_lh;   // média de L/h desde que ligou
       const kml = t.kml ?? fuelInfo?.avg_real_kml ?? fuelInfo?.since_fill?.kml_est;
@@ -154,8 +157,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     map: { l: "MAP", c: "--speed", k: "map", r: (v) => [nf(v.map), "kPa", ""] },
     maf: { l: "Fluxo de ar", c: "--speed", k: "maf", r: (v) => [nf(v.maf, 1), "g/s", ""] },
   };
-  const DEFAULT = ["kml", "kmlavg", "avg", "stft", "timing", "ect", "prev", "auto", "km", "time", "tps"];
+  const DEFAULT = ["kml", "kmlavg", "kmltank", "stft", "timing", "ect", "prev", "auto", "km", "time", "avg", "tps"];
   let chosen; try { chosen = JSON.parse(localStorage.getItem("driveTiles")) || DEFAULT; } catch { chosen = DEFAULT; }
+  try { if (!localStorage.getItem("tilesV2")) { localStorage.setItem("tilesV2", "1");            // quadro novo entra uma vez para quem já tinha personalizado
+    if (!chosen.includes("kmltank")) { chosen.splice(chosen.indexOf("kmlavg") + 1, 0, "kmltank"); localStorage.setItem("driveTiles", JSON.stringify(chosen)); } } } catch { }
   chosen = chosen.filter((k) => CAT[k]);
   function buildTiles() {
     $("tiles").innerHTML = chosen.map((id) => { const t = CAT[id]; return `<div class="t${t.wide ? " wide" : ""}" id="t-${id}" style="--c:var(${t.c})"><div class="l">${t.l}</div><div class="v" id="v-${id}">—</div><div class="s" id="s-${id}"></div>${t.bar ? `<div class="lam trim"><i id="bar-${id}"></i></div>` : ""}</div>`; }).join("");

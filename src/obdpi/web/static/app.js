@@ -180,7 +180,8 @@
       : since != null ? (on ? "há " : "desde ") + (on ? dur(since) : (since > 86400 ? dt(S.off_since_ts) : "há " + dur(since))) : "—";
     $("#engineCard").innerHTML = `<div class="st"><span class="pulse${on ? " on" : ""}" style="--c:${c}"></span><div><div class="big">${on ? "Carro ligado · motor funcionando" : ign ? "Ignição ligada, motor desligado" : "Carro desligado"}</div>
       <div class="muted">${sub}</div></div></div>
-      <div class="kv"><span class="lbl">Esta viagem</span><b>${on ? nf(S.current_trip_km ?? 0, 1) + " km" : "—"}</b></div>
+      <div class="kv"><span class="lbl">Esta viagem</span><b>${on ? nf(d.trip?.km ?? S.current_trip_km ?? 0, 1) + " km" : "—"}</b>${on && d.trip?.elapsed_s ? `<span class="muted" style="font-size:12px">${dur(d.trip.elapsed_s)}</span>` : ""}</div>
+      <div class="kv" style="${on && d.trip?.kml != null ? "box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent)" : ""}"><span class="lbl">Consumo médio da viagem</span><b>${on && d.trip?.kml != null ? nf(d.trip.kml, 1) + " km/L" : on ? "calculando…" : "—"}</b><span class="muted" style="font-size:12px">${on && d.trip?.fuel_l != null ? nf(d.trip.fuel_l, 2) + " L gastos" + (d.trip.cost ? " · R$ " + nf(d.trip.cost, 2) : "") : ""}</span></div>
       <div class="kv"><span class="lbl">Hoje</span><b>${nf(S.today?.km ?? 0, 1)} km</b><span class="muted" style="font-size:12px">${dur(S.today?.dur ?? 0)} ligado</span></div>
       <div class="kv"><span class="lbl">Total registrado</span><b>${nf(S.total?.km ?? 0, 0)} km</b><span class="muted" style="font-size:12px">${S.total?.n ?? 0} viagens</span></div>
       <div class="kv"><span class="lbl">Consumo agora</span><b>${d.values?.kml_inst != null ? nf(d.values.kml_inst, 1) + " km/L" : d.values?.fuel_lh != null ? nf(d.values.fuel_lh, 1) + " L/h" : "—"}</b><span class="muted" style="font-size:12px">${d.values?.fuel_lh != null ? nf(d.values.fuel_lh, 2) + " L/h" : ""}</span></div>`;

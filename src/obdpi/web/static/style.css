@@ -117,7 +117,7 @@ code.k { font: 600 12px var(--f-mono); background: var(--panel2); padding: 2px 6
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important } }
 
 /* motor / consumo */
-.engine { display: grid; grid-template-columns: minmax(0, 1.2fr) repeat(4, minmax(0, 1fr)); gap: 12px; align-items: center }
+.engine { display: grid; grid-template-columns: minmax(0, 1.2fr) repeat(5, minmax(0, 1fr)); gap: 12px; align-items: center }
 .engine .st { display: flex; align-items: center; gap: 12px }
 .engine .st .big { font: 700 20px var(--f-display) }
 .engine .pulse { width: 14px; height: 14px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 5px color-mix(in srgb, var(--c) 22%, transparent); flex: none }
@@ -247,3 +247,4 @@ details.ins > summary .d { font-size: 13px; line-height: 1.4; margin-top: 2px }
 .hbar { height: 6px; border-radius: 3px; background: var(--panel); margin-top: 6px; overflow: hidden } .hbar i { display: block; height: 100%; background: var(--s); border-radius: 3px }
 details.tech > summary { cursor: pointer; list-style: none } details.tech > summary::-webkit-details-marker { display: none }
 details.tech > summary::after { content: "Mostrar ▾"; float: right; font: 600 12px var(--f-body); color: var(--speed) } details.tech[open] > summary::after { content: "Ocultar ▴" }
+@media (max-width: 900px) { .engine .kv:last-child:nth-child(even) { grid-column: 1 / -1 } }
