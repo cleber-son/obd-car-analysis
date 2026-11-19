@@ -584,13 +584,53 @@
   }
 
   // ------------------------------------------------------------ relatório semanal / mensal
-  let perKind = "week", perOff = 0;
+  let perKind = "week", perOff = 0, perSel = null, perOpts = [];
+  const SUBS = { week: "Comparado com a semana anterior · enviado no iPhone toda segunda", month: "Comparado com o mês anterior · enviado no iPhone todo dia 1º",
+    since: "Do dia escolhido até hoje · comparado com o mesmo número de dias antes", trip: "Só esta viagem (alertas, consumo, direção) · comparada com a viagem anterior" };
+  const ymd = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  async function perOptions() {
+    const trips = (await api("/api/trips?limit=1000")).filter((t) => !t.hidden && t.start_ts);
+    if (perKind === "trip") return trips.map((t) => ({ v: String(t.id), t: `${dt(t.start_ts)} · ${nf(t.distance_km, 1)} km${t.n_alerts ? ` · ⚠️ ${t.n_alerts}` : ""}${t.title ? " · " + t.title : ""}` }));
+    const days = {};
+    trips.forEach((t) => { const k = ymd(t.start_ts); (days[k] ||= { n: 0, km: 0, al: 0 }); days[k].n++; days[k].km += t.distance_km || 0; days[k].al += t.n_alerts || 0; });
+    return Object.keys(days).sort().reverse().map((k) => ({ v: k, t: `${k.slice(8)}/${k.slice(5, 7)}/${k.slice(0, 4)} · ${days[k].n} viagem(ns) · ${nf(days[k].km, 0)} km${days[k].al ? ` · ⚠️ ${days[k].al}` : ""}` }));
+  }
+  function perSetKind(k, sel) {
+    perKind = k; perOff = 0; perSel = sel ?? null; perOpts = [];
+    $("#perKind").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x.dataset.k === k));
+    return loadPeriod();
+  }
   async function loadPeriod() {
-    const r = await api(`/api/report/period?kind=${perKind}&offset=${perOff}`);
+    const pick = $("#perPick"), hist = perKind === "since" || perKind === "trip";
+    pick.hidden = !hist; $("#perSub").textContent = SUBS[perKind];
+    let q = `kind=${perKind}&offset=${perOff}`;
+    if (hist) {
+      if (!perOpts.length) { perOpts = await perOptions(); pick.innerHTML = perOpts.map((o) => `<option value="${esc(o.v)}">${esc(o.t)}</option>`).join(""); }
+      if (!perOpts.length) { $("#perTitle").textContent = "Nenhuma viagem registrada ainda"; return; }
+      if (!perOpts.some((o) => o.v === perSel)) perSel = perOpts[0].v;
+      pick.value = perSel;
+      q = perKind === "trip" ? `kind=trip&trip=${perSel}` : `kind=since&day=${perSel}`;
+    }
+    let r;
+    try { r = await api(`/api/report/period?${q}`); }
+    catch (e) {
+      if (!hist) throw e;
+      $("#perTitle").textContent = perOpts.find((o) => o.v === perSel)?.t || "Relatório";
+      const msg = `<div class="empty">Este relatório ainda não está disponível aqui. Ele é gerado pelo Pi: aparece no painel online na próxima vez que o Pi ligar e sincronizar.</div>`;
+      ["#perStats", "#perRecs", "#perList", "#planBox"].forEach((s) => { $(s).innerHTML = s === "#perStats" ? "" : msg; });
+      $("#perTripsWrap").hidden = true; return;
+    }
     const c = r.cur, d = r.delta, sv = r.alerts_by_severity || {};
     const dl = (x, inv) => x == null ? "" : `<span style="font-size:12px;color:${(x > 0) !== !!inv ? "var(--ok)" : "var(--bad)"}"> ${x > 0 ? "▲" : "▼"}${nf(Math.abs(x), 0)}%</span>`;
     $("#perTitle").textContent = r.label;
-    $("#perNext").disabled = perOff >= 0;
+    const idx = perOpts.findIndex((o) => o.v === perSel);
+    $("#perNext").disabled = hist ? idx <= 0 : perOff >= 0;
+    $("#perPrev").disabled = hist && idx >= perOpts.length - 1;
+    const tl = r.trips || [];
+    $("#perTripsWrap").hidden = perKind === "trip" || !tl.length;
+    $("#perTrips").innerHTML = tl.slice().reverse().map((t) => `<button type="button" class="alert" data-trip="${t.id}" style="--s:${t.n_alerts ? "var(--warn)" : "var(--ok)"};width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit">
+      <span class="ic">${t.n_alerts ? "⚠️" : "✅"}</span><div><div class="t">${dt(t.start_ts)}${t.end_ts ? "–" + tm(t.end_ts) : " (agora)"}${t.title ? " · " + esc(t.title) : ""}</div>
+      <div class="d">${nf(t.distance_km, 1)} km · ${dur(t.duration_s)} · ${t.km_l ? nf(t.km_l, 1) + " km/L · " : ""}${t.n_alerts ? t.n_alerts + " alerta(s)" : "sem alertas"}</div></div><span>›</span></button>`).join("");
     $("#perStats").innerHTML = `<div><span class="lbl">Viagens</span><b>${c.trips}</b></div><div><span class="lbl">Distância</span><b>${nf(c.km, 0)} km${dl(d.km)}</b></div>
       <div><span class="lbl">Motor ligado</span><b>${dur(c.dur)}</b></div><div><span class="lbl">Combustível</span><b>${nf(c.fuel, 1)} L${dl(d.fuel, true)}</b></div>
       <div><span class="lbl">Consumo</span><b>${nf(c.kml, 1)} km/L${dl(d.kml)}</b></div><div><span class="lbl">Real (tanques)</span><b>${nf(r.real_kml, 1)} km/L</b></div>
@@ -605,10 +645,14 @@
     $("#perList").innerHTML = (r.alerts.slice(0, 5).map((a) => alertItem({ ...a, ts: a.last_ts, detail: `${a.n}× no período`, count: 1 })).join("") +
       r.tips.map((t) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(t)}</div></div><span></span></div>`).join("")) || `<div class="empty">Nada a destacar no período.</div>`;
   }
-  $("#perKind").addEventListener("click", (e) => { const b = e.target.closest("[data-k]"); if (!b) return; perKind = b.dataset.k; perOff = 0;
-    $("#perKind").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); loadPeriod().catch(console.error); });
-  $("#perPrev").addEventListener("click", () => { perOff--; loadPeriod().catch(console.error); });
-  $("#perNext").addEventListener("click", () => { if (perOff < 0) { perOff++; loadPeriod().catch(console.error); } });
+  $("#perKind").addEventListener("click", (e) => { const b = e.target.closest("[data-k]"); if (b) perSetKind(b.dataset.k).catch(console.error); });
+  $("#perPick").addEventListener("change", (e) => { perSel = e.target.value; loadPeriod().catch(console.error); });
+  $("#perTrips").addEventListener("click", (e) => { const b = e.target.closest("[data-trip]"); if (b) perSetKind("trip", b.dataset.trip).then(() => $("#planBox").scrollIntoView({ behavior: "smooth" })).catch(console.error); });
+  const perStep = (dir) => { // dir -1 = mais antigo, +1 = mais recente
+    if (perKind === "since" || perKind === "trip") { const i = perOpts.findIndex((o) => o.v === perSel) - dir; if (perOpts[i]) { perSel = perOpts[i].v; loadPeriod().catch(console.error); } return; }
+    if (dir > 0 && perOff >= 0) return; perOff += dir; loadPeriod().catch(console.error); };
+  $("#perPrev").addEventListener("click", () => perStep(-1));
+  $("#perNext").addEventListener("click", () => perStep(1));
 
   // ------------------------------------------------------------ análise por IA
   function md(src) {

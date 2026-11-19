@@ -272,11 +272,15 @@ def report(days: int = 7):
 
 
 @app.get("/api/report/period")
-def report_period(kind: str = "week", offset: int = 0):
+def report_period(kind: str = "week", offset: int = 0, day: str | None = None, trip: int | None = None):
+    """kind week|month (+offset), since (+day=AAAA-MM-DD: do dia até hoje) ou trip (+trip=id: uma viagem)."""
     from .. import reports
-    if kind not in ("week", "month"):
-        raise HTTPException(400, "kind = week ou month")
-    r = reports.build(ro(), kind, offset)
+    if (kind == "since" and not day) or (kind == "trip" and trip is None):
+        raise HTTPException(400, "since precisa de day=AAAA-MM-DD; trip precisa de trip=id")
+    try:
+        r = reports.build(ro(), kind, offset, day, trip)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     r["text"] = reports.to_text(r)
     return r
 

@@ -30,7 +30,7 @@ eletrônico**, que foi trocado recentemente.
 | 📊 **Painel web** | Ao vivo, Borboleta, Viagens (histórico de motor ligado), Consumo, Alertas/DTCs, Sensores (gráfico individual tempo real + histórico), Relatório + CSV, Sistema. Tema escuro. |
 | 🩺 **Diagnóstico** | **Entrada falsa de ar × MAF** (MAF medido ÷ ar esperado por carga, com veredito por viagem), **bateria na partida** (repouso e queda ao dar partida), **válvula termostática** (tempo até 80 °C), **autotestes da ECU** (monitores prontos/pendentes). |
 | 🌱 **Direção econômica** | Nota 0–100 por viagem (giro alto, arrancadas e freadas bruscas, tempo parado ligado, acima de 110 km/h, marcha alta forçando) com dicas. |
-| 🗓 **Relatórios** | Semanal e mensal no painel, comparados com o período anterior, e **enviados no iPhone** toda segunda e todo dia 1º. |
+| 🗓 **Relatórios** | Semanal, mensal, **desde um dia escolhido** ou **de uma viagem só**, cada um com "O que fazer" e plano de ação geral. Semanal e mensal são **enviados no iPhone** toda segunda e todo dia 1º. |
 | 🤖 **Analisar dados (IA)** | Um botão envia o resumo de tudo (sensores por condição, viagens, diagnósticos, alertas, códigos) para o **Claude Opus 5.5** (ou OpenAI, à escolha), que devolve um laudo completo: veredito, pontos de atenção, sistema por sistema e o que fazer. Chave configurada no próprio painel. |
 | 📲 **Notificações** | Push no iPhone via [ntfy](https://ntfy.sh) para alertas e para avisar o IP sempre que o Pi entra em uma rede. |
 | ☁️ **Painel online** | Cópia do painel na Cloudflare (Worker + D1) em `obd.cleberson.social.br`, acessível a qualquer hora mesmo com o carro desligado. O Pi (`obd-sync`) envia o estado ao vivo a cada 10 s e o restante (viagens, gráficos, alertas, relatórios, histórico dos sensores) a cada 5 min, só o que mudou. Mostra **carro ligado/desligado** (Pi offline há mais de 1 min = desligado). Público e só leitura; ações ficam no painel do Pi. |
@@ -81,7 +81,7 @@ src/obdpi/
 ├── obd/          tabela de PIDs (nomes em PT-BR) e códigos de falha
 ├── collector/    coleta, viagens, relógio, DTCs, 0–100, pareamento Bluetooth
 ├── analytics/    limites + linha de base, borboleta, consumo, diagnósticos por viagem, recomendações
-├── reports.py    relatórios semanal e mensal (painel + push)
+├── reports.py    relatórios semanal, mensal, desde o dia e por viagem (painel + push)
 ├── ai.py         análise completa pelo Claude
 ├── web/          FastAPI + SSE + painel (JS puro, sem build) e modo direção
 ├── db/           esquema SQLite (WAL) e migrações

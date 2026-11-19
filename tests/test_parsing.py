@@ -79,7 +79,28 @@ def test_pegged_stft_still_alerts():
     assert l.status(v, True)["stft1"][0] == "crit"
 
 
+def test_report_since_and_trip():
+    import datetime as dt
+    import time
+    from obdpi import db, reports
+    import tempfile
+    con = db.init(tempfile.mkdtemp() + "/r.db")
+    now, D = int(time.time() * 1000), 86400000
+    for i, st in enumerate((now - 2 * D, now - D), 1):
+        con.execute("INSERT INTO trip(id,start_ts,end_ts,finalized,distance_km,duration_s) VALUES(?,?,?,1,?,1800)", (i, st, st + 1800_000, 5.0 * i))
+    con.execute("INSERT INTO alert(ts,trip_id,source,rule,severity,title,count) VALUES(?,2,'limits','stft1:warm','warn','Ajuste curto alto',3)", (now - D + 60_000,))
+    con.commit()
+    day = dt.datetime.fromtimestamp((now - 2 * D) / 1000).strftime("%Y-%m-%d")
+    r = reports.build(con, "since", day=day)
+    assert r["cur"]["trips"] == 2 and [t["id"] for t in r["trips"]] == [1, 2]
+    t2 = reports.build(con, "trip", trip=2)
+    assert t2["cur"]["km"] == 10.0 and t2["prev"]["km"] == 5.0 and t2["trips"][0]["n_alerts"] == 3
+    assert [x["title"] for x in t2["recommendations"]] == ["Ajuste curto alto"]
+    assert reports.build(con, "trip", trip=1)["recommendations"] == []
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):
             f(); print("ok", k)
+

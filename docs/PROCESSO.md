@@ -183,3 +183,11 @@ Bug corrigido nos testes: cooldown das regras da borboleta suprimia o 1º alerta
   **real**, e a supressão de "valor fixo" foi removida para ele.
 - Relatório completo em `docs/RELATORIO-2026-11-19.md` (também no botão 🤖 do painel e online): entrada falsa de ar após a
   troca do corpo de borboleta; junta do corpo de borboleta e duto de admissão em primeiro lugar.
+
+## 2026-11-19 — Relatórios por histórico (desde o dia e por viagem)
+- Pedido: escolher um dia (ex.: saí com o carro em 17/11) ou uma viagem e ver o relatório só daquele trecho, com "O que fazer" e plano de ação.
+- `reports.bounds()` resolve 4 tipos: `week`/`month` (calendário), `since&day=AAAA-MM-DD` (do dia até o fim de hoje, comparado com o mesmo número de dias antes) e `trip&trip=id` (uma viagem, comparada com a anterior, incluindo a viagem em andamento).
+- O relatório traz a lista das viagens do período, com o número de alertas de cada uma; tocar numa abre o relatório só dela.
+- Painel: botões Semanal · Mensal · Desde o dia · Viagem; seletor só com dias/viagens que existem (mostra km e ⚠️ alertas); ◀ ▶ navegam no histórico.
+- Nuvem: o Pi envia também um relatório por viagem e um "desde o dia" para cada dia com viagem nos últimos 120 dias (`KEEP` ganhou `day` e `trip`, igual no Worker e no Pi). Até o Pi sincronizar a versão nova, o painel online avisa que o relatório ainda não está disponível.
+- Teste novo: `test_report_since_and_trip`.

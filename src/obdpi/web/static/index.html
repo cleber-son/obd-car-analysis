@@ -175,10 +175,12 @@
   <!-- RELATÓRIO -->
   <section class="view" id="v-relatorio" hidden>
     <div class="card"><h2 id="planTitle">🧭 Plano de ação geral</h2><div id="planBox" style="margin-top:10px"><div class="empty">Carregando…</div></div></div>
-    <div class="card"><div class="row-head"><div><h2 id="perTitle">Relatório da semana</h2><div class="lbl" style="margin-top:4px">Comparado com o período anterior · enviado no iPhone toda segunda e todo dia 1º</div></div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap"><div class="theme" id="perKind"><button type="button" data-k="week" aria-pressed="true">Semanal</button><button type="button" data-k="month">Mensal</button></div>
+    <div class="card"><div class="row-head"><div><h2 id="perTitle">Relatório da semana</h2><div class="lbl" style="margin-top:4px"><span id="perSub">Comparado com o período anterior · enviado no iPhone toda segunda e todo dia 1º</span></div></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><div class="theme" id="perKind"><button type="button" data-k="week" aria-pressed="true">Semanal</button><button type="button" data-k="month">Mensal</button><button type="button" data-k="since">Desde o dia</button><button type="button" data-k="trip">Viagem</button></div>
+      <select id="perPick" aria-label="Escolher dia ou viagem" hidden></select>
       <button class="btn" type="button" id="perPrev" aria-label="Anterior">◀</button><button class="btn" type="button" id="perNext" aria-label="Próximo">▶</button></div></div>
       <div class="stats" id="perStats" style="margin-top:12px"></div>
+      <div id="perTripsWrap" hidden><h3 class="lbl" style="margin-top:16px">🚗 Viagens no período (toque para ver o relatório só dela)</h3><div class="list" id="perTrips" style="margin-top:8px"></div></div>
       <h3 class="lbl" style="margin-top:16px">🔧 O que fazer</h3><div class="list" id="perRecs" style="margin-top:8px"></div>
       <div class="grid2e" style="margin-top:12px"><div><h3 class="lbl">Km por dia</h3><svg class="chart sm" id="perChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
         <div><h3 class="lbl">Alertas e dicas</h3><div class="list" id="perList" style="margin-top:8px"></div></div></div>

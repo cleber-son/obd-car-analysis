@@ -34,17 +34,57 @@ def _one(con, q, args=()):
     return dict(r) if r else {}
 
 
-def build(con: sqlite3.Connection, kind: str, offset: int = 0) -> dict:
-    con.row_factory = sqlite3.Row
-    a, b, label = period_bounds(kind, offset)
-    pa, pb, _ = period_bounds(kind, offset - 1)
+def day_start(day: str) -> int:
+    return int(dt.datetime.strptime(day, "%Y-%m-%d").timestamp() * 1000)
 
-    def totals(x, y):
-        return _one(con, """SELECT COUNT(*) trips, COALESCE(SUM(distance_km),0) km, COALESCE(SUM(duration_s),0) dur, COALESCE(SUM(idle_s),0) idle,
+
+def _trip_label(t) -> str:
+    s = dt.datetime.fromtimestamp(t["start_ts"] / 1000)
+    e = dt.datetime.fromtimestamp((t["end_ts"] or t["start_ts"]) / 1000)
+    base = f"Viagem de {s:%d/%m/%Y} · {s:%H:%M}–{e:%H:%M}"
+    return f"{base} · {t['title']}" if t["title"] else base
+
+
+def bounds(con, kind: str, offset: int = 0, day: str | None = None, trip: int | None = None):
+    """(a, b, label, pa, pb, where_cur, args_cur, where_prev, args_prev) para cada tipo de relatório.
+    week/month: calendário; since: do dia escolhido até o fim de hoje; trip: uma viagem só (comparada com a anterior)."""
+    f = "finalized=1 AND start_ts>=? AND start_ts<?"
+    if kind in ("week", "month"):
+        a, b, label = period_bounds(kind, offset)
+        pa, pb, _ = period_bounds(kind, offset - 1)
+        return a, b, label, pa, pb, f, (a, b), f, (pa, pb)
+    if kind == "since":
+        a = day_start(day)
+        today = dt.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        b = int((today + dt.timedelta(days=1)).timestamp() * 1000)
+        if a >= b:
+            raise ValueError("dia no futuro")
+        n = round((b - a) / DAY)
+        label = f"Desde {dt.datetime.fromtimestamp(a / 1000):%d/%m/%Y} ({n} dia{'s' if n > 1 else ''})"
+        pa, pb = a - (b - a), a
+        return a, b, label, pa, pb, f, (a, b), f, (pa, pb)
+    if kind == "trip":
+        t = con.execute("SELECT * FROM trip WHERE id=?", (trip,)).fetchone()
+        if not t:
+            raise ValueError("viagem não encontrada")
+        a = t["start_ts"]
+        b = (t["end_ts"] or int(time.time() * 1000)) + 1
+        p = con.execute("SELECT * FROM trip WHERE start_ts<? AND COALESCE(hidden,0)=0 ORDER BY start_ts DESC LIMIT 1", (a,)).fetchone()
+        pa, pb = (p["start_ts"], (p["end_ts"] or p["start_ts"]) + 1) if p else (0, 0)
+        return a, b, _trip_label(t), pa, pb, "id=?", (trip,), "id=?", (p["id"] if p else -1,)
+    raise ValueError("kind = week, month, since ou trip")
+
+
+def build(con: sqlite3.Connection, kind: str, offset: int = 0, day: str | None = None, trip: int | None = None) -> dict:
+    con.row_factory = sqlite3.Row
+    a, b, label, pa, pb, wc, ac, wp, ap = bounds(con, kind, offset, day, trip)
+
+    def totals(where, args):
+        return _one(con, f"""SELECT COUNT(*) trips, COALESCE(SUM(distance_km),0) km, COALESCE(SUM(duration_s),0) dur, COALESCE(SUM(idle_s),0) idle,
                             COALESCE(SUM(fuel_l),0) fuel, MAX(max_speed) vmax, MAX(max_ect) ect_max, MIN(min_volt) volt_min,
                             AVG(tb_score) tb_score, AVG(eco_score) eco_score, AVG(avg_speed) avg_speed, MIN(crank_v) crank_min,
-                            AVG(warmup_s) warmup_avg FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<?""", (x, y))
-    cur, prev = totals(a, b), totals(pa, pb)
+                            AVG(warmup_s) warmup_avg FROM trip WHERE {where}""", args)
+    cur, prev = totals(wc, ac), totals(wp, ap)
     for t in (cur, prev):
         t["kml"] = round(t["km"] / t["fuel"], 1) if t["fuel"] and t["fuel"] > 0.3 else None
     fills = [dict(r) for r in con.execute("SELECT * FROM fuel_fill WHERE ts>=? AND ts<? ORDER BY ts", (a, b))]
@@ -56,26 +96,29 @@ def build(con: sqlite3.Connection, kind: str, offset: int = 0) -> dict:
                                                WHERE ts>=? AND ts<? GROUP BY title ORDER BY CASE severity WHEN 'crit' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, n DESC""", (a, b))]
     sev = {r["severity"]: r["n"] for r in con.execute("SELECT severity, SUM(COALESCE(count,1)) n FROM alert WHERE ts>=? AND ts<? GROUP BY 1", (a, b))}
     dtcs = [dict(r) for r in con.execute("SELECT code, kind, event, ts FROM dtc_event WHERE ts>=? AND ts<? ORDER BY ts", (a, b))]
-    air = [dict(r) for r in con.execute("SELECT air_verdict v, COUNT(*) n FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<? AND air_verdict IS NOT NULL GROUP BY 1", (a, b))]
+    air = [dict(r) for r in con.execute(f"SELECT air_verdict v, COUNT(*) n FROM trip WHERE {wc} AND air_verdict IS NOT NULL GROUP BY 1", ac)]
     tips: dict[str, int] = {}
-    for (ej,) in con.execute("SELECT eco_json FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<? AND eco_json IS NOT NULL", (a, b)):
+    for (ej,) in con.execute(f"SELECT eco_json FROM trip WHERE {wc} AND eco_json IS NOT NULL", ac):
         for t in json.loads(ej).get("dicas", []):
             tips[t] = tips.get(t, 0) + 1
     daily = [dict(r) for r in con.execute("""SELECT ((start_ts+?)/86400000)*86400000-? day, COUNT(*) trips, SUM(distance_km) km, SUM(duration_s) dur,
                                                SUM(fuel_l) fuel, AVG(eco_score) eco FROM trip WHERE finalized=1 AND start_ts>=? AND start_ts<? GROUP BY 1 ORDER BY 1""",
                                             (TZ, TZ, a, b))]
+    trips = [dict(r) for r in con.execute(f"""SELECT t.id, t.start_ts, t.end_ts, t.distance_km, t.duration_s, t.title, t.km_l, t.eco_score,
+        (SELECT COALESCE(SUM(COALESCE(count,1)),0) FROM alert al WHERE al.ts>=t.start_ts AND al.ts<=COALESCE(t.end_ts, t.start_ts+86400000) AND al.severity!='info') n_alerts
+        FROM trip t WHERE {wc.replace('finalized=1 AND ', '').replace('start_ts', 't.start_ts').replace('id=?', 't.id=?')} AND COALESCE(t.hidden,0)=0 ORDER BY t.start_ts""", ac)]
     accel = _one(con, "SELECT MIN(t100) best FROM accel_run WHERE ts>=? AND ts<? AND t100 IS NOT NULL", (a, b))
 
     def delta(k):
         c, p = cur.get(k), prev.get(k)
         return None if c is None or not p else round((c - p) / p * 100, 1)
     recs = recommendations(con, a, b, cur)
-    return {"kind": kind, "offset": offset, "label": label, "from": a, "to": b, "cur": cur, "prev": prev, "recommendations": recs,
+    return {"kind": kind, "offset": offset, "day": day, "trip": trip, "label": label, "from": a, "to": b, "cur": cur, "prev": prev, "recommendations": recs,
             "delta": {k: delta(k) for k in ("km", "dur", "fuel", "kml", "eco_score", "tb_score")},
             "fills": fills, "spent": round(spent, 2) if spent else None, "est_cost": est_cost,
             "real_kml": round(sum(real) / len(real), 1) if real else None,
             "alerts": alerts, "alerts_by_severity": sev, "dtc_events": dtcs, "air": air,
-            "tips": sorted(tips, key=lambda t: -tips[t])[:4], "daily": daily, "best_0_100": accel.get("best")}
+            "tips": sorted(tips, key=lambda t: -tips[t])[:4], "daily": daily, "trips": trips, "best_0_100": accel.get("best")}
 
 
 TZ = time.localtime().tm_gmtoff * 1000
@@ -152,7 +195,7 @@ def to_text(r: dict) -> tuple[str, str]:
             lines.append(f"• {x['title']} ({x['urgencia_txt'].lower()}): {x['fazer'][0] if x['fazer'] else x['o_que']}")
     elif r["tips"]:
         lines.append("💡 " + r["tips"][0])
-    return f"Relatório {'semanal' if r['kind'] == 'week' else 'mensal'} — {r['label']}", "\n".join(lines)
+    return f"Relatório {({'week': 'semanal', 'month': 'mensal'}).get(r['kind'], '')} — {r['label']}".replace("  ", " "), "\n".join(lines)
 
 
 def queue_due(db_path: str) -> list[str]:

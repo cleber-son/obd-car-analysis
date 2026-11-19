@@ -33,7 +33,7 @@ CMD_EVERY = 30           # s — ações pendentes do painel online
 SPANS = [3600_000, 21600_000, 86400_000, 604800_000, 2592000_000]   # períodos dos gráficos do painel
 KEEP = {
     "/api/series": ["signals", "span"], "/api/alerts": ["days", "severity"], "/api/report": ["days"],
-    "/api/report/period": ["kind", "offset"], "/api/summary": ["days"], "/api/throttle": ["days"],
+    "/api/report/period": ["kind", "offset", "day", "trip"], "/api/summary": ["days"], "/api/throttle": ["days"],
     "/api/diagnostics": ["days"], "/api/trips": ["limit"], "/api/advice": ["rule"],
 }
 
@@ -144,9 +144,16 @@ class Sync:
         for s in data.get("/api/signals") or []:
             for span in spans:
                 self.gather(f"/api/series?signals={urllib.parse.quote(s['key'])}&span={span}&max_points=600", docs)
-        # detalhe de cada viagem (só reenviada se mudou)
-        for t in data.get("/api/trips?limit=1000") or []:
+        # detalhe de cada viagem (só reenviada se mudou) + relatório por viagem e "desde o dia" (histórico)
+        trips = [t for t in (data.get("/api/trips?limit=1000") or []) if not t.get("hidden")]
+        days = set()
+        for t in trips:
             self.gather(f"/api/trips/{t['id']}", docs)
+            self.gather(f"/api/report/period?kind=trip&trip={t['id']}", docs)
+            if t.get("start_ts") and t["start_ts"] > time.time() * 1000 - 120 * 86400_000:
+                days.add(time.strftime("%Y-%m-%d", time.localtime(t["start_ts"] / 1000)))
+        for d in sorted(days):
+            self.gather(f"/api/report/period?day={d}&kind=since", docs)
         # recomendações de todos os alertas e estados que aparecem
         rules = {a["rule"] for a in (data.get("/api/alerts?days=90") or []) if a.get("rule")}
         st, raw = self.local("/api/live")
