@@ -76,6 +76,9 @@ class Sync:
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
             return e.code, e.read()
+        except (urllib.error.URLError, OSError) as e:      # painel local reiniciando: pula este documento
+            log.debug("local %s indisponível: %s", path, e)
+            return 0, b""
 
     def cloud(self, path: str, payload=None, method: str | None = None, timeout: int = 60):
         data = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
