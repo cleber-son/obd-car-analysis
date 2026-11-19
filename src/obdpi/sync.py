@@ -154,6 +154,7 @@ class Sync:
             for v in (json.loads(raw).get("status") or {}).values():
                 if len(v) > 3 and v[3]:
                     rules.add(v[3])
+        rules |= {"z", "missing", "R9"}                   # orientações gerais das famílias de alerta (plano B do painel)
         for r in sorted(rules):
             self.gather(f"/api/advice?rule={urllib.parse.quote(r)}", docs)
         n = self.push(docs)

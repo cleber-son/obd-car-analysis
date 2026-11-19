@@ -64,7 +64,17 @@
     ${d.fazer?.length ? `<div><h4>O que fazer</h4><ul>${d.fazer.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
     <div><h4>Urgência</h4><span class="urg">${esc(d.urgencia_txt || "")}</span>${d.rodar ? ` · ${esc(d.rodar)}` : ""}</div>`;
   const advCache = {};
-  async function getAdvice(rule, source) { const k = rule + "|" + source; if (!(k in advCache)) advCache[k] = await api(`/api/advice?rule=${encodeURIComponent(rule)}&source=${encodeURIComponent(source)}`).catch(() => null); return advCache[k]; }
+  async function getAdvice(rule, source) {
+    const k = rule + "|" + source;
+    if (!(k in advCache)) {
+      const get = (r) => api(`/api/advice?rule=${encodeURIComponent(r)}&source=${encodeURIComponent(source)}`).catch(() => null);
+      let d = await get(rule);
+      const head = rule.split(":")[0];                       // família do alerta (z, missing, R9…) como plano B
+      if (!d && head !== rule) d = await get(head);
+      advCache[k] = d;
+    }
+    return advCache[k];
+  }
   document.addEventListener("toggle", async (e) => { const el = e.target; if (!(el instanceof HTMLDetailsElement) || !el.open || !el.dataset.rule || el.dataset.loaded) return;
     const d = await getAdvice(el.dataset.rule, el.dataset.source); el.dataset.loaded = 1;
     el.querySelector(".adv").innerHTML = d ? advHtml(d) : "Sem recomendação específica para este alerta."; }, true);
@@ -134,7 +144,7 @@
       : `<div class="empty" style="grid-column:1/-1">Aguardando a primeira leitura do OBD. Ligue a ignição com o adaptador conectado.</div>`;
     // banners de alerta recentes
     const crit = (d.alerts || []).filter((a) => d.ts - (a.ts_end || a.ts) < 10 * 60e3 && a.sev !== "info").slice(0, 3);
-    $("#banners").innerHTML = crit.map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}${(a.count || 1) > 1 ? ` · continua (${a.count}×)` : ""}</b><span class="muted">${esc(a.detail)} · ${(a.count || 1) > 1 ? "desde " + tm(a.ts) + ", último " + tm(a.ts_end) : tm(a.ts)}</span></div>`).join("");
+    $("#banners").innerHTML = crit.map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}${(a.count || 1) > 1 ? ` · continua (${a.count}×)` : ""} <span class="more">· O que fazer ›</span></b><span class="muted">${esc(a.detail)} · ${(a.count || 1) > 1 ? "desde " + tm(a.ts) + ", último " + tm(a.ts_end) : tm(a.ts)}</span></div>`).join("");
     const nb = (d.alerts || []).filter((a) => d.ts - (a.ts_end || a.ts) < 24 * 3600e3 && a.sev === "crit").length;
     $("#badge").hidden = !nb; $("#badge").textContent = nb;
   }
@@ -327,6 +337,7 @@
     const sev = $("#alertFilter").value;
     const [al, d] = await Promise.all([api(`/api/alerts?days=90${sev ? "&severity=" + sev : ""}`), api("/api/dtc")]);
     $("#alertList").innerHTML = al.length ? al.map(alertItem).join("") : `<div class="empty">Nenhum alerta nos últimos 90 dias.</div>`;
+    $("#alertRecs").innerHTML = recsHtml(await recsFromAlerts(al.filter((a) => (a.ts_end || a.ts) > Date.now() - 30 * 86400e3)));
     $("#milChip").innerHTML = `<span class="chip"><span class="dot" style="--c:${d.mil ? "var(--bad)" : "var(--ok)"}"></span>Luz de injeção ${d.mil ? "acesa" : "apagada"}</span>`;
     const act = d.state.filter((s) => s.active);
     $("#dtcList").innerHTML = act.length ? act.map((s) => `<div class="alert" style="--s:${s.kind === "confirmed" ? "var(--bad)" : "var(--warn)"}"><code class="k">${esc(s.code)}</code><div><div class="t">${esc(s.description)}</div><div class="d">${s.kind === "confirmed" ? "Confirmado" : "Pendente"} · desde ${dt(s.first_seen_ts)}${s.throttle ? " · borboleta/marcha lenta" : ""}</div></div><span class="pill">${s.count}×</span></div>`).join("")
@@ -410,7 +421,8 @@
       <div><span class="lbl">Bateria mín</span><b>${nf(t.vmin, 1)} V</b></div><div><span class="lbl">Ajuste longo médio</span><b>${nf(t.ltft, 1)}%</b></div>
       <div><span class="lbl">Nota borboleta</span><b>${nf(t.score)}</b></div><div><span class="lbl">Alertas</span><b style="color:var(--bad)">${sev.crit || 0}<span class="muted"> / </span><span style="color:var(--warn)">${sev.warn || 0}</span></b></div>`;
     lineChart($("#repChart"), [{ pts: r.daily.map((d) => [d.day, d.km || 0]), c: "--speed", bars: true }], { ymin: 0, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
-    $("#repRecs").innerHTML = recsHtml(r.recommendations);
+    $("#repRecs").innerHTML = recsHtml(r.recommendations ?? await recsFromAlerts(
+      (await api("/api/alerts?days=90").catch(() => [])).filter((a) => (a.ts_end || a.ts) > Date.now() - days * 86400e3)));
     $("#repTop").innerHTML = r.top_alerts.length ? r.top_alerts.map((a) => alertItem({ ...a, detail: `${a.n}× no período, último` , ts: a.last_ts })).join("") : `<div class="empty">Nenhum alerta no período.</div>`;
   }
   $("#repDays").addEventListener("change", () => loadReport().catch(console.error));
@@ -497,6 +509,27 @@
         <div><h4>Urgência</h4><span class="urg">${esc(x.urgencia_txt || "")}</span>${x.rodar ? ` · ${esc(x.rodar)}` : ""}</div></div></details>`; }).join("");
   }
 
+  // relatório sem "recommendations" (dados enviados por uma versão antiga do Pi): monta a partir dos alertas + orientações
+  const RANK = { crit: 0, warn: 1, info: 2 };
+  async function recsFromAlerts(alerts) {
+    const groups = {};
+    for (const a of alerts || []) {
+      const sev = a.severity || a.sev; if (!a.rule || !["crit", "warn"].includes(sev)) continue;
+      const head = a.rule.split(":")[0]; const key = head === "z" || head === "missing" || /^R|^P\d/.test(head) ? head : a.rule;
+      const g = (groups[key] ??= { rule: a.rule, source: a.source || "", title: a.title, severity: sev, n: 0, evidence: a.detail || "" });
+      g.n += a.n || a.count || 1; if (RANK[sev] < RANK[g.severity]) g.severity = sev;
+    }
+    const list = Object.values(groups).sort((x, y) => RANK[x.severity] - RANK[y.severity] || y.n - x.n).slice(0, 12);
+    const out = [];
+    for (const g of list) {
+      const d = await getAdvice(g.rule, g.source);
+      if (!d) { out.push({ ...g, o_que: "", fazer: [], urgencia_txt: "" }); continue; }
+      const urg = g.severity !== "crit" && d.urgencia === "parar" ? "Resolver nos próximos dias (pare se piorar)" : d.urgencia_txt;
+      out.push({ ...g, o_que: d.o_que, causas: (d.causas || []).slice(0, 4), verificar: (d.verificar || []).slice(0, 3), fazer: d.fazer || [], urgencia_txt: urg, rodar: d.rodar });
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------ relatório semanal / mensal
   let perKind = "week", perOff = 0;
   async function loadPeriod() {
@@ -512,7 +545,7 @@
       <div><span class="lbl">Direção econômica</span><b>${nf(c.eco_score)}${dl(d.eco_score)}</b></div><div><span class="lbl">Borboleta</span><b>${nf(c.tb_score)}${dl(d.tb_score)}</b></div>
       <div><span class="lbl">Alertas</span><b><span style="color:var(--bad)">${sv.crit || 0}</span> / <span style="color:var(--warn)">${sv.warn || 0}</span></b></div><div><span class="lbl">Melhor 0–100</span><b>${r.best_0_100 ? nf(r.best_0_100, 2) + " s" : "—"}</b></div>`;
     lineChart($("#perChart"), [{ pts: r.daily.map((x) => [x.day + 43200e3, x.km || 0]), c: "--speed", bars: true }], { ymin: 0, x0: r.from, x1: r.to, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
-    $("#perRecs").innerHTML = recsHtml(r.recommendations);
+    $("#perRecs").innerHTML = recsHtml(r.recommendations ?? await recsFromAlerts(r.alerts));
     $("#perList").innerHTML = (r.alerts.slice(0, 5).map((a) => alertItem({ ...a, ts: a.last_ts, detail: `${a.n}× no período`, count: 1 })).join("") +
       r.tips.map((t) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(t)}</div></div><span></span></div>`).join("")) || `<div class="empty">Nada a destacar no período.</div>`;
   }
