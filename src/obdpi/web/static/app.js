@@ -199,7 +199,7 @@
     open();
   }
   const staleSSE = (d) => d.state !== "pi_offline" && wsTs && (d.ts || 0) <= wsTs;   // o WebSocket já mostrou algo mais novo
-  const onLive = (d) => { window.dispatchEvent(new CustomEvent("obdlive", { detail: d })); renderLive(d); };
+  const onLive = (d) => { LIVE_D = d; window.dispatchEvent(new CustomEvent("obdlive", { detail: d })); renderLive(d); };
   function connectStream() {
     try { es?.close(); } catch { }
     es = new EventSource("/api/stream");
@@ -395,12 +395,34 @@
 
   // ------------------------------------------------------------ sensores
   let sigKey = null;
+  // sensores agrupados por sistema, cada grupo com a sua cor
+  const SGROUPS = [
+    ["Motor", "⚙️", "--rpm", /^(rpm|speed|load|load_abs|timing|gear|run_time|inj_timing)$/],
+    ["Ar e admissão", "💨", "--speed", /^(maf|map|baro|evap|iat$)/],
+    ["Combustível e mistura", "⛽", "--tps", /^(stft|ltft|lambda_cmd|fuel|kml|ethanol|st_o2|lt_o2)/],
+    ["Sondas e catalisador", "🧪", "--temp", /^(o2|cat)/],
+    ["Borboleta e pedal", "🦋", "--pedal", /^(tps|pedal)/],
+    ["Temperatura", "🌡️", "--bad", /^(ect|oil_temp|amb)/],
+    ["Elétrica", "🔋", "--volt", /^(batt|ecu_volt|hybrid)/],
+    ["Central e códigos", "🧾", "--muted", /./],
+  ];
+  let LIVE_D = null;
   async function loadSignals() {
     const s = await api("/api/signals");
     for (const x of s) catalog[x.key] = x;
-    $("#sigRows").innerHTML = s.length ? s.map((x) => `<tr class="click" data-k="${esc(x.key)}"><td class="head">${esc(x.name)} <span class="muted num" style="font-size:11px">${esc(x.key)}</span></td>
-      <td class="num" data-l="Atual"><b>${nf(x.last, x.decimals)} ${esc(x.unit)}</b></td><td class="num" data-l="Mín 24h">${nf(x.min24h, x.decimals)}</td><td class="num" data-l="Média 24h">${nf(x.avg24h, x.decimals)}</td><td class="num" data-l="Máx 24h">${nf(x.max24h, x.decimals)}</td><td class="num no-m" data-l="Leituras">${x.n24h}</td></tr>`).join("")
-      : `<tr><td colspan="6"><div class="empty">Nenhum sinal gravado ainda.</div></td></tr>`;
+    if (!s.length) { $("#sigGroups").innerHTML = `<div class="empty">Nenhum sinal gravado ainda.</div>`; return; }
+    const st = LIVE_D?.status || {}; const groups = SGROUPS.map(() => []);
+    for (const x of s) groups[SGROUPS.findIndex((g) => g[3].test(x.key))].push(x);
+    const nbad = s.filter((x) => st[x.key] && st[x.key][0] !== "ok").length;
+    $("#sigCount").innerHTML = `${s.length} sensores · toque em um para ver o gráfico${nbad ? ` · <span style="color:var(--bad)">${nbad} fora do normal</span>` : ""}`;
+    $("#sigGroups").innerHTML = SGROUPS.map(([name, ic, c], gi) => { const list = groups[gi]; if (!list.length) return "";
+      const bad = list.filter((x) => st[x.key] && st[x.key][0] !== "ok").length;
+      return `<section class="sgroup" style="--g:var(${c})"><h3><span class="gic">${ic}</span>${name}<span class="gn">${list.length}${bad ? ` · <b style="color:var(--bad)">${bad} fora</b>` : ""}</span></h3><div class="sgrid">${list.map((x) => {
+        const state = st[x.key]; const cls = !state ? "" : state[0] === "ok" ? " good" : " bad";
+        const span = (x.max24h ?? 0) - (x.min24h ?? 0), pos = span > 0 && x.last != null ? Math.max(0, Math.min(100, (x.last - x.min24h) / span * 100)) : 50, avg = span > 0 && x.avg24h != null ? (x.avg24h - x.min24h) / span * 100 : 50;
+        return `<button type="button" class="stile${cls}" data-k="${esc(x.key)}"><span class="sn">${esc(x.name)}</span><span class="sv num">${nf(x.last, x.decimals)}<small>${esc(x.unit || "")}</small></span>
+          <span class="sbar"><i style="left:${pos}%"></i><u style="left:${avg}%"></u></span><span class="sr num">${nf(x.min24h, x.decimals)} <em>mín</em> · ${nf(x.avg24h, x.decimals)} <em>méd</em> · ${nf(x.max24h, x.decimals)} <em>máx</em></span>
+          ${state?.[2] ? `<span class="sr">${cls === " bad" ? "⚠ " + esc(state[1] || "Fora do normal") + " · " : ""}normal: ${esc(state[2])}</span>` : ""}</button>`; }).join("")}</div></section>`; }).join("");
   }
   async function showSignal(k) {
     sigKey = k; $("#sigChartCard").hidden = false;
@@ -410,7 +432,7 @@
     lineChart($("#sigChart"), [{ pts: r.series[k] || [], c: COLORS[k] || "--speed", area: true }], { x0: to - span, x1: to });
     $("#sigChartCard").scrollIntoView({ behavior: "smooth" });
   }
-  $("#sigRows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-k]"); if (tr) openModal(tr.dataset.k); });
+  $("#sigGroups").addEventListener("click", (e) => { const b = e.target.closest("[data-k]"); if (b) openModal(b.dataset.k); });
   $("#sigRange").addEventListener("change", () => sigKey && showSignal(sigKey).catch(console.error));
   $("#liveSensors").addEventListener("click", (e) => { const b = e.target.closest("[data-k]"); if (b) openModal(b.dataset.k); });
   document.querySelectorAll(".gauge").forEach((g, i) => { g.style.cursor = "pointer"; g.addEventListener("click", () => openModal(GAUGES[i].k)); });

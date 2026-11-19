@@ -177,7 +177,7 @@
 
   <!-- TESTES GUIADOS -->
   <section class="view" id="v-testes" hidden>
-    <div class="card"><h2>🎯 Caça-problema: testes guiados</h2><div class="lbl" style="margin:4px 0 12px">O painel diz o que fazer no carro e interpreta as leituras ao vivo. Use com o celular na mão, ao lado do carro</div>
+    <div class="card"><h2>🎯 Caça-problema: testes guiados</h2><div class="lbl" style="margin:4px 0 12px">O painel diz o que fazer no carro, mede ao vivo e dá o resultado. Use com o celular na mão, ao lado do carro</div>
       <div class="list" id="tstList"></div></div>
     <div class="card"><h2>Últimos resultados</h2><div class="lbl" style="margin:4px 0 10px">Guardados neste aparelho; no painel do Pi também vão para o diário de manutenção</div><div class="list" id="tstHist"></div></div>
   </section>
@@ -187,8 +187,9 @@
     <div class="card" id="sigChartCard" hidden><div class="row-head"><h2 id="sigTitle"></h2>
       <select id="sigRange" aria-label="Período"><option value="3600000">1 hora</option><option value="21600000">6 horas</option><option value="86400000" selected>24 horas</option><option value="604800000">7 dias</option></select></div>
       <svg class="chart" id="sigChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:10px"></svg></div>
-    <div class="card"><h2>Todos os sinais registrados</h2><div class="lbl" style="margin-top:4px">Toque em um sinal para ver o histórico</div>
-      <div class="tbl" style="margin-top:10px"><table class="cards"><thead><tr><th>Sinal</th><th>Atual</th><th>Mín 24h</th><th>Média 24h</th><th>Máx 24h</th><th>Leituras</th></tr></thead><tbody id="sigRows"></tbody></table></div></div>
+    <div class="card"><div class="row-head"><div><h2>Sensores</h2><div class="lbl" style="margin-top:4px" id="sigCount">Toque em um sensor para ver o gráfico</div></div>
+      <div class="legend"><span style="--c:var(--ok)">normal</span><span style="--c:var(--bad)">fora do normal</span></div></div>
+      <div id="sigGroups" style="margin-top:12px"><div class="empty">Carregando…</div></div></div>
   </section>
 
   <!-- RELATÓRIO -->
@@ -276,6 +277,8 @@
   <div class="sheet card tst">
     <div class="row-head"><div><h2 id="tstTitle"></h2><div class="lbl" id="tstState" style="margin-top:4px"></div></div><button class="btn" type="button" id="tstClose" aria-label="Fechar teste">✕</button></div>
     <div class="tbig" id="tstBig"></div><div class="tsmall" id="tstSmall"></div>
+    <div class="tchecks" id="tstChecks"></div>
+    <canvas id="tstSpark" class="tspark" aria-hidden="true"></canvas>
     <div class="stats" id="tstLive"></div>
     <div class="tbtns" id="tstBtns"></div>
     <div class="list" id="tstLog"></div>
