@@ -86,6 +86,7 @@ class Collector:
         self.db_path = st["db_path"]
         self.state = config.State(st["state_path"])
         self.con = db.init(self.db_path)
+        self._restored = list(db.RESTORED)
         self.run_dir = Path(cfg["runtime"]["live_sock"]).parent
         self.run_dir.mkdir(parents=True, exist_ok=True)
         last = self.con.execute("SELECT MAX(ts) FROM sample").fetchone()[0] or 0
@@ -93,6 +94,10 @@ class Collector:
         self.boot_ts = self.clock.now()            # tudo gravado por este processo é >= boot_ts
         self.sig_ids = {r["key"]: r["id"] for r in self.con.execute("SELECT id, key FROM signal")}
         self.limits = LimitsEngine([dict(r) for r in self.con.execute("SELECT * FROM baseline")], period_s=c["full_period_s"])
+        if self._restored:
+            self.event("warn", "banco_restaurado", f"banco corrompido (queda de energia?); restaurado do backup {self._restored[0]}")
+            self.queue_push("Banco de dados restaurado", f"O banco estava corrompido e voltou do backup {self._restored[0]}. Os dados depois dele ficaram no arquivo .corrompido.", "warn")
+            self.con.commit()
         self.throttle = ThrottleEngine(self.state.get("throttle"))
         self.session_id = None
         self.session_start = 0

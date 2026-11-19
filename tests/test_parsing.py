@@ -138,6 +138,21 @@ def test_report_since_and_trip():
     assert reports.build(con, "trip", trip=1)["recommendations"] == []
 
 
+
+def test_corrupt_db_restores_backup():
+    import os
+    import tempfile
+    from obdpi import db
+    d = tempfile.mkdtemp(); p = d + "/obd.db"; os.mkdir(d + "/backup")
+    c = db.init(p); c.execute("INSERT INTO annotation(ts, kind, text) VALUES (1,'x','guardado')"); c.commit()
+    c.execute(f"VACUUM INTO '{d}/backup/obd-20261119.db'"); c.close()
+    with open(p, "r+b") as f:
+        f.write(b"lixo" * 5000)                           # queda de energia no meio da gravação
+    c = db.init(p)
+    assert c.execute("SELECT text FROM annotation").fetchone()[0] == "guardado"
+    assert any("corrompido" in f for f in os.listdir(d))
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

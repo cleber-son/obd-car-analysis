@@ -223,3 +223,11 @@ Pedidos: melhorar a análise dos dados; modo direção todo em tempo real; melho
 - **Testes guiados ampliados (8)**: caça-vazamento, raio-X da mistura (lenta/1.500/2.500 rpm → entrada de ar × MAF × combustível), sondas e catalisador (2.500 rpm por 45 s), acelerada e volta à marcha lenta, varredura do pedal, marcha lenta com carga, bateria na partida, ventoinha do radiador. Todos com condições marcadas ao vivo antes de começar, gráfico dos últimos 45 s, bipes e último resultado no cartão.
 - **Sensores coloridos**: aba Sensores agrupada por sistema (motor, ar, combustível, sondas, borboleta, temperatura, elétrica, central), cada grupo com a sua cor, valor grande, barra mín–méd–máx de 24 h e vermelho quando fora do normal.
 - **Tanque cheio no painel online**: o abastecimento pendente aparece na hora no histórico ("aguardando o Pi"); mesmo valor em menos de 1 h não duplica.
+
+## 2026-11-19 (noite, parte 3) — Pi mais resistente
+O Pi fica fixo no carro e perde a energia a cada desligada. Melhorias só de software, aplicadas pelo `install.sh`:
+- Cão de guarda do chip (`RuntimeWatchdogSec=15`): travou, reinicia sozinho.
+- `fsck.repair=yes` no boot e gravação no cartão a cada 5 s (antes 30 s).
+- WiFi sem economia de energia (menos atraso no ao vivo e no SSH).
+- Banco: backup diário conferido (7 cópias, antes semanal com 2); se o banco amanhecer corrompido, o coletor restaura o backup íntegro mais recente, guarda o arquivo ruim (com -wal/-shm, que antes ficavam para trás) e avisa no celular. Teste `test_corrupt_db_restores_backup`.
+- Página de ideias de expansão (GPS, 4G, CAN, acelerômetro, câmera…): https://claude.ai/artifact/Kv93ZhNmJaoJuetEdDFvSd

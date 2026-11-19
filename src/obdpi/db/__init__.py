@@ -20,18 +20,37 @@ def connect(path: str, readonly: bool = False) -> sqlite3.Connection:
     return con
 
 
+RESTORED: list[str] = []      # nomes dos backups restaurados nesta execução (o coletor registra e avisa)
+
+
+def _check(path) -> str:
+    try:
+        c = sqlite3.connect(str(path))
+        ok = c.execute("PRAGMA quick_check").fetchone()[0]
+        c.close()
+        return ok
+    except sqlite3.DatabaseError as e:
+        return str(e)
+
+
 def init(path: str) -> sqlite3.Connection:
+    """Abre (ou cria) o banco. O Pi perde a energia junto com o carro: se o arquivo amanhecer corrompido, ele é posto
+    de lado (com o -wal e o -shm, que não podem ser aplicados a outro banco) e o backup mais recente que estiver íntegro
+    assume o lugar. Sem backup válido, começa um banco novo. O arquivo corrompido fica guardado para recuperação manual."""
     p = Path(path)
-    if p.exists():
-        try:
-            c = sqlite3.connect(path)
-            ok = c.execute("PRAGMA quick_check").fetchone()[0]
-            c.close()
-        except sqlite3.DatabaseError as e:
-            ok = str(e)
-        if ok != "ok":
-            import time
-            p.rename(p.with_name(f"{p.name}.corrompido-{int(time.time())}"))
+    if p.exists() and _check(p) != "ok":
+        import shutil
+        import time
+        stamp = int(time.time())
+        for suf in ("", "-wal", "-shm"):
+            f = p.with_name(p.name + suf)
+            if f.exists():
+                f.rename(p.with_name(f"{p.name}.corrompido-{stamp}{suf}"))
+        for b in sorted((p.parent / "backup").glob("obd-*.db"), reverse=True):
+            if _check(b) == "ok":
+                shutil.copy2(b, p)
+                RESTORED.append(b.name)
+                break
     con = connect(path)
     con.executescript(SCHEMA)
     migrate(con)

@@ -29,6 +29,23 @@ for u in apt-daily.timer apt-daily-upgrade.timer man-db.timer NetworkManager-wai
 done
 touch /etc/cloud/cloud-init.disabled   # cloud-init só era necessário no 1º boot
 
+echo "== resistir a travamentos e a quedas de energia (o Pi apaga junto com o carro)"
+# cão de guarda do próprio chip: se o sistema travar por 15 s, o Pi reinicia sozinho
+install -d /etc/systemd/system.conf.d
+printf '[Manager]\nRuntimeWatchdogSec=15\nRebootWatchdogSec=2min\n' > /etc/systemd/system.conf.d/obd-watchdog.conf
+# conserta o sistema de arquivos sozinho no boot depois de um desligamento brusco
+for f in /boot/firmware/cmdline.txt /boot/cmdline.txt; do
+  [ -f "$f" ] && ! grep -q 'fsck.repair=yes' "$f" && sed -i '1 s/$/ fsck.repair=yes/' "$f" || true
+done
+# grava no cartão a cada 5 s no máximo (padrão 30 s): menos dados em risco quando a energia cai
+printf 'vm.dirty_expire_centisecs = 500\nvm.dirty_writeback_centisecs = 500\n' > /etc/sysctl.d/90-obd-flush.conf
+sysctl -q --system || true
+
+echo "== WiFi sem economia de energia (menos atraso no painel ao vivo e no SSH)"
+install -d /etc/NetworkManager/conf.d
+printf '[connection]\nwifi.powersave = 2\n' > /etc/NetworkManager/conf.d/obd-wifi-powersave.conf
+iw dev wlan0 set power_save off 2>/dev/null || true
+
 echo "== mDNS e anúncio de IP"
 install -m 644 deploy/avahi-obd.service /etc/avahi/services/obd.service
 install -m 755 deploy/90-obd-announce /etc/NetworkManager/dispatcher.d/90-obd-announce
