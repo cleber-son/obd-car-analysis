@@ -1,11 +1,12 @@
-// Civic OBD — painel online (Cloudflare Worker + D1).
+// Civic OBD — painel online público (Cloudflare Worker + D1), em https://obd.cleberson.social.br
 //
-// O Pi monta cada resposta da API e envia como "documento" (POST /api/sync/docs). Este Worker:
-//   • protege tudo com senha (cookie de sessão assinado);
-//   • serve o mesmo painel estático do Pi e responde GET /api/* com o documento correspondente;
-//   • guarda ações feitas aqui (tanque cheio, anotações, editar viagem, pedir análise) numa fila que o Pi aplica ao conectar.
+// O Pi monta cada resposta da API e envia como "documento" (POST /api/sync/docs, com token). Este Worker:
+//   • serve o mesmo painel estático do Pi e responde GET /api/* com o documento correspondente (público, só leitura);
+//   • marca o carro como desligado quando o Pi para de enviar (Pi sem energia/sem internet);
+//   • se DASH_PASSWORD estiver definido, exige senha (desligado por padrão, a pedido do dono);
+//   • a fila de ações (tanque cheio, editar viagem…) só fica ativa com senha; sem senha, o painel online é só leitura.
 //
-// Segredos (wrangler secret put): DASH_PASSWORD, SYNC_TOKEN, SESSION_SECRET.
+// Segredos (wrangler secret put): SYNC_TOKEN (obrigatório); DASH_PASSWORD e SESSION_SECRET (opcionais).
 
 const KEEP = {
   "/api/series": ["signals", "span"], "/api/alerts": ["days", "severity"], "/api/report": ["days"],
@@ -84,19 +85,36 @@ async function getDoc(env, key) {
   return r ? { data: r.json, updated: r.updated_ts } : null;
 }
 
-function withAge(raw) {
+const OFFLINE_AFTER_MS = 60_000;   // o Pi envia o estado ao vivo a cada 10 s enquanto tem internet
+
+// estado ao vivo como o painel deve ver: se o Pi parou de enviar, o carro está desligado (ou sem internet)
+function liveView(raw, meta) {
   try {
     const d = JSON.parse(raw);
-    if (d && d.ts) d.age_s = Math.round((Date.now() - d.ts) / 100) / 10;
+    const last = meta.last_sync_ts || d.ts || 0;
+    if (Date.now() - last > OFFLINE_AFTER_MS) {
+      d.pi_last_seen = last;
+      d.last_state = d.state;
+      d.state = "pi_offline";
+      d.engine_on = false;
+      d.trip_id = null; d.trip_start = null; d.trip = null;
+    }
+    if (d.ts) d.age_s = Math.round((Date.now() - d.ts) / 100) / 10;
+    d.cloud = true;
     return JSON.stringify(d);
   } catch { return raw; }
 }
 
-async function envInfo(env) {
+async function meta(env) {
   const m = await getDoc(env, "_meta");
-  const meta = m ? JSON.parse(m.data) : {};
+  try { return m ? JSON.parse(m.data) : {}; } catch { return {}; }
+}
+
+async function envInfo(env) {
+  const m = await meta(env);
   const p = await env.DB.prepare("SELECT COUNT(*) n FROM cmd WHERE done=0").first();
-  return { cloud: true, last_sync_ts: meta.last_sync_ts || null, pi_version: meta.version || null, pending_cmds: p ? p.n : 0 };
+  return { cloud: true, readonly: !env.DASH_PASSWORD, last_sync_ts: m.last_sync_ts || null, pi_version: m.version || null,
+           pi_online: !!m.last_sync_ts && Date.now() - m.last_sync_ts < OFFLINE_AFTER_MS, pending_cmds: p ? p.n : 0 };
 }
 
 // ---------------------------------------------------------------- sincronização (Pi → nuvem)
@@ -157,7 +175,7 @@ export default {
       return new Response(null, { status: 303, headers: { location: "/login", "set-cookie": "obd_s=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax" } });
     if (p === "/manifest.webmanifest" || p === "/favicon.ico") return env.ASSETS.fetch(req);
 
-    if (!(await validSession(req, env))) {
+    if (env.DASH_PASSWORD && !(await validSession(req, env))) {
       if (p.startsWith("/api/")) return json({ error: "faça login" }, 401);
       return new Response(null, { status: 303, headers: { location: "/login" } });
     }
@@ -172,22 +190,22 @@ export default {
     if (p === "/api/stream") {
       // um evento por conexão; o EventSource do navegador reconecta sozinho (retry 5 s)
       const d = await getDoc(env, "/api/live");
-      const data = d ? withAge(d.data) : JSON.stringify({ state: "sem_dados", values: {}, alerts: [], dtc: {} });
+      const data = d ? liveView(d.data, await meta(env)) : JSON.stringify({ state: "pi_offline", engine_on: false, values: {}, alerts: [], dtc: {}, cloud: true });
       return new Response(`retry: 5000\ndata: ${data}\n\n`, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
     }
     if (req.method === "POST" || req.method === "DELETE") {
-      if (QUEUEABLE.some((re) => re.test(p))) {
+      if (env.DASH_PASSWORD && QUEUEABLE.some((re) => re.test(p))) {
         const body = req.method === "POST" ? await req.text() : "";
         if (body.length > 20000) return json({ error: "conteúdo grande demais" }, 413);
         await env.DB.prepare("INSERT INTO cmd(ts, method, path, body) VALUES (?,?,?,?)").bind(Date.now(), req.method, p, body).run();
         return json({ ok: true, queued: true });
       }
-      return json({ error: "Disponível só no painel do Pi (rede local)." }, 409);
+      return json({ error: "O painel online é só de visualização. Faça isso no painel do Pi (no carro, pelo hotspot: http://172.20.10.14)." }, 409);
     }
     if (p === "/api/export.csv") return json({ error: "Exportação CSV disponível no painel do Pi (rede local)." }, 404);
     const d = await getDoc(env, docKey(url));
     if (!d) return json({ error: "ainda não sincronizado pelo Pi" }, 404);
-    return new Response(p === "/api/live" ? withAge(d.data) : d.data,
+    return new Response(p === "/api/live" ? liveView(d.data, await meta(env)) : d.data,
       { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-synced": String(d.updated) } });
   },
 };

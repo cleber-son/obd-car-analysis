@@ -263,7 +263,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     last = Date.now();
     const on = d.engine_on, coll = d.state === "coletando";
     $("dot").style.setProperty("--c", on ? "var(--ok)" : coll ? "var(--warn)" : "var(--bad)");
-    $("state").textContent = on ? "Motor ligado" : coll ? "Ignição ligada" : d.state === "ecu_silenciosa" ? "Ignição desligada" : "OBD desconectado";
+    $("state").textContent = on ? "Carro ligado" : coll ? "Ignição ligada" : d.state === "pi_offline" ? "Carro desligado (Pi offline" + (d.pi_last_seen ? " desde " + new Date(d.pi_last_seen).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "") + ")" : d.state === "ecu_silenciosa" ? "Ignição desligada" : "OBD desconectado";
     $("spd").textContent = nf(v.speed);
     const rpm = v.rpm || 0;
     $("rpm").textContent = nf(rpm);
@@ -286,7 +286,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   setInterval(() => {
     $("clock").textContent = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     const age = (Date.now() - last) / 1000;
-    $("fage").textContent = last ? (age > 5 ? `sem dados há ${Math.round(age)} s` : "ao vivo") : "";
+    $("fage").textContent = lastD?.state === "pi_offline" ? "carro desligado" : last ? (age > 15 ? `sem dados há ${Math.round(age)} s` : "ao vivo") : "";
   }, 1000);
 
   let es;

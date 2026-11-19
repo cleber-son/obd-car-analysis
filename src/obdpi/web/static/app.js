@@ -13,6 +13,7 @@
     coletando: ["var(--ok)", "Coletando"], ecu_silenciosa: ["var(--warn)", "Ignição desligada"], conectando: ["var(--warn)", "Conectando ao OBD"],
     procurando_adaptador: ["var(--warn)", "Procurando OBD"], descobrindo: ["var(--warn)", "Lendo sensores"], desconectado: ["var(--bad)", "OBD desconectado"],
     coletor_parado: ["var(--bad)", "Coletor parado"], iniciando: ["var(--muted)", "Iniciando"],
+    pi_offline: ["var(--muted)", "Carro desligado (Pi offline)"],
   };
   const COLORS = { rpm: "--rpm", speed: "--speed", ect: "--temp", iat: "--temp", batt: "--volt", ecu_volt: "--volt", tps: "--tps", tps_rel: "--tps", tps_b: "--tps", tps_cmd: "--speed", pedal_d: "--pedal", pedal_e: "--pedal", stft1: "--tps", ltft1: "--tps", map: "--speed", load: "--rpm", timing: "--volt" };
   let catalog = {};      // key -> {name, unit, decimals}
@@ -84,7 +85,7 @@
     live = d;
     const v = d.values || {};
     const [sc, sl] = STATE[d.state] || ["var(--muted)", d.state];
-    const stale = d.age_s != null && d.age_s > 15;
+    const stale = d.state !== "pi_offline" && d.age_s != null && d.age_s > 15;
     $("#chips").innerHTML = `<span class="chip"><span class="dot" style="--c:${stale ? "var(--bad)" : sc}"></span>${esc(stale ? "Sem dados há " + Math.round(d.age_s) + " s" : sl)}</span>
       ${d.engine_on ? `<span class="chip"><span class="dot" style="--c:var(--ok)"></span>Motor ligado${d.trip_start ? " · " + dur((d.ts - d.trip_start) / 1000) : ""}</span>` : ""}
       ${d.mil ? `<span class="chip"><span class="dot" style="--c:var(--bad)"></span>Luz de injeção acesa</span>` : ""}
@@ -162,9 +163,12 @@
     const on = d.engine_on; const now = d.ts || Date.now(); const S = summary || {};
     const since = on && d.trip_start ? (now - d.trip_start) / 1000 : S.off_since_ts ? (now - S.off_since_ts) / 1000 : null;
     const ign = d.state === "coletando" && !on;
+    const off = d.state === "pi_offline";
     const c = on ? "var(--ok)" : ign ? "var(--warn)" : "var(--muted)";
-    $("#engineCard").innerHTML = `<div class="st"><span class="pulse${on ? " on" : ""}" style="--c:${c}"></span><div><div class="big">${on ? "Motor ligado" : ign ? "Ignição ligada, motor desligado" : "Motor desligado"}</div>
-      <div class="muted">${since != null ? (on ? "há " : "desde ") + (on ? dur(since) : (since > 86400 ? dt(S.off_since_ts) : "há " + dur(since))) : "—"}</div></div></div>
+    const sub = off ? `Pi visto pela última vez ${d.pi_last_seen ? dt(d.pi_last_seen) : "—"}` + (S.off_since_ts ? ` · último motor desligado ${dt(S.off_since_ts)}` : "")
+      : since != null ? (on ? "há " : "desde ") + (on ? dur(since) : (since > 86400 ? dt(S.off_since_ts) : "há " + dur(since))) : "—";
+    $("#engineCard").innerHTML = `<div class="st"><span class="pulse${on ? " on" : ""}" style="--c:${c}"></span><div><div class="big">${on ? "Carro ligado · motor funcionando" : ign ? "Ignição ligada, motor desligado" : "Carro desligado"}</div>
+      <div class="muted">${sub}</div></div></div>
       <div class="kv"><span class="lbl">Esta viagem</span><b>${on ? nf(S.current_trip_km ?? 0, 1) + " km" : "—"}</b></div>
       <div class="kv"><span class="lbl">Hoje</span><b>${nf(S.today?.km ?? 0, 1)} km</b><span class="muted" style="font-size:12px">${dur(S.today?.dur ?? 0)} ligado</span></div>
       <div class="kv"><span class="lbl">Total registrado</span><b>${nf(S.total?.km ?? 0, 0)} km</b><span class="muted" style="font-size:12px">${S.total?.n ?? 0} viagens</span></div>
@@ -238,7 +242,8 @@
     const t = await api(`/api/trips/${id}`);
     const S = t.series; const eco = t.eco_json || {}; const air = t.air_json || {};
     $("#tripDetail").innerHTML = `<div class="card"><div class="row-head"><h2>${esc(t.title || "Viagem de " + dt(t.start_ts))}</h2><span class="muted">${dt(t.start_ts)} → ${t.end_ts ? tm(t.end_ts) : "agora"} · ${esc(t.end_reason || "em andamento")}</span></div>
-      <form id="tripEdit" data-id="${t.id}" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      ${t.note ? `<div class="muted" style="margin-top:6px">📝 ${esc(t.note)}</div>` : ""}
+      <form id="tripEdit" data-id="${t.id}" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px" ${CLOUD?.readonly ? "hidden" : ""}>
         <input type="text" id="tTitle" value="${esc(t.title || "")}" placeholder="Nome (ex.: Casa → trabalho)" aria-label="Nome da viagem" style="flex:1 1 180px">
         <input type="text" id="tNote" value="${esc(t.note || "")}" placeholder="Anotação" aria-label="Anotação" style="flex:2 1 220px">
         <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="tHidden" ${t.hidden ? "checked" : ""}> Ocultar</label>
@@ -517,7 +522,7 @@
     $("#aiRun").disabled = false;
     if (j.status === "error") { $("#aiSub").textContent = "Erro"; $("#aiBody").innerHTML = `<div class="alert" style="--s:var(--bad)"><span class="ic">!</span><div><div class="t">Não foi possível analisar</div><div class="d">${esc(j.error)}</div></div><span></span></div>`; return; }
     if (j.status === "done" && j.text) { $("#aiSub").textContent = `${j.ts ? dt(j.ts) : "agora"} · ${j.model || ""}`; $("#aiBody").innerHTML = md(j.text); return; }
-    $("#aiSub").textContent = ""; $("#aiBody").innerHTML = `<div class="empty">Nenhuma análise ainda. Toque em <b>Analisar agora</b>: o Pi envia o resumo dos dados para o Claude (precisa de internet).</div>`;
+    $("#aiSub").textContent = ""; $("#aiBody").innerHTML = CLOUD?.readonly ? `<div class="empty">Nenhuma análise ainda. Ela é pedida no painel do Pi e aparece aqui depois da sincronização.</div>` : `<div class="empty">Nenhuma análise ainda. Toque em <b>Analisar agora</b>: o Pi envia o resumo dos dados para o Claude (precisa de internet).</div>`;
   }
   $("#aiBtn").addEventListener("click", () => { $("#aiModal").hidden = false; aiPoll(); });
   $("#aiClose").addEventListener("click", () => { $("#aiModal").hidden = true; clearTimeout(aiTimer); });
@@ -552,8 +557,9 @@
     $("#cloudBar").innerHTML = `<span class="dot" style="--c:${on ? "var(--ok)" : "var(--muted)"}"></span>
       <b>Painel online</b> · ${on ? "Pi conectado agora (dados ao vivo)" : env.last_sync_ts ? "Pi offline · dados até " + dt(env.last_sync_ts) : "aguardando a primeira sincronização do Pi"}
       ${env.pending_cmds ? ` · ${env.pending_cmds} ação(ões) esperando o Pi` : ""}
-      <a href="/logout" style="margin-left:auto">Sair</a>`;
-    for (const id of ["#accGo", "#csvLink"]) { const el = $(id); if (el) el.hidden = true; }
+      ${env.readonly ? '<span class="muted" style="margin-left:auto">somente visualização</span>' : '<a href="/logout" style="margin-left:auto">Sair</a>'}`;
+    const hide = ["#accGo", "#csvLink"].concat(env.readonly ? ["#fillBtn", "#annForm", "#aiRun"] : []);
+    for (const id of hide) { const el = $(id); if (el) el.hidden = true; }
     const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
   }
   fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env && env.cloud) { applyCloud(env); setInterval(() => fetch("/api/env").then((r) => r.json()).then(applyCloud).catch(() => { }), 60000); } }).catch(() => { })
