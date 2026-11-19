@@ -15,6 +15,8 @@ eletrônico**, que foi trocado recentemente.
                                              └──── ntfy (push) ─────────────► notificações
 ```
 
+**Painel online (público, só leitura): https://obd.cleberson.social.br** · modo direção: https://obd.cleberson.social.br/dirigir
+
 ## O que ele faz
 
 | | |
@@ -31,6 +33,8 @@ eletrônico**, que foi trocado recentemente.
 | 🗓 **Relatórios** | Semanal e mensal no painel, comparados com o período anterior, e **enviados no iPhone** toda segunda e todo dia 1º. |
 | 🤖 **Analisar dados (IA)** | Um botão envia o resumo de tudo (sensores por condição, viagens, diagnósticos, alertas, códigos) para o **Claude Opus 5.5** (ou OpenAI, à escolha), que devolve um laudo completo: veredito, pontos de atenção, sistema por sistema e o que fazer. Chave configurada no próprio painel. |
 | 📲 **Notificações** | Push no iPhone via [ntfy](https://ntfy.sh) para alertas e para avisar o IP sempre que o Pi entra em uma rede. |
+| ☁️ **Painel online** | Cópia do painel na Cloudflare (Worker + D1) em `obd.cleberson.social.br`, acessível a qualquer hora mesmo com o carro desligado. O Pi (`obd-sync`) envia o estado ao vivo a cada 10 s e o restante (viagens, gráficos, alertas, relatórios, histórico dos sensores) a cada 5 min, só o que mudou. Mostra **carro ligado/desligado** (Pi offline há mais de 1 min = desligado). Público e só leitura; ações ficam no painel do Pi. |
+| 🗂 **Viagens gerenciáveis** | Todas registradas, com nome, anotação e opção de ocultar; detalhe com consumo, custo, direção econômica, ar × MAF, partida, aquecimento e 6 gráficos. |
 | 📶 **Rede** | Prioridade sempre para o **hotspot do celular** (troca sozinho quando ele aparece), com **IP fixo `172.20.10.14`** nele; em casa, `obd.local`. |
 
 Prévia da interface (dados simulados): https://claude.ai/artifact/1NkrbnkLgDTzTbuu9sXMSY
@@ -56,7 +60,8 @@ Prévia da interface (dados simulados): https://claude.ai/artifact/1NkrbnkLgDTzT
 
 1. Gravar o cartão: `os/flash-sd.ps1` (Windows, elevado) com `os/boot/user-data` e `network-config` baseados nos `*.example`.
 2. Primeiro boot → `ssh obd@obd.local`.
-3. No PC: `scripts/deploy.sh obd.local` (rsync + `deploy/install.sh`, idempotente).
+3. No PC: `scripts/deploy.sh obd.local` (rsync + `deploy/install.sh`, idempotente; também grava a URL/token da nuvem a partir de `secrets/cloud.txt`).
+4. Painel online: `cd cloud && npm install && npm run deploy` (com `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` no ambiente; segredo `SYNC_TOKEN` via `wrangler secret put`). Para exigir senha: `wrangler secret put DASH_PASSWORD`.
 
 Diagnóstico no Pi:
 
@@ -81,7 +86,8 @@ src/obdpi/
 ├── web/          FastAPI + SSE + painel (JS puro, sem build) e modo direção
 ├── db/           esquema SQLite (WAL) e migrações
 └── notify.py     ntfy com fila offline
-deploy/           systemd, bluetooth agent, journald volátil, avahi, anúncio de IP, prioridade do hotspot
+deploy/           systemd, bluetooth agent, journald volátil, avahi, anúncio de IP, prioridade do hotspot, set-cloud.sh
+cloud/            painel online: Worker Cloudflare (src/index.js), schema D1, build.sh (copia o painel do Pi)
 docs/             ARQUITETURA.md · PROCESSO.md (diário) · pids-civic-2008.md
 ```
 

@@ -153,3 +153,20 @@ Bug corrigido nos testes: cooldown das regras da borboleta suprimia o 1º alerta
 - Aba Sistema: cartão **Análise por IA** para escolher o provedor (Claude/Anthropic ou OpenAI), salvar as chaves
   (em `/data/obd/ai.json`, modo 600, nunca devolvidas ao painel; vazio mantém, "-" apaga) e o modelo da OpenAI.
   OpenAI via HTTP (`/v1/chat/completions`). Sem chave, o botão mostra o aviso de configuração (testado).
+
+## 2026-11-19 — Painel online (Cloudflare)
+- Pedido do dono: acessar o painel a qualquer hora, mesmo com o Pi desligado, em `obd.cleberson.social.br`, **sem senha** (público),
+  com sinal de carro ligado/desligado; todas as viagens registradas e gerenciáveis.
+- Arquitetura: "espelho de documentos". O Pi gera cada resposta da API local e envia as que mudaram (hash SHA-1) para um
+  Cloudflare Worker, que guarda em D1 (`doc(key, json)`) e serve o mesmo painel estático. Toda a lógica continua no Pi;
+  o Worker só lê documentos → cabe no plano grátis (CPU mínima, poucas gravações).
+  - `obd-sync` (Pi): estado ao vivo a cada 10 s, conjunto completo a cada 5 min (10 min dirigindo, sem os períodos longos),
+    histórico de cada sensor em 1 h/6 h/24 h/7 d/30 d, detalhe de cada viagem, relatórios, recomendações.
+  - Worker: público e só leitura (ações recusadas com orientação para o painel do Pi); `DASH_PASSWORD` opcional reativa
+    login com sessão assinada e a fila de ações (tanque cheio, anotação, editar viagem, pedir análise) que o Pi aplica ao conectar.
+  - Carro desligado: se o Pi não envia há mais de 60 s, o estado ao vivo vira `pi_offline` (motor desligado) com o horário em que foi visto.
+- Viagens gerenciáveis: nome, anotação, ocultar (`POST /api/trips/{id}`), lista com km/L e nota eco, detalhe com 6 gráficos.
+- Publicado com o token da conta Cloudflare do projeto `cleberson` (zona `cleberson.social.br`): D1 `civic-obd`, Worker
+  `civic-obd`, domínio próprio `obd.cleberson.social.br`. Token de sincronização em `secrets/cloud.txt` (fora do git).
+- Testes: Worker local (`wrangler dev`) e no ar — páginas 200, só leitura (409), sync exige token (401 sem), ping ok.
+- Pendente: o Pi estava desligado; um vigia aguarda ele aparecer na rede para instalar `obd-sync` e fazer a 1ª sincronização.
