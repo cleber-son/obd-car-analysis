@@ -169,7 +169,7 @@ def trip(tid: int):
     t["series"] = series("rpm,speed,tps,tps_cmd,pedal_d,ect,ltft1,stft1,batt,maf,fuel_lh,o2c1_lambda,timing,load,gear", t["start_ts"], end, 800)["series"]
     price = con.execute("SELECT price_l FROM fuel_fill WHERE price_l IS NOT NULL AND ts <= ? ORDER BY ts DESC LIMIT 1", (end,)).fetchone()
     t["cost"] = round(t["fuel_l"] * price[0], 2) if price and t.get("fuel_l") else None
-    for k in ("air_json", "eco_json"):
+    for k in ("air_json", "eco_json", "start_snapshot", "end_snapshot"):
         t[k] = json.loads(t[k]) if t.get(k) else None
     return t
 
@@ -510,6 +510,14 @@ def system():
         "clock_synced": Path("/run/systemd/timesync/synchronized").exists(), "events": events,
         "ntfy_topic": CFG["notify"].get("ntfy_topic", ""),
     }
+
+
+@app.get("/api/repairs")
+def repairs():
+    try:
+        return rows(ro().execute("SELECT * FROM repair_log ORDER BY ts DESC LIMIT 100"))
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------- estáticos

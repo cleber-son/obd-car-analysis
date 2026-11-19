@@ -52,10 +52,13 @@ def migrate(con) -> None:
     _add_col(con, "trip", "fuel_l", "REAL")
     _add_col(con, "trip", "km_l", "REAL")
     _add_col(con, "alert", "count", "INTEGER DEFAULT 1")
+    con.execute("""CREATE TABLE IF NOT EXISTS repair_log (id INTEGER PRIMARY KEY, ts INTEGER, kind TEXT, target TEXT,
+                   signature TEXT, action TEXT, result TEXT, detail TEXT)""")
     for col in ("load", "gear", "maf"):
         _add_col(con, "fast_sample", col, "REAL")
     for col, decl in (("eco_score", "INTEGER"), ("eco_json", "TEXT"), ("warmup_s", "INTEGER"), ("start_ect", "REAL"),
                       ("crank_v", "REAL"), ("rest_v", "REAL"), ("air_json", "TEXT"), ("air_verdict", "TEXT")):
         _add_col(con, "trip", col, decl)
-    for col, decl in (("title", "TEXT"), ("note", "TEXT"), ("hidden", "INTEGER DEFAULT 0"), ("last_run_time", "REAL")):
+    for col, decl in (("title", "TEXT"), ("note", "TEXT"), ("hidden", "INTEGER DEFAULT 0"), ("last_run_time", "REAL"),
+                      ("start_snapshot", "TEXT"), ("end_snapshot", "TEXT")):
         _add_col(con, "trip", col, decl)

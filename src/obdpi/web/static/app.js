@@ -258,7 +258,10 @@
         <div><span class="lbl">Direção econômica</span><b>${t.eco_score ?? "—"}/100</b></div><div><span class="lbl">Borboleta</span><b>${t.tb_score ?? "—"}/100</b></div>
         <div><span class="lbl">Ar × MAF</span><b style="font-size:14px">${esc(AIRL[t.air_verdict] || "—")}</b></div><div><span class="lbl">Arrancadas / freadas bruscas</span><b>${eco.aceleracoes_bruscas ?? "—"} / ${eco.freadas_bruscas ?? "—"}</b></div></div>
       ${(eco.dicas || []).length ? `<div class="list" style="margin-top:10px">${eco.dicas.map((x) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(x)}</div></div><span></span></div>`).join("")}</div>` : ""}
-      ${air.txt ? `<div class="muted" style="font-size:12px;margin-top:8px">Ar × MAF: ${esc(air.txt)}</div>` : ""}</div>
+      ${air.txt ? `<div class="muted" style="font-size:12px;margin-top:8px">Ar × MAF: ${esc(air.txt)}</div>` : ""}
+      ${[["Retrato na partida", t.start_snapshot], ["Retrato no fim", t.end_snapshot]].filter(([, x]) => x).map(([lbl, x]) => `<details style="margin-top:10px"><summary class="lbl" style="cursor:pointer">${lbl} · ${Object.keys(x.values || {}).length} sinais · ${dt(x.ts)}</summary>
+        <div class="tbl" style="margin-top:6px"><table><tbody>${Object.entries(x.values || {}).filter(([, v]) => v != null).sort().map(([k, v]) => `<tr><td>${esc(catalog[k]?.name || k)}</td><td class="num">${nf(v, catalog[k]?.decimals ?? 2)} ${esc(catalog[k]?.unit || "")}</td></tr>`).join("")}
+        ${x.batt_rest ? `<tr><td>Bateria em repouso</td><td class="num">${nf(x.batt_rest, 2)} V</td></tr>` : ""}${x.dtc ? `<tr><td>Códigos</td><td>${esc(JSON.stringify(x.dtc))}</td></tr>` : ""}</tbody></table></div></details>`).join("")}</div>
       <div class="grid2e"><div class="card"><h2>Rotação e velocidade</h2><div class="legend" style="margin:6px 0"><span style="--c:var(--rpm)">rpm ÷ 50</span><span style="--c:var(--speed)">km/h</span></div><svg class="chart" id="tc1" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
       <div class="card"><h2>Pedal × borboleta</h2><div class="legend" style="margin:6px 0"><span style="--c:var(--pedal)">Pedal</span><span style="--c:var(--tps)">Borboleta</span><span style="--c:var(--speed)">Comandado</span></div><svg class="chart" id="tc2" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
       <div class="card"><h2>Temperatura do motor</h2><svg class="chart" id="tc3" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
@@ -429,6 +432,14 @@
     $("#annList").innerHTML = ann.length ? ann.map((x) => `<div class="alert" style="--s:var(--volt)"><span class="ic">✎</span><div><div class="t">${esc(x.text)}</div><div class="d">${dt(x.ts)}</div></div><span></span></div>`).join("") : `<div class="empty">Nenhuma anotação.</div>`;
     $("#sysEvents").innerHTML = s.events.map((e) => `<tr><td class="num muted">${dt(e.ts)}</td><td>${esc(e.kind)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join("");
   }
+  async function loadRepairs() {
+    const r = await api("/api/repairs").catch(() => []);
+    const C = { ok: ["var(--ok)", "✓"], revertido: ["var(--warn)", "↺"], falhou: ["var(--bad)", "!"], pulado: ["var(--muted)", "–"], investigando: ["var(--warn)", "…"] };
+    $("#repairList").innerHTML = r.length ? r.slice(0, 30).map((x) => { const [c, i] = C[x.result] || ["var(--muted)", "·"];
+      let det = x.detail || ""; try { const j = JSON.parse(det); det = j.explanation || det; } catch { }
+      return `<details class="alert" style="--s:${c}"><summary><span class="ic">${i}</span><div><div class="t">${esc(x.target)}: ${esc(x.action)}</div><div class="d">${dt(x.ts)} · ${esc(x.kind)}${x.kind === "ia" ? " · Claude Fable" : ""}</div></div><span class="pill">${esc(x.result)}</span></summary><div class="adv">${esc(det).slice(0, 3000) || "Sem detalhes."}</div></details>`; }).join("")
+      : `<div class="empty">Nenhum problema encontrado até agora. 👍</div>`;
+  }
   async function loadAiSettings() {
     const a = await api("/api/ai/settings").catch(() => null); if (!a) return;
     (a.provider === "openai" ? $("#provO") : $("#provA")).checked = true;
@@ -537,7 +548,7 @@
   setTheme(document.documentElement.dataset.theme || "dark");
 
   // ------------------------------------------------------------ roteamento
-  const LOAD = { diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings()]) };
+  const LOAD = { diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs()]) };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });

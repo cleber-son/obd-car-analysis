@@ -1,0 +1,9 @@
+[Unit]
+Description=OBD Civic - vigia a cada 2 minutos
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=2min
+
+[Install]
+WantedBy=timers.target

@@ -47,7 +47,7 @@ def doc_key(url: str) -> str:
 
 
 STATIC = (["/api/summary?days=14", "/api/throttle?days=30", "/api/trips?limit=1000", "/api/fuel", "/api/dtc", "/api/signals",
-           "/api/diagnostics?days=60", "/api/accel", "/api/annotations", "/api/system", "/api/ai/analysis", "/api/ai/settings",
+           "/api/diagnostics?days=60", "/api/accel", "/api/annotations", "/api/system", "/api/ai/analysis", "/api/ai/settings", "/api/repairs",
            "/api/alerts?days=90"] + [f"/api/alerts?days=90&severity={s}" for s in ("crit", "warn", "info")]
           + [f"/api/report?days={d}" for d in (1, 7, 30, 90, 365)]
           + [f"/api/report/period?kind=week&offset={-i}" for i in range(12)]

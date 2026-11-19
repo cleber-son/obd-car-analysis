@@ -1,0 +1,9 @@
+[Unit]
+Description=OBD Civic - vigia e auto-reparo (serviços, Bluetooth, coletor, sync; bugs via Claude Fable)
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/obd/src PYTHONUNBUFFERED=1
+ExecStart=/opt/obd/venv/bin/python -m obdpi.doctor
+TimeoutStartSec=20min
+Nice=10

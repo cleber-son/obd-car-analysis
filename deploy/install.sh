@@ -9,7 +9,7 @@ venv/bin/pip install -q -r requirements.txt
 
 echo "== usuário e diretórios"
 usermod -aG bluetooth,dialout obd || true
-install -d -o obd -g obd /data/obd /data/obd/backup
+install -d -o obd -g obd /data/obd /data/obd/backup /data/obd/repair
 install -d /etc/obd
 [ -f /etc/obd/obd.toml ] || install -m 644 config/obd.example.toml /etc/obd/obd.toml
 install -m 600 deploy/bt-pins.txt /etc/obd/bt-pins.txt
@@ -45,8 +45,8 @@ echo "== serviços"
 install -m 644 deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl restart systemd-journald
-systemctl enable obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service obd-sync.service
-for u in obd-btagent obd-collector obd-web obd-maint.timer obd-netprefer obd-sync; do
+systemctl enable obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service obd-sync.service obd-doctor.timer
+for u in obd-btagent obd-collector obd-web obd-maint.timer obd-netprefer obd-sync obd-doctor.timer; do
   systemctl restart "$u" || echo "AVISO: $u não iniciou (veja journalctl -u $u)"   # um serviço com problema não impede o resto
 done
 echo "== OK"

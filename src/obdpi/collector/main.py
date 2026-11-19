@@ -363,12 +363,15 @@ class Collector:
         if last and last["end_reason"] in ("corte_de_energia", "sem_conexao") and same_engine_run:
             self.trip_merged = True
             self.con.execute("UPDATE trip SET finalized=0, end_reason=NULL WHERE id=?", (last["id"],))
+            if not self.con.execute("SELECT start_snapshot FROM trip WHERE id=?", (last["id"],)).fetchone()[0]:
+                self.snapshot_pending = True    # viagem sem retrato: tira agora
             self.trip_id, self.trip_start = last["id"], last["start_ts"]
             self.event("info", "viagem_continuada", f"viagem {last['id']} retomada após queda de {int((ts - last['end_ts']) / 1000)} s")
         else:
             cur = self.con.execute("INSERT INTO trip(session_id, start_ts, end_ts, cold_start, start_ect) VALUES (?,?,?,?,?)",
                                    (self.session_id, ts, ts, int(cold is not None and cold < 50), cold))
             self.trip_id, self.trip_start = cur.lastrowid, ts
+            self.snapshot_pending = True        # retrato completo logo após a partida
         # bateria: repouso (antes) e mínimo durante a partida
         before = [v for t, v in self.volt_hist if ts - 15000 <= t <= ts - 1500]
         self.pending_crank = {"ts": ts, "rest": statistics.median(before) if before else None}
@@ -376,9 +379,35 @@ class Collector:
         self.notified = {}
         self.con.commit()
 
+    def snapshot(self, ts: int) -> dict:
+        """Retrato de tudo que o carro informa neste instante (para análises futuras)."""
+        rest = [v for t, v in self.volt_hist if ts - 15000 <= t <= ts - 1500]
+        return {"ts": ts, "values": dict(self.values), "dtc": {k: sorted(v) for k, v in self.dtc_active.items()}, "mil": self.mil,
+                "readiness": self.readiness, "supported": sorted(f"{p:02X}" for p in self.supported),
+                "batt_rest": statistics.median(rest) if rest else None, "clock_synced": self.clock.synced,
+                "elm": self.elm.version if self.elm else None, "protocol": self.elm.protocol_desc if self.elm else None}
+
+    def take_start_snapshot(self) -> None:
+        """Logo após a partida: varredura completa + DTCs e grava o retrato na viagem."""
+        self.snapshot_pending = False
+        try:
+            self.full_cycle()
+            self.poll_dtc()
+        except ElmError:
+            raise
+        except Exception as e:
+            log.warning("retrato de partida incompleto: %s", e)
+        ts = self.clock.now()
+        self.con.execute("UPDATE trip SET start_snapshot=? WHERE id=? AND start_snapshot IS NULL",
+                         (json.dumps(self.snapshot(ts), ensure_ascii=False), self.trip_id))
+        self.event("info", "retrato_partida", f"viagem {self.trip_id}: {len(self.values)} sinais")
+        self.con.commit()
+
     def end_trip(self, reason: str) -> None:
         if not self.trip_id:
             return
+        self.con.execute("UPDATE trip SET end_snapshot=? WHERE id=?",
+                         (json.dumps(self.snapshot(self.last_engine_ts or self.clock.now()), ensure_ascii=False), self.trip_id))
         self.con.execute("UPDATE trip SET end_ts=?, end_reason=? WHERE id=?", (self.last_engine_ts or self.clock.now(), reason, self.trip_id))
         self.finalize_trip(self.trip_id, None if getattr(self, "trip_merged", False) else self.trip_alerts)
         s = self.con.execute("SELECT * FROM trip WHERE id=?", (self.trip_id,)).fetchone()
@@ -447,8 +476,19 @@ class Collector:
         except Exception as e:                      # diagnóstico nunca derruba o coletor
             log.warning("diagnóstico da viagem %s falhou: %s", tid, e)
 
+    def end_snapshot_from_db(self, tid: int) -> None:
+        t = self.con.execute("SELECT start_ts, end_ts, end_snapshot FROM trip WHERE id=?", (tid,)).fetchone()
+        if not t or t["end_snapshot"]:
+            return
+        rows = self.con.execute("""SELECT g.key, s.value FROM sample s JOIN signal g ON g.id = s.signal_id
+                                   WHERE s.ts = (SELECT MAX(ts) FROM sample s2 WHERE s2.signal_id = s.signal_id AND s2.ts BETWEEN ? AND ?)""",
+                                (t["start_ts"], t["end_ts"] or t["start_ts"])).fetchall()
+        snap = {"ts": t["end_ts"], "values": {r["key"]: r["value"] for r in rows}, "origem": "últimas leituras antes da queda de energia"}
+        self.con.execute("UPDATE trip SET end_snapshot=? WHERE id=?", (json.dumps(snap, ensure_ascii=False), tid))
+
     def finalize_open_trips(self) -> None:
         for r in self.con.execute("SELECT id FROM trip WHERE finalized=0").fetchall():
+            self.end_snapshot_from_db(r["id"])
             self.con.execute("UPDATE trip SET end_reason=COALESCE(end_reason,'corte_de_energia') WHERE id=?", (r["id"],))
             self.finalize_trip(r["id"])
         self.con.commit()
@@ -772,6 +812,9 @@ class Collector:
             t0 = time.monotonic()
             sd_notify("WATCHDOG=1")
             self.fast_cycle()
+            if getattr(self, "snapshot_pending", False) and self.trip_id:
+                self.take_start_snapshot()
+                self.last_full = self.last_dtc = time.monotonic()
             testing = self.accel and self.accel["state"] in ("pronto", "correndo")
             if t0 - self.last_full >= self.full_period and not testing:
                 self.last_full = t0
