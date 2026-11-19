@@ -332,7 +332,7 @@
   async function loadFuel() {
     const f = await api("/api/fuel");
     const sf = f.since_fill; const last = f.fills[0];
-    if (!fillMsgUntil || Date.now() > fillMsgUntil) $("#fillHint").textContent = last ? `Último: ${dt(last.ts)} · ${last.total ? "R$ " + nf(last.total, 2) + " · " : ""}${last.fuel}${last.liters ? " · " + nf(last.liters, 1) + " L" : ""}` : "Encheu o tanque? Digite o valor e toque no botão. O 1º abastecimento inicia a medição.";
+    if (!fillMsgUntil || Date.now() > fillMsgUntil) $("#fillHint").textContent = last ? `Último: ${dt(last.ts)} · ${last.total ? "R$ " + nf(last.total, 2) + " · " : ""}${last.fuel}${last.liters ? " · " + nf(last.liters, 1) + " L" : ""}${last.pending ? " · ⏳ aguardando o Pi ligar" : ""}` : "Encheu o tanque? Digite o valor e toque no botão. O 1º abastecimento inicia a medição.";
     if (last && !$("#fillMore").open) { (last.fuel === "etanol" ? $("#fuelE") : $("#fuelG")).checked = true; $("#fillP").placeholder = last.price_l ? `R$ por litro (último: ${nf(last.price_l, 2)})` : "R$ por litro"; }
     $("#fillSum").textContent = `Detalhes (opcional) · ${last ? last.fuel + (last.price_l ? " a R$ " + nf(last.price_l, 2) + "/L" : ", preço por litro não informado") : "combustível e preço por litro"}`;
     const mix = f.mix; const mixTxt = mix == null ? "—" : mix < 0.05 ? "Gasolina" : mix > 0.95 ? "Etanol" : `${Math.round(mix * 100)}% etanol`;
@@ -348,9 +348,9 @@
     const real = f.fills.filter((x) => x.real_kml).reverse();
     lineChart($("#fuelFillChart"), [{ pts: real.map((x) => [x.ts, x.real_kml]), c: "--ok", bars: true }], { ymin: 0, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
     lineChart($("#fuelTripChart"), [{ pts: f.trips.slice().reverse().map((x) => [x.start_ts, x.km_l]), c: "--speed", dots: true, r: 4 }], { ymin: 0 });
-    $("#fillRows").innerHTML = f.fills.length ? f.fills.map((x) => `<tr><td class="head">${dt(x.ts)} · ${esc(x.fuel)}</td><td class="no-m">${esc(x.fuel)}</td><td class="num" data-l="Valor">${x.total ? "R$ " + nf(x.total, 2) : "—"}</td><td class="num" data-l="Litros">${nf(x.liters, 2)}</td><td class="num" data-l="R$/L">${x.price_l ? nf(x.price_l, 2) : "—"}</td>
+    $("#fillRows").innerHTML = f.fills.length ? f.fills.map((x) => `<tr${x.pending ? ' style="box-shadow:inset 0 0 0 1px var(--warn)"' : ""}><td class="head">${dt(x.ts)} · ${esc(x.fuel)}${x.pending ? ' <span class="pill" style="--s:var(--warn)">⏳ registrado · entra nas contas quando o Pi ligar</span>' : ""}</td><td class="no-m">${esc(x.fuel)}</td><td class="num" data-l="Valor">${x.total ? "R$ " + nf(x.total, 2) : "—"}</td><td class="num" data-l="Litros">${nf(x.liters, 2)}</td><td class="num" data-l="R$/L">${x.price_l ? nf(x.price_l, 2) : "—"}</td>
       <td class="num" data-l="Km rodados">${nf(x.km_since_prev, 0)}</td><td class="num" data-l="km/L real">${nf(x.real_kml, 1)}</td><td class="num" data-l="R$/km">${x.total && x.km_since_prev > 20 ? nf(x.total / x.km_since_prev, 2) : "—"}</td>
-      <td>${CLOUD ? "" : `<button class="rbtn" type="button" data-del="${x.id}" aria-label="Apagar abastecimento">Apagar</button>`}</td></tr>`).join("")
+      <td>${CLOUD || x.pending ? "" : `<button class="rbtn" type="button" data-del="${x.id}" aria-label="Apagar abastecimento">Apagar</button>`}</td></tr>`).join("")
       : `<tr><td colspan="9"><div class="empty">Nenhum abastecimento registrado.</div></td></tr>`;
   }
   $("#alertClear").addEventListener("click", async () => {
@@ -373,7 +373,7 @@
       const v = nf(Number(body.total), 2);
       $("#fillT").value = ""; $("#fillL").value = ""; $("#fillP").value = ""; $("#fillMore").open = false;
       fillMsgUntil = Date.now() + 60000;
-      $("#fillHint").textContent = j.queued ? `✅ Tanque cheio de R$ ${v} registrado. Entra no histórico quando o Pi conectar (com a hora de agora).`
+      $("#fillHint").textContent = j.duplicate ? `Esse abastecimento de R$ ${v} já estava registrado (veja no histórico abaixo).` : j.queued ? `✅ Tanque cheio de R$ ${v} registrado. Já está no histórico abaixo; as contas de consumo usam ele quando o Pi ligar.`
         : `✅ Tanque cheio de R$ ${v} salvo.` + (j.real_kml ? ` Rendeu ${nf(j.real_kml, 1)} km/L em ${nf(j.km_since_prev, 0)} km.` : j.cost_km ? ` Custou R$ ${nf(j.cost_km, 2)} por km (${nf(j.km_since_prev, 0)} km).` : " O consumo deste tanque aparece no próximo abastecimento.");
       setTimeout(() => loadFuel().catch(console.error), 1500);
     } catch (err) { $("#fillHint").textContent = "Não foi possível salvar: " + err.message; } finally { $("#fillSave").disabled = false; }

@@ -165,6 +165,20 @@ async function syncDocs(req, env) {
   return json({ ok: true, stored: stmts.length });
 }
 
+// abastecimentos registrados no painel online que o Pi ainda não buscou: aparecem na hora no histórico, marcados
+async function withPendingFills(env, raw) {
+  try {
+    const r = await env.DB.prepare("SELECT ts, body FROM cmd WHERE done=0 AND path='/api/fuel/fill' ORDER BY ts DESC").all();
+    if (!r.results.length) return raw;
+    const f = JSON.parse(raw);
+    const last = (f.fills || [])[0];
+    const pend = r.results.map((c) => { const b = JSON.parse(c.body || "{}");
+      return { id: null, pending: true, ts: b.ts || c.ts, fuel: b.fuel || (last ? last.fuel : "gasolina"), total: b.total ?? null, liters: b.liters ?? null, price_l: b.price_l ?? null, full: 1 }; });
+    f.fills = pend.concat(f.fills || []);
+    return JSON.stringify(f);
+  } catch { return raw; }
+}
+
 async function publicFill(req, env) {
   let b; try { b = JSON.parse((await req.text()).slice(0, 2000)); } catch { return json({ error: "dados inválidos" }, 400); }
   const num = (v, lo, hi) => { if (v === undefined || v === null || v === "") return null; const x = Number(String(v).replace(",", ".")); return Number.isFinite(x) && x >= lo && x <= hi ? x : NaN; };
@@ -174,6 +188,9 @@ async function publicFill(req, env) {
   const pend = await env.DB.prepare("SELECT COUNT(*) n, MAX(ts) last FROM cmd WHERE done=0 AND path='/api/fuel/fill'").first();
   if (pend && pend.n >= 5) return json({ error: "Já há abastecimentos esperando o Pi conectar. Tente depois." }, 429);
   if (pend && pend.last && Date.now() - pend.last < 20_000) return json({ error: "Abastecimento registrado há instantes; aguarde um pouco." }, 429);
+  const dup = await env.DB.prepare("SELECT body FROM cmd WHERE done=0 AND path='/api/fuel/fill' AND ts > ?").bind(Date.now() - 3600_000).all();
+  if (dup.results.some((c) => { try { return JSON.parse(c.body).total === total; } catch { return false; } }))
+    return json({ ok: true, queued: true, duplicate: true });          // mesmo valor já registrado há menos de 1 h: não duplica
   const clean = { total, full: true, ts: Date.now() };
   if (price !== null) clean.price_l = price;
   if (liters !== null) clean.liters = liters;
@@ -288,6 +305,7 @@ export default {
     if (p === "/api/export.csv") return json({ error: "Exportação CSV disponível no painel do Pi (rede local)." }, 404);
     const d = await getDoc(env, docKey(url));
     if (!d) return json({ error: "ainda não sincronizado pelo Pi" }, 404);
+    if (p === "/api/fuel") d.data = await withPendingFills(env, d.data);
     return new Response(p === "/api/live" ? liveView(d.data, { ...(await meta(env)), live_updated: d.updated }) : d.data,
       { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-synced": String(d.updated) } });
   },
