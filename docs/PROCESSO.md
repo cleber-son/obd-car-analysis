@@ -211,3 +211,12 @@ Pedidos: melhorar a análise dos dados; modo direção todo em tempo real; melho
 - **Limpar alertas**: arquiva em `alert_archive` (não apaga); só no painel do Pi.
 - **Celular**: cabeçalho compacto, barra inferior com Ao vivo · Viagens · Consumo · Diagnóstico · Mais; Diagnóstico com Resumo · Alertas · Relatório · Borboleta; tabelas viram cartões; alerta do topo só se for recente de verdade (1 + contador); modo direção: faixa de alerta não ocupa mais a tela, quadros esmaecidos com o carro desligado.
 - Tanque do Civic 2008: fichas técnicas dão 50 L (mantido).
+
+## 2026-11-19 (noite, parte 2) — Testes guiados, consumo médio ao vivo, canal ao vivo por WebSocket
+- **Consumo médio em tempo real**: quadro "Consumo médio da viagem" no Ao vivo (km/L, litros, R$) e "Média do tanque" no modo direção (viagens desde o tanque + a viagem de agora).
+- **Testes guiados "caça-problema"** (`web/static/tests.js`, Diagnóstico → Testes): rodam no navegador sobre as leituras ao vivo.
+  - Caça-vazamento: mede o repouso, o dono escolhe o ponto e borrifa limpa-carburador; reação = ajuste curto cai, rotação muda ou sonda enriquece → bipe e vibração, resultado por ponto.
+  - Varredura do pedal e da borboleta (ignição ligada, motor desligado): sensores D×E, saltos, curso, borboleta A×B.
+  - Marcha lenta com tudo ligado: compensação da rotação e tensão do alternador com ar + farol alto + desembaçador.
+  - Resultado fica no aparelho e, no painel do Pi, no diário de manutenção (entra no contexto da IA).
+- **Atraso do painel online**: o caminho pelo banco (Pi → D1 → SSE a cada 1 s) dava 1–3 s. Novo canal: Pi envia cada leitura (gzip, conexão mantida) para `POST /api/sync/live`; um Durable Object (`LiveHub`) repassa por WebSocket (`/api/ws`) aos painéis abertos. Medido daqui: **~150 ms** do envio até o navegador. A cópia no D1 segue a cada 5 s (ignição ligada) ou 10 s, para quem abre depois e como reserva (SSE).

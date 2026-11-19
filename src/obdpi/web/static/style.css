@@ -248,3 +248,14 @@ details.ins > summary .d { font-size: 13px; line-height: 1.4; margin-top: 2px }
 details.tech > summary { cursor: pointer; list-style: none } details.tech > summary::-webkit-details-marker { display: none }
 details.tech > summary::after { content: "Mostrar ▾"; float: right; font: 600 12px var(--f-body); color: var(--speed) } details.tech[open] > summary::after { content: "Ocultar ▴" }
 @media (max-width: 900px) { .engine .kv:last-child:nth-child(even) { grid-column: 1 / -1 } }
+
+/* testes guiados */
+.tcard { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; text-align: left; width: 100%; padding: 14px; border-radius: 14px; background: var(--panel2); border: 1px solid var(--line); color: inherit; font: inherit; cursor: pointer }
+.tcard .tic { font-size: 28px } .tcard b { display: block; font-family: var(--f-display); font-size: 15px } .tcard .d { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.4 }
+.tcard .need { display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 700; color: var(--speed); background: color-mix(in srgb, var(--speed) 14%, transparent); padding: 2px 8px; border-radius: 999px }
+.tcard .go { font-weight: 700; color: var(--ok); white-space: nowrap; font-size: 13px }
+.tst .tbig { font: 800 30px/1.15 var(--f-display); text-align: center; padding: 18px 10px 4px } .tst .tbig.go { color: var(--ok) } .tst .tbig.bad { color: var(--bad) }
+.tst .tsmall { text-align: center; color: var(--muted); font-size: 15px; line-height: 1.5; padding: 0 6px 6px } .tst .tsmall b { color: var(--fg) }
+.tst .stats { grid-template-columns: repeat(3, minmax(0, 1fr)) } .tst .stats b small { font: 500 11px var(--f-body); color: var(--muted) }
+.tbtns { display: grid; gap: 8px } .tbtns .btn { text-align: center; padding: 13px; font-size: 15px; border-radius: 12px } .tbtns:empty { display: none }
+@media (max-width: 900px) { .tcard { grid-template-columns: auto 1fr } .tcard .go { grid-column: 2 } .modal .sheet.tst { max-height: 96vh; min-height: 70vh; align-content: start } }

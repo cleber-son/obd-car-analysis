@@ -297,9 +297,20 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     $("fage").textContent = lastD?.state === "pi_offline" ? "carro desligado" : last ? (age > 15 ? `sem dados há ${Math.round(age)} s` : "ao vivo") : "";
   }, 1000);
 
+  // painel online: canal ao vivo por WebSocket (cada leitura chega em frações de segundo); o SSE fica de reserva
+  let wsTs = 0;
+  function liveSocket(onFrame) {
+    let ws; const open = () => { try {
+      ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/ws");
+      ws.onmessage = (e) => { try { const d = JSON.parse(e.data); d.cloud = true; d.age_s = 0; wsTs = d.ts || 0; onFrame(d); } catch { } };
+      ws.onclose = () => setTimeout(open, 2000); ws.onerror = () => { try { ws.close(); } catch { } };
+    } catch { setTimeout(open, 5000); } };
+    open();
+  }
+  const staleSSE = (d) => d.state !== "pi_offline" && wsTs && (d.ts || 0) <= wsTs;   // o WebSocket já mostrou algo mais novo
   let es;
-  const connect = () => { try { es?.close(); } catch { } es = new EventSource("/api/stream"); es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch (x) { console.error(x); } }; };
-  fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env?.cloud) { $("accBtn").hidden = true; } }).catch(() => { });
+  const connect = () => { try { es?.close(); } catch { } es = new EventSource("/api/stream"); es.onmessage = (e) => { try { const d = JSON.parse(e.data); if (!staleSSE(d)) { if (d.state === "pi_offline") wsTs = 0; render(d); } } catch (x) { console.error(x); } }; };
+  fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env?.cloud) { $("accBtn").hidden = true; liveSocket(render); } }).catch(() => { });
   connect();
   if (location.hash === "#acc") { acc.hidden = false; post("arm"); }
   document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else { connect(); lock(); } });

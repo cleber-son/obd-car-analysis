@@ -188,10 +188,22 @@
   }
 
   let es;
+  // painel online: canal ao vivo por WebSocket (cada leitura chega em frações de segundo); o SSE fica de reserva
+  let wsTs = 0;
+  function liveSocket(onFrame) {
+    let ws; const open = () => { try {
+      ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/ws");
+      ws.onmessage = (e) => { try { const d = JSON.parse(e.data); d.cloud = true; d.age_s = 0; wsTs = d.ts || 0; onFrame(d); } catch { } };
+      ws.onclose = () => setTimeout(open, 2000); ws.onerror = () => { try { ws.close(); } catch { } };
+    } catch { setTimeout(open, 5000); } };
+    open();
+  }
+  const staleSSE = (d) => d.state !== "pi_offline" && wsTs && (d.ts || 0) <= wsTs;   // o WebSocket já mostrou algo mais novo
+  const onLive = (d) => { window.dispatchEvent(new CustomEvent("obdlive", { detail: d })); renderLive(d); };
   function connectStream() {
     try { es?.close(); } catch { }
     es = new EventSource("/api/stream");
-    es.onmessage = (e) => { try { renderLive(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+    es.onmessage = (e) => { try { const d = JSON.parse(e.data); if (!staleSSE(d)) { if (d.state === "pi_offline") wsTs = 0; onLive(d); } } catch (err) { console.error(err); } };
     es.onerror = () => { $("#chips").innerHTML = `<span class="chip"><span class="dot" style="--c:var(--bad)"></span>Sem conexão com o Pi</span>`; };
   }
   document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else connectStream(); });
@@ -760,12 +772,12 @@
   setTheme(document.documentElement.dataset.theme || "dark");
 
   // ------------------------------------------------------------ roteamento
-  const LOAD = { diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs()]) };
+  const LOAD = { testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs()]) };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });
     document.querySelectorAll("#tabs a").forEach((a) => a.dataset.v === view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
-    const DIAG = ["diagnostico", "alertas", "relatorio", "borboleta"], inDiag = DIAG.includes(view);
+    const DIAG = ["diagnostico", "alertas", "relatorio", "borboleta", "testes"], inDiag = DIAG.includes(view);
     $("#subnav").hidden = !inDiag;
     document.querySelectorAll("#subnav a").forEach((a) => a.dataset.v === view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
     if (inDiag) $('#tabs a[data-v="diagnostico"]').setAttribute("aria-current", "page");
@@ -794,6 +806,6 @@
     for (const id of hide) { const el = $(id); if (el) el.hidden = true; }
     const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
   }
-  fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env && env.cloud) { applyCloud(env); setInterval(() => fetch("/api/env").then((r) => r.json()).then(applyCloud).catch(() => { }), 60000); } }).catch(() => { })
+  fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env && env.cloud) { applyCloud(env); liveSocket(onLive); setInterval(() => fetch("/api/env").then((r) => r.json()).then(applyCloud).catch(() => { }), 60000); } }).catch(() => { })
     .finally(() => api("/api/signals").then((s) => { for (const x of s) catalog[x.key] = x; }).catch(() => { }).finally(() => { connectStream(); route(); }));
 })();

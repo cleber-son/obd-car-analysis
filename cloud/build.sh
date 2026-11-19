@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 rm -rf public && mkdir -p public/static
-cp ../src/obdpi/web/static/style.css ../src/obdpi/web/static/app.js public/static/
+cp ../src/obdpi/web/static/style.css ../src/obdpi/web/static/app.js ../src/obdpi/web/static/tests.js public/static/
 cp ../src/obdpi/web/static/index.html public/index.html
 cp ../src/obdpi/web/static/drive.html public/drive.html
 echo "public/ pronto"

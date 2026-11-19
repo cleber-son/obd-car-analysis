@@ -197,6 +197,37 @@ async function syncCommands(req, env) {
 }
 
 // ---------------------------------------------------------------- roteamento
+// Canal ao vivo: o Pi envia cada leitura (POST /api/sync/live) e este objeto repassa na hora, por WebSocket,
+// para quem está com o painel aberto. Sem banco no caminho: o atraso fica em frações de segundo.
+export class LiveHub {
+  constructor(ctx) { this.ctx = ctx; this.last = null; this.lastAt = 0; }
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/push") {
+      this.last = await req.text(); this.lastAt = Date.now();
+      for (const ws of this.ctx.getWebSockets()) { try { ws.send(this.last); } catch { } }
+      return new Response("ok");
+    }
+    if (req.headers.get("Upgrade") !== "websocket") return new Response("websocket esperado", { status: 426 });
+    const pair = new WebSocketPair();
+    this.ctx.acceptWebSocket(pair[1]);                       // hibernável: não cobra tempo parado
+    if (this.last && Date.now() - this.lastAt < 15_000) pair[1].send(this.last);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  webSocketMessage() { }
+  webSocketClose(ws, code) { try { ws.close(code === 1005 ? 1000 : code, "fim"); } catch { } }
+  webSocketError() { }
+}
+const hub = (env) => env.LIVE.get(env.LIVE.idFromName("civic"));
+
+async function syncLive(req, env) {
+  const body = req.headers.get("content-encoding") === "gzip" ? req.body.pipeThrough(new DecompressionStream("gzip")) : req.body;
+  const text = await new Response(body).text();
+  if (text.length > 60_000) return json({ error: "grande demais" }, 413);
+  await hub(env).fetch("https://hub/push", { method: "POST", body: text });
+  return json({ ok: true });
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
@@ -206,6 +237,7 @@ export default {
     if (p.startsWith("/api/sync/")) {
       if (!syncAuthorized(req, env)) return json({ error: "token inválido" }, 401);
       if (p === "/api/sync/docs" && req.method === "POST") return syncDocs(req, env);
+      if (p === "/api/sync/live" && req.method === "POST") return syncLive(req, env);
       if (p === "/api/sync/commands") return syncCommands(req, env);
       if (p === "/api/sync/ping") return json({ ok: true, ts: Date.now() });
       return json({ error: "rota desconhecida" }, 404);
@@ -241,6 +273,7 @@ export default {
     // API
     if (p === "/api/env") return json(await envInfo(env));
     if (p === "/api/stream") return liveStream(env);
+    if (p === "/api/ws") return hub(env).fetch(req);
     if (req.method === "POST" || req.method === "DELETE") {
       // "Tanque cheio" funciona no painel público (pedido do dono): só esse formulário, validado e com limite
       if (!env.DASH_PASSWORD && p === "/api/fuel/fill" && req.method === "POST") return publicFill(req, env);

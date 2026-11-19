@@ -28,7 +28,7 @@ log = logging.getLogger("sync")
 LOCAL = os.environ.get("OBD_LOCAL", "http://127.0.0.1")
 STATE = Path("/data/obd/sync_state.json")
 LIVE_EVERY = 10          # s — snapshot ao vivo com o motor desligado
-LIVE_DRIVING = 1.0       # s — com o motor ligado: tempo real no painel online e no modo direção
+LIVE_DRIVING = 5.0       # s — com a ignição ligada: cópia no banco (o tempo real vai pelo canal ao vivo, a cada leitura)
 LIVE_FILE = Path("/run/obd/live.json")
 FULL_EVERY = 300         # s — reconstrução completa (só envia o que mudou); 10 min com o motor ligado
 CMD_EVERY = 30           # s — ações pendentes do painel online
@@ -181,19 +181,21 @@ class Sync:
             st, raw = self.local("/api/live")
             return raw if st == 200 else None
 
-    def cloud_live(self, payload: dict) -> None:
-        """POST numa conexão HTTPS mantida aberta (1 envio/s sem refazer o TLS a cada vez)."""
+    def cloud_post(self, path: str, body: bytes, gz: bool = False) -> None:
+        """POST numa conexão HTTPS mantida aberta (vários envios por segundo sem refazer o TLS a cada vez)."""
         import http.client
         u = urllib.parse.urlsplit(self.url)
-        body = json.dumps(payload, ensure_ascii=False).encode()
+        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json", "User-Agent": f"civic-obd-sync/{__version__}"}
+        if gz:
+            import gzip
+            body = gzip.compress(body, 1)              # ~4 kB → ~1 kB: poupa o plano de dados do hotspot
+            headers["Content-Encoding"] = "gzip"
         for attempt in (0, 1):
             try:
                 if self._conn is None:
                     cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
                     self._conn = cls(u.netloc, timeout=15)
-                self._conn.request("POST", "/api/sync/docs", body=body, headers={
-                    "Authorization": f"Bearer {self.token}", "Content-Type": "application/json",
-                    "User-Agent": f"civic-obd-sync/{__version__}"})
+                self._conn.request("POST", path, body=body, headers=headers)
                 r = self._conn.getresponse()
                 r.read()
                 if r.status >= 400:
@@ -207,15 +209,9 @@ class Sync:
                 if attempt:
                     raise
 
-    def live(self) -> None:
-        raw = self.live_raw()
-        if not raw:
-            return
+    def live(self, raw: bytes) -> None:
+        """Cópia do estado no banco da nuvem (quem abre o painel depois, carro desligado, navegador sem WebSocket)."""
         now = time.monotonic()
-        try:
-            self.last_live_engine = bool(json.loads(raw).get("engine_on"))
-        except ValueError:
-            return
         docs = []
         if now - self._last_meta >= LIVE_EVERY:      # "o Pi está vivo": basta a cada 10 s
             docs.append(("_meta", json.dumps({"last_sync_ts": int(time.time() * 1000), "version": __version__}).encode()))
@@ -224,20 +220,44 @@ class Sync:
             docs.append(("/api/live", raw))
         if not docs:
             return
-        self.cloud_live({"docs": [{"key": k, "json": v.decode()} for k, v in docs]})
+        self.cloud_post("/api/sync/docs", json.dumps({"docs": [{"key": k, "json": v.decode()} for k, v in docs]}, ensure_ascii=False).encode())
         self.last_live_hash = h
         if docs[0][0] == "_meta":
             self._last_meta = now
 
     def live_loop(self) -> None:
-        """Fio próprio: o estado ao vivo não espera a sincronização completa (que pode levar dezenas de segundos)."""
+        """Fio próprio: o estado ao vivo não espera a sincronização completa (que pode levar dezenas de segundos).
+        Com a ignição ligada, cada leitura nova do coletor vai na hora para o canal ao vivo (WebSocket dos painéis
+        abertos); a cópia no banco segue a cada LIVE_DRIVING segundos."""
+        last_m, last_doc, active = None, 0.0, False
         while True:
             try:
-                if self.url and self.token:
-                    self.live()
-                    time.sleep(LIVE_DRIVING if self.last_live_engine else LIVE_EVERY)
-                else:
+                if not (self.url and self.token):
                     time.sleep(30)
+                    continue
+                try:
+                    m = LIVE_FILE.stat().st_mtime_ns
+                except OSError:
+                    m = None
+                now = time.monotonic()
+                fresh = m is not None and m != last_m
+                due = now - last_doc >= (LIVE_DRIVING if active else LIVE_EVERY)
+                if fresh or due:
+                    raw = self.live_raw()
+                    if raw:
+                        try:
+                            d = json.loads(raw)
+                            self.last_live_engine = bool(d.get("engine_on"))
+                            active = d.get("state") == "coletando"       # ignição ligada (motor ligado ou não)
+                        except ValueError:
+                            raw = None
+                    if raw and fresh and active:
+                        last_m = m
+                        self.cloud_post("/api/sync/live", raw, gz=True)
+                    if raw and due:
+                        last_doc = now
+                        self.live(raw)
+                time.sleep(0.2 if active else 2)
             except Exception as e:
                 log.debug("ao vivo falhou: %s", e)
                 time.sleep(5)

@@ -36,7 +36,7 @@
   <div class="cloudbar" id="cloudBar" hidden></div>
   <div id="banners" class="list"></div>
   <nav class="subnav" id="subnav" hidden aria-label="Seções do diagnóstico">
-    <a href="#diagnostico" data-v="diagnostico">Resumo</a><a href="#alertas" data-v="alertas">Alertas<span class="badge" id="badge2" hidden></span></a><a href="#relatorio" data-v="relatorio">Relatório</a><a href="#borboleta" data-v="borboleta">Borboleta</a>
+    <a href="#diagnostico" data-v="diagnostico">Resumo</a><a href="#alertas" data-v="alertas">Alertas<span class="badge" id="badge2" hidden></span></a><a href="#relatorio" data-v="relatorio">Relatório</a><a href="#borboleta" data-v="borboleta">Borboleta</a><a href="#testes" data-v="testes">🎯 Testes</a>
   </nav>
 
   <!-- AO VIVO -->
@@ -175,6 +175,13 @@
     </div></details>
   </section>
 
+  <!-- TESTES GUIADOS -->
+  <section class="view" id="v-testes" hidden>
+    <div class="card"><h2>🎯 Caça-problema: testes guiados</h2><div class="lbl" style="margin:4px 0 12px">O painel diz o que fazer no carro e interpreta as leituras ao vivo. Use com o celular na mão, ao lado do carro</div>
+      <div class="list" id="tstList"></div></div>
+    <div class="card"><h2>Últimos resultados</h2><div class="lbl" style="margin:4px 0 10px">Guardados neste aparelho; no painel do Pi também vão para o diário de manutenção</div><div class="list" id="tstHist"></div></div>
+  </section>
+
   <!-- SENSORES -->
   <section class="view" id="v-sensores" hidden>
     <div class="card" id="sigChartCard" hidden><div class="row-head"><h2 id="sigTitle"></h2>
@@ -265,6 +272,16 @@
     <div id="aiBody" class="md"></div>
   </div>
 </div>
+<div class="modal" id="tstModal" hidden role="dialog" aria-modal="true" aria-labelledby="tstTitle">
+  <div class="sheet card tst">
+    <div class="row-head"><div><h2 id="tstTitle"></h2><div class="lbl" id="tstState" style="margin-top:4px"></div></div><button class="btn" type="button" id="tstClose" aria-label="Fechar teste">✕</button></div>
+    <div class="tbig" id="tstBig"></div><div class="tsmall" id="tstSmall"></div>
+    <div class="stats" id="tstLive"></div>
+    <div class="tbtns" id="tstBtns"></div>
+    <div class="list" id="tstLog"></div>
+  </div>
+</div>
 <script src="/static/app.js"></script>
+<script src="/static/tests.js"></script>
 </body>
 </html>
