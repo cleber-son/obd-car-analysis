@@ -653,6 +653,10 @@ class Collector:
     # ------------------------------------------------------------------ ciclos
     # ------------------------------------------------------------------ teste 0–100
     def accel_poll_cmd(self) -> None:
+        c = self.run_dir / "alerts_cmd"
+        if c.exists():                                 # botão "Limpar alertas" do painel
+            c.unlink(missing_ok=True)
+            self.recent_alerts = []
         f = self.run_dir / "accel_cmd"
         if not f.exists():
             return

@@ -177,6 +177,27 @@ def trip(tid: int):
 
 
 # ---------------------------------------------------------------- alertas e DTCs
+@app.post("/api/alerts/clear")
+def alerts_clear(body: dict | None = None, x_token: str | None = Header(None)):
+    """Botão "Limpar alertas": tira os alertas do painel e dos relatórios. Eles vão para alert_archive (ficam
+    guardados para análise futura). body opcional: {rules: ["R1", ...]} limpa só essas regras."""
+    check_admin(x_token)
+    con = db.connect(DB)
+    con.execute("CREATE TABLE IF NOT EXISTS alert_archive AS SELECT *, 0 AS cleared_ts FROM alert WHERE 0")
+    cols = ", ".join(r[1] for r in con.execute("PRAGMA table_info(alert)"))
+    rules = [str(r) for r in (body or {}).get("rules") or []]
+    where, args = ("WHERE rule IN (%s)" % ",".join("?" * len(rules)), rules) if rules else ("", [])
+    n = con.execute(f"INSERT INTO alert_archive({cols}, cleared_ts) SELECT {cols}, ? FROM alert {where}", (now_ms(), *args)).rowcount
+    con.execute(f"DELETE FROM alert {where}", args)
+    con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)", (now_ms(), "alertas", f"{n} alerta(s) limpos pelo painel"))
+    con.commit()
+    try:
+        (LIVE.parent / "alerts_cmd").write_text("clear")      # o coletor também esquece os alertas recentes da tela
+    except OSError:
+        pass
+    return {"ok": True, "cleared": n}
+
+
 @app.get("/api/alerts")
 def alerts(days: int = 30, severity: str | None = None, limit: int = 200):
     con = ro()

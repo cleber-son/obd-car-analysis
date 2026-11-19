@@ -198,18 +198,15 @@ details.alert[open] > summary { border-bottom: 1px solid var(--line) }
   .tabs { overflow: visible; justify-content: stretch; gap: 2px; padding-top: 4px }
   .tabs a, .morebtn { flex: 1 1 0; min-width: 0; min-height: 52px; font-size: 11px; align-content: center }
   .tabs a svg, .morebtn svg { width: 22px; height: 22px }
-  .tabs a[data-v="vivo"] { order: 1 } .tabs a[data-v="viagens"] { order: 2 } .tabs a[data-v="alertas"] { order: 3 } .tabs a[data-v="relatorio"] { order: 4 } .morebtn { order: 5 }
+  .tabs a[data-v="vivo"] { order: 1 } .tabs a[data-v="viagens"] { order: 2 } .tabs a[data-v="consumo"] { order: 3 } .tabs a[data-v="diagnostico"] { order: 4 } .morebtn { order: 5 }
   .morebtn { display: grid; gap: 2px; justify-items: center; background: none; border: 0; color: var(--muted); font: 600 11px var(--f-body); border-radius: 10px; cursor: pointer; padding: 6px 4px }
   .morebtn.cur, .tabs.open .morebtn { color: var(--fg); background: var(--panel2) }
   .tabs a.sec { display: none }
-  .tabs.open a.sec { display: flex; position: absolute; right: max(8px, env(safe-area-inset-right, 0px)); width: min(260px, 70vw); min-height: 50px; align-items: center; justify-items: start; gap: 12px; padding: 0 16px; font-size: 15px;
-    background: var(--panel); border: 1px solid var(--line); border-width: 0 1px; border-radius: 0; color: var(--fg); box-shadow: 0 -12px 40px #0008 }
+  .tabs.open a.sec { display: flex; position: absolute; right: max(8px, env(safe-area-inset-right, 0px)); width: min(240px, 70vw); min-height: 54px; align-items: center; gap: 12px; padding: 0 16px; font-size: 15px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 0; color: var(--fg); box-shadow: 0 -12px 40px #0008 }
   .tabs.open a.sec[aria-current="page"] { color: var(--speed) }
-  .tabs.open a.sec[data-v="sistema"] { bottom: calc(100% + 6px); border-bottom-width: 1px; border-radius: 0 0 16px 16px }
-  .tabs.open a.sec[data-v="sensores"] { bottom: calc(100% + 56px) }
-  .tabs.open a.sec[data-v="diagnostico"] { bottom: calc(100% + 106px) }
-  .tabs.open a.sec[data-v="consumo"] { bottom: calc(100% + 156px) }
-  .tabs.open a.sec[data-v="borboleta"] { bottom: calc(100% + 206px); border-top-width: 1px; border-radius: 16px 16px 0 0 }
+  .tabs.open a.sec[data-v="sistema"] { bottom: calc(100% + 6px); border-top-width: 0; border-radius: 0 0 16px 16px }
+  .tabs.open a.sec[data-v="sensores"] { bottom: calc(100% + 60px); border-radius: 16px 16px 0 0 }
   .tabs { position: fixed }
   /* tabelas viram cartões */
   table.cards thead { display: none }
@@ -234,3 +231,10 @@ details.alert[open] > summary { border-bottom: 1px solid var(--line) }
 .fillrow .btn.big { white-space: nowrap; border-radius: 14px; font-size: 16px; padding: 0 18px }
 .money input { width: 100% }
 @media (max-width: 560px) { .fillrow { flex-direction: column } .fillrow .btn.big { padding: 15px; font-size: 17px } }
+
+/* Diagnóstico: Resumo · Alertas · Relatório · Borboleta */
+.tabs a.sub { display: none }
+.subnav { display: flex; gap: 4px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow-x: auto; scrollbar-width: none; position: sticky; top: 6px; z-index: 4 }
+.subnav[hidden] { display: none }
+.subnav a { flex: 1 0 auto; text-align: center; text-decoration: none; color: var(--muted); font: 600 13px var(--f-body); padding: 10px 12px; border-radius: 10px; white-space: nowrap }
+.subnav a[aria-current="page"] { background: var(--panel2); color: var(--fg) }

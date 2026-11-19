@@ -20,13 +20,13 @@
   <a class="btn act" href="/dirigir" style="--a:var(--speed);--at:#04121a">▶ Modo direção</a></div>
   <nav class="tabs" id="tabs">
     <a href="#vivo" data-v="vivo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 14l4-4"/><path d="M3.5 18a9 9 0 1 1 17 0"/></svg>Ao vivo</a>
-    <a href="#borboleta" data-v="borboleta" class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M7 17L17 7"/></svg>Borboleta</a>
+    <a href="#borboleta" data-v="borboleta" class="sub"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M7 17L17 7"/></svg>Borboleta</a>
     <a href="#viagens" data-v="viagens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19l5-14h6l5 14"/><path d="M12 9v2M12 14v2"/></svg>Viagens</a>
-    <a href="#consumo" data-v="consumo" class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M14 9h2a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V8l-3-3"/><path d="M7 7h4v4H7z"/></svg>Consumo</a>
-    <a href="#alertas" data-v="alertas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>Alertas<span class="badge" id="badge" hidden></span></a>
-    <a href="#diagnostico" data-v="diagnostico" class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>Diagnóstico</a>
+    <a href="#consumo" data-v="consumo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M14 9h2a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V8l-3-3"/><path d="M7 7h4v4H7z"/></svg>Consumo</a>
+    <a href="#alertas" data-v="alertas" class="sub"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>Alertas</a>
+    <a href="#diagnostico" data-v="diagnostico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>Diagnóstico<span class="badge" id="badge" hidden></span></a>
     <a href="#sensores" data-v="sensores" class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Sensores</a>
-    <a href="#relatorio" data-v="relatorio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Relatório</a>
+    <a href="#relatorio" data-v="relatorio" class="sub"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Relatório</a>
     <a href="#sistema" data-v="sistema" class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg>Sistema</a>
     <button type="button" id="moreBtn" class="morebtn" aria-expanded="false" aria-controls="tabs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>Mais</button>
   </nav>
@@ -35,6 +35,9 @@
 <main class="wrap">
   <div class="cloudbar" id="cloudBar" hidden></div>
   <div id="banners" class="list"></div>
+  <nav class="subnav" id="subnav" hidden aria-label="Seções do diagnóstico">
+    <a href="#diagnostico" data-v="diagnostico">Resumo</a><a href="#alertas" data-v="alertas">Alertas<span class="badge" id="badge2" hidden></span></a><a href="#relatorio" data-v="relatorio">Relatório</a><a href="#borboleta" data-v="borboleta">Borboleta</a>
+  </nav>
 
   <!-- AO VIVO -->
   <section class="view" id="v-vivo">
@@ -140,6 +143,7 @@
       <div class="list" id="alertRecs"></div></div>
     <div class="grid2">
       <div class="card"><div class="row-head"><h2>Alertas</h2>
+        <button class="btn" type="button" id="alertClear">🧹 Limpar alertas</button>
         <select id="alertFilter" aria-label="Filtrar alertas"><option value="">Todos</option><option value="crit">Críticos</option><option value="warn">Avisos</option><option value="info">Informativos</option></select></div>
         <div class="list" id="alertList" style="margin-top:10px"></div></div>
       <div class="card"><div class="row-head"><h2>Códigos de falha</h2><span id="milChip"></span></div>

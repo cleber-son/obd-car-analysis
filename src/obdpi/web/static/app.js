@@ -147,7 +147,7 @@
       .sort((x, y) => (x.sev === "crit" ? 0 : 1) - (y.sev === "crit" ? 0 : 1));
     $("#banners").innerHTML = crit.slice(0, 1).map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}${(a.count || 1) > 1 ? ` · continua (${a.count}×)` : ""}</b><span class="muted">${esc(a.detail)} · ${(a.count || 1) > 1 ? "desde " + tm(a.ts) + ", último " + tm(a.ts_end) : tm(a.ts)}</span><span class="more" style="grid-column:2">${crit.length > 1 ? `+ ${crit.length - 1} outro(s) alerta(s) agora · ` : ""}O que fazer ›</span></div>`).join("");
     const nb = (d.alerts || []).filter((a) => d.ts - (a.ts_end || a.ts) < 24 * 3600e3 && a.sev === "crit").length;
-    $("#badge").hidden = !nb; $("#badge").textContent = nb;
+    for (const id of ["#badge", "#badge2"]) { $(id).hidden = !nb; $(id).textContent = nb; }
   }
 
   function renderTrimTiming(d) {
@@ -323,6 +323,13 @@
       <td>${CLOUD ? "" : `<button class="rbtn" type="button" data-del="${x.id}" aria-label="Apagar abastecimento">Apagar</button>`}</td></tr>`).join("")
       : `<tr><td colspan="9"><div class="empty">Nenhum abastecimento registrado.</div></td></tr>`;
   }
+  $("#alertClear").addEventListener("click", async () => {
+    if (!confirm("Limpar todos os alertas do painel e dos relatórios?\n\nEles ficam guardados no Pi para análise futura, mas somem daqui. Use depois de resolver um problema, para começar do zero.")) return;
+    const r = await fetch("/api/alerts/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const jn = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(jn.error || jn.detail || "Não foi possível limpar."); return; }
+    loadAlerts().catch(console.error);
+  });
   let fillMsgUntil = 0;
   $("#fillRows").addEventListener("click", async (e) => { const b = e.target.closest("[data-del]"); if (!b || !confirm("Apagar este abastecimento?")) return;
     await fetch(`/api/fuel/fill/${b.dataset.del}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ delete: true }) }); loadFuel().catch(console.error); });
@@ -711,6 +718,10 @@
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });
     document.querySelectorAll("#tabs a").forEach((a) => a.dataset.v === view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+    const DIAG = ["diagnostico", "alertas", "relatorio", "borboleta"], inDiag = DIAG.includes(view);
+    $("#subnav").hidden = !inDiag;
+    document.querySelectorAll("#subnav a").forEach((a) => a.dataset.v === view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+    if (inDiag) $('#tabs a[data-v="diagnostico"]').setAttribute("aria-current", "page");
     const sec = !!document.querySelector(`#tabs a.sec[data-v="${view}"]`);
     $("#moreBtn").classList.toggle("cur", sec); $("#tabs").classList.remove("open"); $("#moreBtn").setAttribute("aria-expanded", "false");
     window.scrollTo(0, 0);
@@ -732,7 +743,7 @@
       <b>Painel online</b> · ${on ? "Pi conectado agora (dados ao vivo)" : env.last_sync_ts ? "Pi offline · dados até " + dt(env.last_sync_ts) : "aguardando a primeira sincronização do Pi"}
       ${env.pending_cmds ? ` · ${env.pending_cmds} ação(ões) esperando o Pi` : ""}
       ${env.readonly ? '<span class="muted" style="margin-left:auto">somente visualização</span>' : '<a href="/logout" style="margin-left:auto">Sair</a>'}`;
-    const hide = ["#accGo", "#csvLink"].concat(env.readonly ? ["#annForm", "#aiRun"] : []);
+    const hide = ["#accGo", "#csvLink"].concat(env.readonly ? ["#annForm", "#aiRun", "#alertClear"] : []);
     for (const id of hide) { const el = $(id); if (el) el.hidden = true; }
     const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
   }
