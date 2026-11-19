@@ -350,17 +350,17 @@ class Collector:
         self.trip_live = {"km": 0.0, "fuel_l": 0.0, "moving_s": 0.0, "max_speed": 0, "last_ts": None}
         cold = self.values.get("ect")
         # o Pi caiu (energia) e voltou em < 3 min com o motor ligado: continua a mesma viagem
-        last = self.con.execute("SELECT id, start_ts, end_ts, end_reason FROM trip ORDER BY start_ts DESC LIMIT 1").fetchone()
-        try:
-            uptime = float(open("/proc/uptime").read().split()[0])
-        except OSError:
-            uptime = time.monotonic()
+        last = self.con.execute("SELECT id, start_ts, end_ts, end_reason, last_run_time FROM trip ORDER BY start_ts DESC LIMIT 1").fetchone()
         run_time = self.values.get("run_time")
-        # motor ligado há mais tempo que o Pi → o Pi caiu no meio da viagem (o relógio sem NTP não mede o tempo desligado)
-        engine_before_pi = run_time is not None and run_time > uptime - 10
-        same_process = last and last["end_reason"] == "sem_conexao" and ts - (last["end_ts"] or 0) < 180_000
+        # O Pi é alimentado pelo carro e liga DEPOIS da partida, então "motor ligado antes do Pi" não distingue nada.
+        # Critério: o contador da ECU de tempo desde a partida (PID 1F) zera a cada partida. Se agora ele é maior que o último
+        # valor visto na viagem anterior, é o mesmo funcionamento do motor (o Pi caiu no meio) → continua a viagem.
+        same_engine_run = (last is not None and run_time is not None and last["last_run_time"] is not None
+                           and run_time >= last["last_run_time"])
+        if same_engine_run and self.clock.synced and last["end_ts"]:
+            same_engine_run = run_time >= (ts - last["end_ts"]) / 1000 - 60     # com relógio confiável, confere o intervalo também
         self.trip_merged = False
-        if last and last["end_reason"] in ("corte_de_energia", "sem_conexao") and (engine_before_pi or same_process):
+        if last and last["end_reason"] in ("corte_de_energia", "sem_conexao") and same_engine_run:
             self.trip_merged = True
             self.con.execute("UPDATE trip SET finalized=0, end_reason=NULL WHERE id=?", (last["id"],))
             self.trip_id, self.trip_start = last["id"], last["start_ts"]
@@ -749,6 +749,8 @@ class Collector:
                 if k != "pedal_d_norm" and x is not None and self.value_ts.get(k, 0) >= fresh]
         self.con.executemany("INSERT OR REPLACE INTO sample(signal_id, ts, value) VALUES (?,?,?)", rows)
         expected = {k for p in self.sweep_pids if p not in self.fast_pids for k in decode(p, b"\x80" * 8)}
+        if self.trip_id and vals.get("run_time") is not None:
+            self.con.execute("UPDATE trip SET last_run_time=? WHERE id=?", (vals["run_time"], self.trip_id))
         self.handle_alerts(self.limits.evaluate(allv, self.engine_on, ts) +
                            self.limits.check_missing(expected, vals, ts, self.engine_on))
         self.load_fuel()

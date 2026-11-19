@@ -45,7 +45,9 @@ echo "== serviços"
 install -m 644 deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl restart systemd-journald
-systemctl enable --now obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service obd-sync.service
-systemctl restart obd-collector.service obd-web.service
+systemctl enable obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service obd-sync.service
+for u in obd-btagent obd-collector obd-web obd-maint.timer obd-netprefer obd-sync; do
+  systemctl restart "$u" || echo "AVISO: $u não iniciou (veja journalctl -u $u)"   # um serviço com problema não impede o resto
+done
 echo "== OK"
 systemctl --no-pager --lines=0 status obd-collector obd-web obd-btagent | grep -E "●|Active"

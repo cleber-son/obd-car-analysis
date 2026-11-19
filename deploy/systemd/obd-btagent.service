@@ -4,10 +4,11 @@ After=bluetooth.service
 Requires=bluetooth.service
 
 [Service]
+ExecStartPre=/opt/obd/deploy/bt-ensure.sh
 ExecStartPre=/usr/bin/bluetoothctl power on
 ExecStart=/usr/bin/bt-agent --capability=NoInputNoOutput --pin=/etc/obd/bt-pins.txt
 Restart=always
-RestartSec=5
+RestartSec=15
 
 [Install]
 WantedBy=multi-user.target
