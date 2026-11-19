@@ -172,3 +172,5 @@ details.alert[open] > summary { border-bottom: 1px solid var(--line) }
 
 .cloudbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line) }
 .cloudbar[hidden] { display: none }
+
+.plan { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 10px } .plan li { line-height: 1.45 } .plan .pill { margin-left: 4px }

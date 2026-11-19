@@ -530,6 +530,59 @@
     return out;
   }
 
+  // ---- plano de ação geral: agrupa as recomendações por assunto e vira uma lista curta de ações
+  const THEMES = [
+    { id: "ar", name: "Mistura pobre / entrada falsa de ar", test: (r) => /^(stft|ltft|fuel_trim|air_leak|afr|o2_stuck|map:|load:|R4|R5|z:(map|load|load_abs|maf|stft1|o2c1|timing|evap))/.test(r),
+      action: "Procurar e corrigir a entrada falsa de ar: junta e aperto em cruz do corpo de borboleta, duto entre filtro/MAF e borboleta, mangueiras de vácuo (servofreio, PCV). Teste com limpa-carburador e o painel ao vivo aberto. Depois, reaprendizado da marcha lenta e 30–50 km rodando.",
+      parts: ["Junta do corpo de borboleta (original Honda, R18)", "Abraçadeiras/duto de admissão se trincado", "Mangueiras de vácuo ressecadas"],
+      not: ["MAF", "sondas lambda", "corpo de borboleta (é novo)"] },
+    { id: "maf", name: "Sensor MAF", test: (r) => /^maf_low/.test(r),
+      action: "Limpar o MAF com spray próprio e conferir o conector; se continuar baixo em todas as cargas, substituir.", parts: ["Spray limpa-MAF", "MAF (só se a limpeza não resolver)"] },
+    { id: "tb", name: "Sensores da borboleta e do pedal", test: (r) => /^(R1|R2|R3|R9|P21|P012|P022|P0638)/.test(r),
+      action: "Limpar e reencaixar o conector do corpo de borboleta e do pedal, revisar chicote e aterramentos. Se aparecer P2135/P2138, acionar a garantia da peça nova.", parts: ["Limpa-contato"] },
+    { id: "temp", name: "Temperatura (motor e ar admitido)", test: (r) => /^(ect|iat|thermostat|cat_|oil_temp|z:(ect|iat))/.test(r),
+      action: "Conferir o nível do líquido de arrefecimento com o motor frio e se a ventoinha liga perto de 100 °C. Evitar longos períodos parado com o motor ligado; conferir se a tomada de ar do filtro está encaixada.", parts: ["Aditivo Honda Type 2 (se o nível estiver baixo)"] },
+    { id: "bat", name: "Bateria e carga", test: (r) => /^(batt|ecu_volt|crank_weak|P056)/.test(r),
+      action: "Fazer teste de bateria e alternador (autoelétrica), limpar e apertar os terminais.", parts: ["Bateria (só se reprovada no teste)"] },
+    { id: "dtc", name: "Códigos de falha", test: (r) => /^(P|C|B|U)\d/.test(r) || r === "MIL",
+      action: "Ler os códigos na aba Alertas e seguir o diagnóstico de cada um; não apagar antes de entender a causa." },
+    { id: "com", name: "Comunicação com o OBD", test: (r) => /^missing/.test(r),
+      action: "Nenhuma ação se o sensor voltou sozinho; se repetir muito, conferir o adaptador OBD e a alimentação do Raspberry." },
+    { id: "eco", name: "Forma de dirigir", test: (r) => r === "eco", action: null },
+  ];
+  function actionPlan(recs, rep) {
+    const by = {};
+    for (const x of recs || []) {
+      const th = THEMES.find((t) => t.test(x.rule || "")) || { id: "outros", name: "Outros pontos", action: null };
+      const g = (by[th.id] ??= { th, items: [], sev: "info" });
+      g.items.push(x); if (RANK[x.severity] < RANK[g.sev]) g.sev = x.severity;
+    }
+    const groups = Object.values(by).sort((a, b) => RANK[a.sev] - RANK[b.sev] || b.items.length - a.items.length);
+    const crit = groups.filter((g) => g.sev === "crit"), warn = groups.filter((g) => g.sev === "warn");
+    const verdict = crit.length ? ["🔴", "var(--bad)", `Problema a resolver: ${crit.map((g) => g.th.name.toLowerCase()).join("; ")}.`]
+      : warn.length ? ["🟡", "var(--warn)", `Atenção: ${warn.map((g) => g.th.name.toLowerCase()).join("; ")}.`]
+      : ["🟢", "var(--ok)", "Nada negativo no período. Continue rodando e acompanhando."];
+    const steps = groups.map((g) => ({ g, text: g.th.action || g.items[0]?.fazer?.[0] || g.items[0]?.o_que || "",
+      why: g.items.map((x) => `${x.title}${x.n > 1 ? ` (${x.n}×)` : ""}`).join(" · "), urg: g.items.find((x) => x.urgencia_txt)?.urgencia_txt || "" }))
+      .filter((s) => s.text);
+    const parts = [...new Set(groups.flatMap((g) => g.th.parts || []))];
+    const nots = [...new Set(groups.flatMap((g) => g.th.not || []))];
+    const c = rep?.cur || {}, gaps = [];
+    if ((c.km || 0) < 30) gaps.push(`Rodar mais: só ${nf(c.km || 0, 0)} km no período; consumo e diagnósticos ficam mais confiáveis com uso normal.`);
+    if (c.dur && c.idle && c.idle / c.dur > 0.4) gaps.push(`${Math.round(c.idle / c.dur * 100)}% do tempo foi parado com o motor ligado, o que distorce consumo e temperatura.`);
+    if (live?.readiness && live.readiness.total && live.readiness.ready < live.readiness.total) gaps.push(`A ECU completou ${live.readiness.ready} de ${live.readiness.total} autotestes; códigos como P0171 só aparecem depois.`);
+    return { verdict, steps, parts, nots, gaps };
+  }
+  function planHtml(p) {
+    const [ic, col, txt] = p.verdict;
+    return `<div class="banner" style="--s:${col}"><span class="ic" style="font-size:20px;background:none">${ic}</span><b>${esc(txt)}</b><span class="muted">Baseado em todo o relatório do período: alertas, códigos, diagnósticos, consumo e direção.</span></div>
+      ${p.steps.length ? `<h3 class="lbl" style="margin-top:14px">O que fazer, em ordem</h3><ol class="plan">${p.steps.map((s) => `<li><b>${esc(s.g.th.name)}</b>${s.urg ? ` <span class="pill" style="--s:${(SEV[s.g.sev] || SEV.info)[0]}">${esc(s.urg)}</span>` : ""}<div>${esc(s.text)}</div><div class="muted" style="font-size:12px">Por quê: ${esc(s.why)}</div></li>`).join("")}</ol>` : ""}
+      ${p.parts.length ? `<h3 class="lbl" style="margin-top:14px">Peças a verificar / comprar</h3><ul class="plan">${p.parts.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${p.nots.length ? `<div class="muted" style="font-size:13px;margin-top:8px">Não troque às cegas: ${esc(p.nots.join(", "))} (os dados mostram que funcionam).</div>` : ""}
+      ${p.gaps.length ? `<h3 class="lbl" style="margin-top:14px">O que ainda falta saber</h3><ul class="plan">${p.gaps.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      <div style="margin-top:12px"><button class="btn" type="button" onclick="document.getElementById('aiBtn').click()">🤖 Ver laudo completo</button></div>`;
+  }
+
   // ------------------------------------------------------------ relatório semanal / mensal
   let perKind = "week", perOff = 0;
   async function loadPeriod() {
@@ -545,7 +598,10 @@
       <div><span class="lbl">Direção econômica</span><b>${nf(c.eco_score)}${dl(d.eco_score)}</b></div><div><span class="lbl">Borboleta</span><b>${nf(c.tb_score)}${dl(d.tb_score)}</b></div>
       <div><span class="lbl">Alertas</span><b><span style="color:var(--bad)">${sv.crit || 0}</span> / <span style="color:var(--warn)">${sv.warn || 0}</span></b></div><div><span class="lbl">Melhor 0–100</span><b>${r.best_0_100 ? nf(r.best_0_100, 2) + " s" : "—"}</b></div>`;
     lineChart($("#perChart"), [{ pts: r.daily.map((x) => [x.day + 43200e3, x.km || 0]), c: "--speed", bars: true }], { ymin: 0, x0: r.from, x1: r.to, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
-    $("#perRecs").innerHTML = recsHtml(r.recommendations ?? await recsFromAlerts(r.alerts));
+    const recs = r.recommendations ?? await recsFromAlerts(r.alerts);
+    $("#perRecs").innerHTML = recsHtml(recs);
+    $("#planBox").innerHTML = planHtml(actionPlan(recs, r));
+    $("#planTitle").textContent = `🧭 Plano de ação geral · ${r.label}`;
     $("#perList").innerHTML = (r.alerts.slice(0, 5).map((a) => alertItem({ ...a, ts: a.last_ts, detail: `${a.n}× no período`, count: 1 })).join("") +
       r.tips.map((t) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(t)}</div></div><span></span></div>`).join("")) || `<div class="empty">Nada a destacar no período.</div>`;
   }
