@@ -55,3 +55,9 @@ Dados: 131 leituras completas + 1181 rápidas, motor ligado parado (marcha lenta
    coletor compara o MAF com o esperado em várias cargas. Vazamento pesa mais em marcha lenta e quase some em carga alta;
    MAF com defeito erra proporcionalmente em todas as cargas.
 6. Opcional: comparar com o Car Scanner ou um scanner Honda (HDS), que lê o STFT/LTFT proprietário.
+
+
+## Atualização 19/11 — depois da primeira volta
+O ajuste curto **não** é um valor fixo de defeito do sensor: rodando ele variou de −14 % a +47 %. Ele fica cravado em +46,9 % **em
+marcha lenta**, que é o limite de correção da ECU. Junto com MAF ÷ esperado de 41 % parado contra 86 % em carga alta, isso confirma a
+**entrada falsa de ar** como hipótese principal. Detalhes e lista de peças em `docs/RELATORIO-2026-11-19.md`.

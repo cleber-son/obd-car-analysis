@@ -172,7 +172,7 @@ def build_context(db_path: str, live: dict, days: int = 14) -> dict:
         "periodo_dias": days,
         "observacoes": [
             "O corpo de borboleta foi trocado recentemente; os códigos de falha foram apagados há poucos km.",
-            "O PID 06 (ajuste curto de combustível) deste ECU retorna sempre o mesmo byte (0xBC = +46,9 %), mesmo do frio ao quente: provavelmente não é o STFT real.",
+            "O PID 06 (ajuste curto) fica cravado em +46,9 % em marcha lenta (limite de correção da ECU) e varia normalmente rodando (−14 a +47 %): é real, indica mistura pobre em marcha lenta.",
             "PID 07 (ajuste longo) não é suportado por este ECU.",
             "PID 34: os bytes A/B (λ) às vezes não batem com a corrente da sonda (bytes C/D); a corrente ≈ 0 mA indica mistura próxima do estequiométrico.",
             "Consumo é estimado pelo MAF + λ comandado, calibrado a cada tanque cheio.",

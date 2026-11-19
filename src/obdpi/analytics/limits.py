@@ -19,7 +19,7 @@ RULES = [
     ("batt", "running", 12.3, 15.0, 11.8, 15.5, 3, "Tensão de carga fora do normal"),
     ("ecu_volt", "running", 12.3, 15.0, 11.8, 15.5, 3, "Tensão no módulo fora do normal"),
     ("batt", "off", 12.2, None, 11.8, None, 3, "Bateria baixa"),
-    ("stft1", "warm", -15, 15, -25, 25, 3, "Ajuste curto de combustível extremo"),
+    ("stft1", "warm", -15, 15, -25, 25, 3, "Ajuste de combustível no limite (mistura pobre/rica)"),
     ("ltft1", "warm", -15, 15, -25, 25, 2, "Ajuste longo de combustível extremo"),
     ("iat", "running", None, 60, None, 70, 3, "Ar admitido muito quente"),
     ("rpm", "idle_warm", 600, 950, 500, 1200, 3, "Marcha lenta fora do alvo"),
@@ -113,7 +113,8 @@ class LimitsEngine:
         ctx = context_of(v, engine_on)
         # valor que nunca muda com o motor ligado (ex.: PID 06 deste ECU fixo em 0xBC) não é medida real
         if engine_on:
-            for sig in ("stft1", "stft2", "ltft1", "timing", "o2c1_lambda", "maf", "map"):
+            # (STFT parado no limite da ECU, ex. +46,9 % em marcha lenta, é real: mistura pobre além da correção — não ignorar)
+            for sig in ("timing", "o2c1_lambda", "maf", "map"):
                 if v.get(sig) is not None:
                     h = self.recent[sig] = (self.recent[sig] + [v[sig]])[-12 * self.k:]
                     if len(h) >= 12 * self.k:

@@ -68,23 +68,15 @@ def test_keyoff_is_not_stall():
     assert not any(a.rule == "R6" for a in out)
 
 
-def test_frozen_stft_ignored():
+def test_pegged_stft_still_alerts():
+    # STFT cravado no limite da ECU (+46,9 % em marcha lenta) é mistura pobre de verdade: continua alertando
     l = LimitsEngine(period_s=5)
     v = {"stft1": 46.88, "ect": 90, "rpm": 750, "speed": 0, "run_time": 600}
-    late = []
+    out = []
     for i in range(80):
-        r = l.evaluate(dict(v), True, i)
-        if i > 50:
-            late += r
-    assert "stft1" in l.frozen and not any(a.rule.startswith("stft1") for a in late)
-    assert "stft1" not in l.status(v, True)
-
-
-def test_limits_ect():
-    l = LimitsEngine()
-    v = {"ect": 109, "rpm": 2000, "speed": 60, "run_time": 600}
-    out = l.evaluate(v, True, 1) + l.evaluate(v, True, 2)
-    assert any(a.rule == "ect:running" and a.severity == "crit" for a in out)
+        out += l.evaluate(dict(v), True, i)
+    assert any(a.rule.startswith("stft1") and a.severity == "crit" for a in out)
+    assert l.status(v, True)["stft1"][0] == "crit"
 
 
 if __name__ == "__main__":

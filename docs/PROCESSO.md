@@ -170,3 +170,16 @@ Bug corrigido nos testes: cooldown das regras da borboleta suprimia o 1º alerta
   `civic-obd`, domínio próprio `obd.cleberson.social.br`. Token de sincronização em `secrets/cloud.txt` (fora do git).
 - Testes: Worker local (`wrangler dev`) e no ar — páginas 200, só leitura (409), sync exige token (401 sem), ping ok.
 - Pendente: o Pi estava desligado; um vigia aguarda ele aparecer na rede para instalar `obd-sync` e fazer a 1ª sincronização.
+
+## 2026-11-19 — Pi instalado na nuvem, correções e relatório do carro
+- Pi apareceu na rede às 12:29; `obd-sync` instalado e nuvem configurada (`deploy/set-cloud.sh`). Painel online recebendo dados.
+- Bluetooth: no boot o chip BCM43438 não inicializou ("Reset failed -110", com subtensão `0x50005`). Reboot resolveu;
+  adicionado `deploy/bt-ensure.sh` (recarrega `hci_uart` se o controlador sumir) antes do `obd-btagent`.
+  `install.sh` não aborta mais se um serviço falhar.
+- Bug de viagem: como o Pi liga depois da partida, "motor ligado antes do Pi" era sempre verdade e juntou a viagem de hoje
+  com a de ontem (15 h). Nova regra: continua a viagem só se o contador da ECU de tempo desde a partida (PID 1F) não zerou
+  (`trip.last_run_time`). Viagem 11 corrigida (18/11 19:06–21:12, 7,5 km) e viagem 12 iniciada hoje.
+- Correção de diagnóstico: o ajuste curto varia rodando e só crava (+46,9 %) em marcha lenta, que é o limite da ECU. Logo é
+  **real**, e a supressão de "valor fixo" foi removida para ele.
+- Relatório completo em `docs/RELATORIO-2026-11-19.md` (também no botão 🤖 do painel e online): entrada falsa de ar após a
+  troca do corpo de borboleta; junta do corpo de borboleta e duto de admissão em primeiro lugar.
