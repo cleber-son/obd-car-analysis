@@ -27,7 +27,9 @@ log = logging.getLogger("sync")
 
 LOCAL = os.environ.get("OBD_LOCAL", "http://127.0.0.1")
 STATE = Path("/data/obd/sync_state.json")
-LIVE_EVERY = 10          # s — snapshot ao vivo
+LIVE_EVERY = 10          # s — snapshot ao vivo com o motor desligado
+LIVE_DRIVING = 1.0       # s — com o motor ligado: tempo real no painel online e no modo direção
+LIVE_FILE = Path("/run/obd/live.json")
 FULL_EVERY = 300         # s — reconstrução completa (só envia o que mudou); 10 min com o motor ligado
 CMD_EVERY = 30           # s — ações pendentes do painel online
 SPANS = [3600_000, 21600_000, 86400_000, 604800_000, 2592000_000]   # períodos dos gráficos do painel
@@ -66,6 +68,8 @@ class Sync:
         self.state.setdefault("hashes", {})
         self.last_live = self.last_full = self.last_cmd = 0.0
         self.last_live_hash = None
+        self._conn = None
+        self._last_meta = 0.0
         self.last_live_engine = False
 
     # -------------------------------------------------------------- HTTP
@@ -167,21 +171,73 @@ class Sync:
         n = self.push(docs)
         return n
 
+    def live_raw(self) -> bytes | None:
+        try:
+            return LIVE_FILE.read_bytes()          # direto do coletor: não depende do painel local
+        except OSError:
+            st, raw = self.local("/api/live")
+            return raw if st == 200 else None
+
+    def cloud_live(self, payload: dict) -> None:
+        """POST numa conexão HTTPS mantida aberta (1 envio/s sem refazer o TLS a cada vez)."""
+        import http.client
+        u = urllib.parse.urlsplit(self.url)
+        body = json.dumps(payload, ensure_ascii=False).encode()
+        for attempt in (0, 1):
+            try:
+                if self._conn is None:
+                    cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
+                    self._conn = cls(u.netloc, timeout=15)
+                self._conn.request("POST", "/api/sync/docs", body=body, headers={
+                    "Authorization": f"Bearer {self.token}", "Content-Type": "application/json",
+                    "User-Agent": f"civic-obd-sync/{__version__}"})
+                r = self._conn.getresponse()
+                r.read()
+                if r.status >= 400:
+                    raise OSError(f"nuvem respondeu {r.status}")
+                return
+            except (OSError, http.client.HTTPException):
+                try:
+                    self._conn and self._conn.close()
+                finally:
+                    self._conn = None
+                if attempt:
+                    raise
+
     def live(self) -> None:
-        st, raw = self.local("/api/live")
-        if st != 200:
+        raw = self.live_raw()
+        if not raw:
             return
-        meta = json.dumps({"last_sync_ts": int(time.time() * 1000), "version": __version__}).encode()
-        h = hashlib.sha1(raw).hexdigest()
+        now = time.monotonic()
         try:
             self.last_live_engine = bool(json.loads(raw).get("engine_on"))
         except ValueError:
-            pass
-        docs = [("_meta", meta)]
+            return
+        docs = []
+        if now - self._last_meta >= LIVE_EVERY:      # "o Pi está vivo": basta a cada 10 s
+            docs.append(("_meta", json.dumps({"last_sync_ts": int(time.time() * 1000), "version": __version__}).encode()))
+        h = hashlib.sha1(raw).hexdigest()
         if h != self.last_live_hash:
             docs.append(("/api/live", raw))
-        self.cloud("/api/sync/docs", {"docs": [{"key": k, "json": v.decode()} for k, v in docs]}, timeout=30)
+        if not docs:
+            return
+        self.cloud_live({"docs": [{"key": k, "json": v.decode()} for k, v in docs]})
         self.last_live_hash = h
+        if docs[0][0] == "_meta":
+            self._last_meta = now
+
+    def live_loop(self) -> None:
+        """Fio próprio: o estado ao vivo não espera a sincronização completa (que pode levar dezenas de segundos)."""
+        while True:
+            try:
+                if self.url and self.token:
+                    self.live()
+                    time.sleep(LIVE_DRIVING if self.last_live_engine else LIVE_EVERY)
+                else:
+                    time.sleep(30)
+            except Exception as e:
+                log.debug("ao vivo falhou: %s", e)
+                time.sleep(5)
 
     # -------------------------------------------------------------- ações do painel online
     def commands(self) -> int:
@@ -208,6 +264,8 @@ class Sync:
     def run(self) -> None:
         if not self.url or not self.token:
             log.error("nuvem não configurada ([cloud] url/token em /etc/obd/secrets.toml); aguardando")
+        import threading
+        threading.Thread(target=self.live_loop, daemon=True, name="live").start()
         while True:
             try:
                 if not self.url or not self.token:
@@ -219,9 +277,6 @@ class Sync:
                     time.sleep(30)
                     continue
                 now = time.monotonic()
-                if now - self.last_live >= LIVE_EVERY:
-                    self.last_live = now
-                    self.live()
                 if now - self.last_cmd >= CMD_EVERY:
                     self.last_cmd = now
                     self.commands()

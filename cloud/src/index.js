@@ -85,13 +85,13 @@ async function getDoc(env, key) {
   return r ? { data: r.json, updated: r.updated_ts } : null;
 }
 
-const OFFLINE_AFTER_MS = 60_000;   // o Pi envia o estado ao vivo a cada 10 s enquanto tem internet
+const OFFLINE_AFTER_MS = 60_000;   // o Pi envia o estado ao vivo a cada 1 s (motor ligado) ou 10 s (desligado)
 
 // estado ao vivo como o painel deve ver: se o Pi parou de enviar, o carro está desligado (ou sem internet)
 function liveView(raw, meta) {
   try {
     const d = JSON.parse(raw);
-    const last = meta.last_sync_ts || d.ts || 0;
+    const last = Math.max(meta.last_sync_ts || 0, meta.live_updated || 0) || d.ts || 0;
     if (Date.now() - last > OFFLINE_AFTER_MS) {
       d.pi_last_seen = last;
       d.last_state = d.state;
@@ -103,6 +103,40 @@ function liveView(raw, meta) {
     d.cloud = true;
     return JSON.stringify(d);
   } catch { return raw; }
+}
+
+// estado ao vivo + "último sinal do Pi" numa consulta só
+async function liveNow(env) {
+  const r = await env.DB.prepare("SELECT key, json, updated_ts FROM doc WHERE key IN ('/api/live', '_meta')").all();
+  const live = r.results.find((x) => x.key === "/api/live"), m = r.results.find((x) => x.key === "_meta");
+  let mt = {}; try { mt = m ? JSON.parse(m.json) : {}; } catch { }
+  mt.live_updated = live ? live.updated_ts : 0;
+  return { stamp: `${live ? live.updated_ts : 0}:${Date.now() - Math.max(mt.last_sync_ts || 0, mt.live_updated) > OFFLINE_AFTER_MS}`,
+           data: live ? liveView(live.json, mt) : JSON.stringify({ state: "pi_offline", engine_on: false, values: {}, alerts: [], dtc: {}, cloud: true }) };
+}
+
+// SSE de verdade: confere o banco 1x/s e envia quando o Pi mandou algo novo. Cada conexão dura ~40 s
+// (limite de consultas por requisição no plano gratuito); o navegador reconecta sozinho em seguida.
+function liveStream(env) {
+  const te = new TextEncoder();
+  let stop = false;
+  const body = new ReadableStream({
+    async start(c) {
+      try {
+        c.enqueue(te.encode("retry: 500\n\n"));
+        let last = null;
+        for (let i = 0; i < 40 && !stop; i++) {
+          const n = await liveNow(env);
+          if (n.stamp !== last) { last = n.stamp; c.enqueue(te.encode(`data: ${n.data}\n\n`)); }
+          else if (i % 15 === 14) c.enqueue(te.encode(": ping\n\n"));
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      } catch { }
+      try { c.close(); } catch { }
+    },
+    cancel() { stop = true; },
+  });
+  return new Response(body, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
 }
 
 async function meta(env) {
@@ -187,12 +221,7 @@ export default {
 
     // API
     if (p === "/api/env") return json(await envInfo(env));
-    if (p === "/api/stream") {
-      // um evento por conexão; o EventSource do navegador reconecta sozinho (retry 5 s)
-      const d = await getDoc(env, "/api/live");
-      const data = d ? liveView(d.data, await meta(env)) : JSON.stringify({ state: "pi_offline", engine_on: false, values: {}, alerts: [], dtc: {}, cloud: true });
-      return new Response(`retry: 5000\ndata: ${data}\n\n`, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
-    }
+    if (p === "/api/stream") return liveStream(env);
     if (req.method === "POST" || req.method === "DELETE") {
       if (env.DASH_PASSWORD && QUEUEABLE.some((re) => re.test(p))) {
         const body = req.method === "POST" ? await req.text() : "";
@@ -205,7 +234,7 @@ export default {
     if (p === "/api/export.csv") return json({ error: "Exportação CSV disponível no painel do Pi (rede local)." }, 404);
     const d = await getDoc(env, docKey(url));
     if (!d) return json({ error: "ainda não sincronizado pelo Pi" }, 404);
-    return new Response(p === "/api/live" ? liveView(d.data, await meta(env)) : d.data,
+    return new Response(p === "/api/live" ? liveView(d.data, { ...(await meta(env)), live_updated: d.updated }) : d.data,
       { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-synced": String(d.updated) } });
   },
 };

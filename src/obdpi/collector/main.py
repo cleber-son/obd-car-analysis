@@ -249,6 +249,9 @@ class Collector:
         self.supported = sup
         self.sweep_pids = sorted(p for p in sup if p in PID_LEN and p not in INFO_ONLY and p % 0x20 != 0)
         self.fast_pids = [p for p in self.fast_pids_cfg if p in sup]
+        # PIDs do modo direção (ajuste curto, avanço, sonda): um grupo por ciclo rápido, só para o painel ao vivo.
+        # Continuam sendo gravados pela varredura completa; aqui só deixam de esperar 5 s para aparecer na tela.
+        self.live_rot = [g for g in ([p for p in grp if p in sup and p not in self.fast_pids] for grp in ([0x06, 0x0E], [0x34])) if g]
         info = {"supported": [f"{p:02X}" for p in sorted(sup)], "multi_pid": e.multi_pid,
                 "elm": e.version, "protocol": e.protocol_desc}
         for pid in (0x1C, 0x51, 0x13):
@@ -719,6 +722,10 @@ class Collector:
                                  (ts, self.trip_id, vals.get("rpm"), vals.get("speed")))
             return
         raw = self.read_pids(self.fast_pids or [0x0C])
+        rot = getattr(self, "live_rot", None)
+        if rot and self.engine_on and raw:
+            self.live_i = (getattr(self, "live_i", -1) + 1) % len(rot)
+            raw.update(self.read_pids(rot[self.live_i]))
         if not self.engine_on or (self.pending_crank and ts - self.pending_crank["ts"] < 4000):
             bv = self.elm.voltage()
             if bv is not None:

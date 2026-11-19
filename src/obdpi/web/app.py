@@ -69,18 +69,20 @@ def live():
 @app.get("/api/stream")
 async def stream():
     async def gen():
-        last = None
+        last, idle = None, 0
         while True:
             try:
-                m = LIVE.stat().st_mtime
+                m = LIVE.stat().st_mtime_ns
             except FileNotFoundError:
                 m = None
             if m != last:
-                last = m
+                last, idle = m, 0
                 yield f"data: {json.dumps(read_live(), ensure_ascii=False)}\n\n"
             else:
-                yield ": ping\n\n"
-            await asyncio.sleep(1)
+                idle += 1
+                if idle % 20 == 0:                    # mantém a conexão viva quando o coletor está parado
+                    yield ": ping\n\n"
+            await asyncio.sleep(0.25)                 # o coletor grava ~2x/s; o painel mostra assim que muda
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
