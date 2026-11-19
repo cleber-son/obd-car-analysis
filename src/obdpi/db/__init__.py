@@ -59,6 +59,7 @@ def migrate(con) -> None:
     for col, decl in (("eco_score", "INTEGER"), ("eco_json", "TEXT"), ("warmup_s", "INTEGER"), ("start_ect", "REAL"),
                       ("crank_v", "REAL"), ("rest_v", "REAL"), ("air_json", "TEXT"), ("air_verdict", "TEXT")):
         _add_col(con, "trip", col, decl)
+        _add_col(con, "fuel_fill", "total", "REAL")          # valor pago (R$): basta isso para registrar um tanque
     for col, decl in (("title", "TEXT"), ("note", "TEXT"), ("hidden", "INTEGER DEFAULT 0"), ("last_run_time", "REAL"),
                       ("start_snapshot", "TEXT"), ("end_snapshot", "TEXT")):
         _add_col(con, "trip", col, decl)

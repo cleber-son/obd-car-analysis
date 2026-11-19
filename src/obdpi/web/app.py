@@ -350,6 +350,12 @@ def summary(days: int = 14):
 
 
 # ---------------------------------------------------------------- combustível
+def _cost_km(fills: list) -> float | None:
+    """R$ por km medido: o valor pago num tanque cheio repõe o que foi gasto nos km desde o tanque cheio anterior."""
+    ok = [f for f in fills if f.get("total") and f["full"] and (f["km_since_prev"] or 0) > 20]
+    return round(sum(f["total"] for f in ok[-5:]) / sum(f["km_since_prev"] for f in ok[-5:]), 3) if ok else None
+
+
 @app.get("/api/fuel")
 def fuel_info():
     from ..analytics import fuel as fm
@@ -367,23 +373,73 @@ def fuel_info():
         "since_fill": {"ts": since or None, "km": round(t["km"], 1), "liters_est": round(t["l"], 2), "kml_est": round(kml_est, 1) if kml_est else None,
                        "cost_est": round(t["l"] * last["price_l"], 2) if last and last["price_l"] else None},
         "avg_real_kml": round(sum(f["real_kml"] for f in real[-5:]) / len(real[-5:]), 1) if real else None,
-        "cost_per_km": round(prices[-1] / (real[-1]["real_kml"] if real else kml_est), 3) if prices and (real or kml_est) else None,
+        "cost_per_km": _cost_km(fills) or (round(prices[-1] / (real[-1]["real_kml"] if real else kml_est), 3) if prices and (real or kml_est) else None),
+        "spent_30d": round(sum(f.get("total") or ((f["liters"] or 0) * (f["price_l"] or 0)) for f in fills if f["ts"] > now_ms() - 30 * DAY), 2),
         "trips": trips, "tank_l": fm.TANK_L,
     }
 
 
-@app.post("/api/fuel/fill")
-def fuel_fill(body: dict, x_token: str | None = Header(None)):
-    """Botão 'Tanque cheio'. body: {fuel: gasolina|etanol, liters?, price_l?, full?: true, note?}"""
-    from ..analytics import fuel as fm
+def _num(v, lo, hi, nome):
+    if v in (None, ""):
+        return None
+    try:
+        x = float(str(v).replace(",", "."))
+    except ValueError:
+        raise HTTPException(400, f"{nome} inválido")
+    if not lo <= x <= hi:
+        raise HTTPException(400, f"{nome} fora do esperado")
+    return x
+
+
+@app.post("/api/fuel/fill/{fid}")
+def fuel_fill_edit(fid: int, body: dict, x_token: str | None = Header(None)):
+    """Corrigir ou apagar um abastecimento: {delete: true} ou {fuel?, total?, price_l?, liters?}."""
     check_admin(x_token)
-    fuel = body.get("fuel", "gasolina")
+    con = db.connect(DB)
+    f = con.execute("SELECT * FROM fuel_fill WHERE id=?", (fid,)).fetchone()
+    if not f:
+        raise HTTPException(404, "abastecimento não encontrado")
+    if body.get("delete"):
+        con.execute("DELETE FROM fuel_fill WHERE id=?", (fid,))
+        con.commit()
+        return {"ok": True, "deleted": True}
+    fuel = body.get("fuel") or f["fuel"]
     if fuel not in ("gasolina", "etanol"):
         raise HTTPException(400, "combustível deve ser gasolina ou etanol")
-    liters = float(body["liters"]) if body.get("liters") not in (None, "") else None
-    price = float(body["price_l"]) if body.get("price_l") not in (None, "") else None
-    full = bool(body.get("full", True))
+    total = _num(body.get("total"), 1, 5000, "valor") if "total" in body else f["total"]
+    price = _num(body.get("price_l"), 0.5, 30, "preço por litro") if "price_l" in body else f["price_l"]
+    liters = _num(body.get("liters"), 0.5, 80, "litros") if body.get("liters") not in (None, "") else (round(total / price, 2) if total and price else f["liters"])
+    kml = round(f["km_since_prev"] / liters, 2) if liters and f["full"] and (f["km_since_prev"] or 0) > 20 else None
+    con.execute("UPDATE fuel_fill SET fuel=?, total=?, price_l=?, liters=?, real_kml=? WHERE id=?", (fuel, total, price, liters, kml, fid))
+    con.commit()
+    return {"ok": True, "real_kml": kml}
+
+
+@app.post("/api/fuel/fill")
+def fuel_fill(body: dict, x_token: str | None = Header(None)):
+    """Botão 'Tanque cheio'. Basta {total: valor pago}. Opcionais: fuel (gasolina|etanol), price_l, liters, full, ts.
+    O que não vier é herdado do abastecimento anterior (combustível e preço por litro); litros = valor ÷ preço."""
+    from ..analytics import fuel as fm
+    check_admin(x_token)
     ts = int(body.get("ts") or now_ms())          # abastecimento registrado no painel online chega depois, com a hora do clique
+    con0 = ro()
+    last = con0.execute("SELECT * FROM fuel_fill WHERE ts < ? ORDER BY ts DESC LIMIT 1", (ts,)).fetchone()
+    fuel = body.get("fuel") or (last["fuel"] if last else "gasolina")
+    if fuel not in ("gasolina", "etanol"):
+        raise HTTPException(400, "combustível deve ser gasolina ou etanol")
+    total = _num(body.get("total"), 1, 5000, "valor")
+    price = _num(body.get("price_l"), 0.5, 30, "preço por litro")
+    liters = _num(body.get("liters"), 0.5, 80, "litros")
+    if price is None and total and liters:
+        price = round(total / liters, 3)
+    if price is None and last and last["price_l"] and last["fuel"] == fuel:
+        price = last["price_l"]                   # mesmo combustível: assume o preço do último até ser informado outro
+    if liters is None and total and price:
+        liters = round(total / price, 2)
+    if total is None and liters and price:
+        total = round(liters * price, 2)
+    full = bool(body.get("full", True))
+    exact = body.get("liters") not in (None, "") or body.get("price_l") not in (None, "")   # litros medidos, não deduzidos do preço antigo
     con = db.connect(DB)
     prev = con.execute("SELECT * FROM fuel_fill WHERE ts < ? ORDER BY ts DESC LIMIT 1", (ts,)).fetchone()
     km = est = kml = calib = None
@@ -393,16 +449,17 @@ def fuel_fill(body: dict, x_token: str | None = Header(None)):
         km, est = round(r["km"], 1), round(r["l"], 2)
         if full and prev["full"] and liters and km > 20:   # método tanque a tanque
             kml = round(km / liters, 2)
-            if est and est > 1:
+            if est and est > 1 and exact:
                 old = fm.calib_from([dict(x) for x in con.execute("SELECT calib FROM fuel_fill")])
                 calib = round(liters / (est / old), 3)       # estimativa bruta (sem calibração) × fator = real
     mix = fm.mix_after_fill(prev["mix_after"] if prev else None, fuel, liters)
-    con.execute("""INSERT INTO fuel_fill(ts, fuel, liters, price_l, full, mix_after, km_since_prev, est_l_since_prev, real_kml, calib, note)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (ts, fuel, liters, price, int(full), round(mix, 3), km, est, kml, calib, body.get("note")))
+    con.execute("""INSERT INTO fuel_fill(ts, fuel, liters, price_l, full, mix_after, km_since_prev, est_l_since_prev, real_kml, calib, note, total)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (ts, fuel, liters, price, int(full), round(mix, 3), km, est, kml, calib, body.get("note"), total))
     con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)",
-                (ts, "abastecimento", f"Tanque cheio: {fuel}" + (f", {liters:g} L" if liters else "") + (f" a R$ {price:.2f}/L" if price else "")))
+                (ts, "abastecimento", f"Tanque cheio: {fuel}" + (f", R$ {total:.2f}" if total else "") + (f", {liters:g} L" if liters else "") + (f" a R$ {price:.2f}/L" if price else "")))
     con.commit()
-    return {"ok": True, "real_kml": kml, "km_since_prev": km, "mix_after": mix}
+    return {"ok": True, "real_kml": kml, "km_since_prev": km, "mix_after": mix, "liters": liters, "price_l": price,
+            "cost_km": round(total / km, 2) if total and km and km > 20 and prev and prev["full"] else None}
 
 
 # ---------------------------------------------------------------- análise por IA

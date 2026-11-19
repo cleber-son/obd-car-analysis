@@ -21,15 +21,17 @@
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: var(--disp); overflow: hidden; -webkit-user-select: none; user-select: none }
-.app { height: 100%; display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px;
+.app { height: 100%; display: grid; grid-template-rows: auto auto auto auto 1fr auto; gap: 8px;
   padding: calc(env(safe-area-inset-top, 0px) + 6px) max(14px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 8px) max(14px, env(safe-area-inset-left, 0px)) }
+.app > .top { grid-row: 1 } .app > .rpmbar { grid-row: 2 } .app > .alert { grid-row: 3 } .app > .core { grid-row: 4 } .app > .tiles, .app > .graphs { grid-row: 5 } .app > .foot { grid-row: 6 }
+.app.off .core, .app.off .tiles, .app.off .graphs, .app.off .rpmbar { opacity: .38 }
 .top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); gap: 8px }
 .top a { color: var(--muted); text-decoration: none; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px }
 .st { display: inline-flex; align-items: center; gap: 6px } .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--muted)) }
 
 /* barra de rotação com luz de troca */
 .rpmbar { position: relative; height: 18px; border-radius: 9px; background: var(--tile); overflow: hidden; border: 1px solid var(--line) }
-.rpmbar i { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--o2), var(--speed) 45%, var(--temp) 70%, var(--bad)); transition: width .4s ease-out }
+.rpmbar i { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--o2), var(--speed) 45%, var(--temp) 70%, var(--bad)); transition: width .25s linear }
 .rpmbar .ticks { position: absolute; inset: 0; display: flex; justify-content: space-between; padding: 0 4px; font: 600 9px var(--mono); color: #000a; align-items: center; pointer-events: none }
 .rpmbar.shift { animation: shift .35s steps(2) infinite } @keyframes shift { 50% { border-color: var(--bad); box-shadow: 0 0 18px var(--bad) } }
 
@@ -47,7 +49,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 /* tiles */
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-content: start; min-height: 0 }
 .t { background: var(--tile); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; min-width: 0; border-top: 3px solid var(--c, var(--line)) }
-.t .l { font: 600 10px var(--disp); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.t .l { font: 600 10px var(--disp); text-transform: uppercase; letter-spacing: .03em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
 .t .v { font: 700 24px var(--mono); font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap } .t .v small { font: 600 11px var(--disp); color: var(--muted); margin-left: 2px }
 .t .s { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
 .t.wide { grid-column: span 2 }
@@ -62,8 +64,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 
 /* paisagem (no suporte do carro) */
 @media (orientation: landscape) {
-  .app { grid-template-columns: 1.05fr 1fr; grid-template-rows: auto auto 1fr auto; column-gap: 16px }
-  .top, .rpmbar, .alert { grid-column: 1 / -1 } .core { grid-row: 3 } .tiles { grid-row: 3; grid-template-columns: repeat(3, minmax(0, 1fr)) }
+  .app { grid-template-columns: 1.05fr 1fr; grid-template-rows: auto auto auto 1fr auto; column-gap: 16px }
+  .top, .rpmbar, .alert { grid-column: 1 / -1 } .app > .core { grid-row: 4 } .app > .tiles { grid-row: 4; grid-template-columns: repeat(3, minmax(0, 1fr)) } .app > .foot { grid-row: 5 }
   .spd b { font-size: clamp(110px, 26vh, 200px) } .foot { grid-column: 1 / -1 }
   .t .v { font-size: 20px }
 }
@@ -85,7 +87,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .g .h b { font: 700 15px var(--mono); color: var(--fg); text-transform: none; letter-spacing: 0 } .g canvas { width: 100%; height: 74px; display: block }
 .g.bad { border-color: var(--bad) } .g.bad .h b { color: var(--bad) }
 .app.graphmode .core { grid-template-columns: 1fr auto } .app.graphmode .spd b { font-size: clamp(70px, 22vw, 120px) } .app.graphmode .gear { width: 70px; height: 70px; font-size: 40px }
-@media (orientation: landscape) { .graphs { grid-row: 3; grid-template-columns: 1fr 1fr } }
+@media (orientation: landscape) { .app > .graphs { grid-row: 4; grid-template-columns: 1fr 1fr } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
 </style>
 </head>
@@ -128,8 +130,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   loadFuel(); setInterval(loadFuel, 60000);
   const sgn = (x, d = 1) => x == null ? "—" : (x > 0 ? "+" : "") + nf(x, d);
   const CAT = {
-    kml: { l: "Consumo agora", c: "--o2", r: (v) => v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" : ""] : [nf(v.fuel_lh, 1), "L/h", "parado"] },
-    kmlavg: { l: "Média da viagem", c: "--o2", r: (v, t) => [nf(t.kml, 1), "km/L", t.fuel_l ? nf(t.fuel_l, 2) + " L" + (t.cost ? " · R$ " + nf(t.cost, 2) : "") : "calculando…"] },
+    kml: { l: "Consumo", c: "--o2", r: (v) => v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" : ""] : [nf(v.fuel_lh, 1), "L/h", "parado"] },
+    kmlavg: { l: "Média viagem", c: "--o2", r: (v, t) => [nf(t.kml, 1), "km/L", t.fuel_l ? nf(t.fuel_l, 2) + " L" + (t.cost ? " · R$ " + nf(t.cost, 2) : "") : "calculando…"] },
     prev: { l: "Previsão da viagem", c: "--o2", wide: true, r: (v, t) => {
       const el = t.elapsed_s || 0, lh = el > 60 ? t.fuel_l / (el / 3600) : v.fuel_lh;   // média de L/h desde que ligou
       const kml = t.kml ?? fuelInfo?.avg_real_kml ?? fuelInfo?.since_fill?.kml_est;
@@ -262,6 +264,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     const v = d.values || {}, tr = d.trip || {};
     last = Date.now();
     const on = d.engine_on, coll = d.state === "coletando";
+    document.querySelector(".app").classList.toggle("off", !on && !coll);   // carro desligado: os números na tela são os últimos lidos
     $("dot").style.setProperty("--c", on ? "var(--ok)" : coll ? "var(--warn)" : "var(--bad)");
     $("state").textContent = on ? "Carro ligado" : coll ? "Ignição ligada" : d.state === "pi_offline" ? "Carro desligado (Pi offline" + (d.pi_last_seen ? " desde " + new Date(d.pi_last_seen).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "") + ")" : d.state === "ecu_silenciosa" ? "Ignição desligada" : "OBD desconectado";
     $("spd").textContent = nf(v.speed);
@@ -278,7 +281,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     $("hint").textContent = hint;
     lastD = d; pushHist(d); if (graphMode) drawGraphs(); else renderTiles(d);
     // alerta recente (10 min)
-    const a = (d.alerts || []).find((x) => d.ts - (x.ts_end || x.ts) < 10 * 60e3 && x.sev !== "info");
+    const a = (on || coll) ? (d.alerts || []).find((x) => Date.now() - (x.ts_end || x.ts) < 10 * 60e3 && x.sev !== "info") : null;
     const al = $("alert"); al.classList.toggle("on", !!a);
     if (a) { al.style.setProperty("--s", a.sev === "crit" ? "var(--bad)" : "var(--warn)"); al.innerHTML = `⚠ ${a.title}<span>${a.detail}</span>`; }
     $("ftrip").textContent = d.dtc?.confirmed?.length ? "DTC: " + d.dtc.confirmed.join(" ") : d.mil ? "Luz de injeção acesa" : "Sem códigos de falha";

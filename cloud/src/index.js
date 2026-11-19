@@ -165,10 +165,29 @@ async function syncDocs(req, env) {
   return json({ ok: true, stored: stmts.length });
 }
 
+async function publicFill(req, env) {
+  let b; try { b = JSON.parse((await req.text()).slice(0, 2000)); } catch { return json({ error: "dados inválidos" }, 400); }
+  const num = (v, lo, hi) => { if (v === undefined || v === null || v === "") return null; const x = Number(String(v).replace(",", ".")); return Number.isFinite(x) && x >= lo && x <= hi ? x : NaN; };
+  const total = num(b.total, 1, 5000), price = num(b.price_l, 0.5, 30), liters = num(b.liters, 0.5, 80);
+  if (total === null || [total, price, liters].some(Number.isNaN)) return json({ error: "Informe o valor pago (R$)." }, 400);
+  if (b.fuel !== undefined && !["gasolina", "etanol"].includes(b.fuel)) return json({ error: "combustível inválido" }, 400);
+  const pend = await env.DB.prepare("SELECT COUNT(*) n, MAX(ts) last FROM cmd WHERE done=0 AND path='/api/fuel/fill'").first();
+  if (pend && pend.n >= 5) return json({ error: "Já há abastecimentos esperando o Pi conectar. Tente depois." }, 429);
+  if (pend && pend.last && Date.now() - pend.last < 20_000) return json({ error: "Abastecimento registrado há instantes; aguarde um pouco." }, 429);
+  const clean = { total, full: true, ts: Date.now() };
+  if (price !== null) clean.price_l = price;
+  if (liters !== null) clean.liters = liters;
+  if (b.fuel) clean.fuel = b.fuel;
+  await env.DB.prepare("INSERT INTO cmd(ts, method, path, body) VALUES (?,?,?,?)").bind(Date.now(), "POST", "/api/fuel/fill", JSON.stringify(clean)).run();
+  return json({ ok: true, queued: true });
+}
+
 async function syncCommands(req, env) {
   if (req.method === "GET") {
     const r = await env.DB.prepare("SELECT id, ts, method, path, body FROM cmd WHERE done=0 ORDER BY id LIMIT 50").all();
-    return json({ commands: r.results });
+    // abastecimentos "só com o valor pago" esperam o Pi já atualizado (uma versão antiga gravaria sem o valor)
+    const cap = new URL(req.url).searchParams.get("cap") || "";
+    return json({ commands: r.results.filter((c) => cap.includes("total") || !(c.path === "/api/fuel/fill" && /"total"/.test(c.body || ""))) });
   }
   const { ids = [], results = {} } = await req.json();
   if (ids.length)
@@ -223,6 +242,8 @@ export default {
     if (p === "/api/env") return json(await envInfo(env));
     if (p === "/api/stream") return liveStream(env);
     if (req.method === "POST" || req.method === "DELETE") {
+      // "Tanque cheio" funciona no painel público (pedido do dono): só esse formulário, validado e com limite
+      if (!env.DASH_PASSWORD && p === "/api/fuel/fill" && req.method === "POST") return publicFill(req, env);
       if (env.DASH_PASSWORD && QUEUEABLE.some((re) => re.test(p))) {
         const body = req.method === "POST" ? await req.text() : "";
         if (body.length > 20000) return json({ error: "conteúdo grande demais" }, 413);

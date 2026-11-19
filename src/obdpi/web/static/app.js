@@ -38,7 +38,7 @@
     for (const s of series) {
       const pts = s.pts.filter((p) => p[1] != null);
       if (!pts.length) continue;
-      if (s.bars) { const bw = Math.max(2, (W - L - R) / pts.length * 0.6); g += pts.map((p) => `<rect x="${X(p[0]) - bw / 2}" y="${Y(Math.max(p[1], 0))}" width="${bw}" height="${Math.abs(Y(0) - Y(p[1]))}" rx="2" fill="var(${s.c})"/>`).join(""); continue; }
+      if (s.bars) { const bw = Math.min(34, Math.max(2, (W - L - R) / pts.length * 0.6)); g += pts.map((p) => `<rect x="${X(p[0]) - bw / 2}" y="${Y(Math.max(p[1], 0))}" width="${bw}" height="${Math.abs(Y(0) - Y(p[1]))}" rx="2" fill="var(${s.c})"/>`).join(""); continue; }
       if (s.dots) { g += pts.map((p) => `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="${s.r || 3}" fill="var(${s.c})" opacity="${s.op || 1}"/>`).join(""); continue; }
       const d = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
       if (s.area) g += `<path d="${d}L${X(pts.at(-1)[0])},${Y(y0)}L${X(pts[0][0])},${Y(y0)}Z" fill="var(${s.c})" opacity=".12"/>`;
@@ -143,8 +143,9 @@
       <span class="val num">${nf(v[k], c.decimals ?? 1)}<small>${esc(c.unit || "")}</small></span><span class="rng">${cls === "bad" ? "⚠ " + esc(st[1] || "Fora do normal") + " · " : ""}${rng}</span><span class="pid">${esc(k)}${d.value_ts?.[k] ? " · " + Math.max(0, Math.round((d.ts - d.value_ts[k]) / 1000)) + " s" : ""}</span></button>`; }).join("")
       : `<div class="empty" style="grid-column:1/-1">Aguardando a primeira leitura do OBD. Ligue a ignição com o adaptador conectado.</div>`;
     // banners de alerta recentes
-    const crit = (d.alerts || []).filter((a) => d.ts - (a.ts_end || a.ts) < 10 * 60e3 && a.sev !== "info").slice(0, 3);
-    $("#banners").innerHTML = crit.map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}${(a.count || 1) > 1 ? ` · continua (${a.count}×)` : ""} <span class="more">· O que fazer ›</span></b><span class="muted">${esc(a.detail)} · ${(a.count || 1) > 1 ? "desde " + tm(a.ts) + ", último " + tm(a.ts_end) : tm(a.ts)}</span></div>`).join("");
+    const crit = d.state === "pi_offline" ? [] : (d.alerts || []).filter((a) => Date.now() - (a.ts_end || a.ts) < 10 * 60e3 && a.sev !== "info")
+      .sort((x, y) => (x.sev === "crit" ? 0 : 1) - (y.sev === "crit" ? 0 : 1));
+    $("#banners").innerHTML = crit.slice(0, 1).map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}${(a.count || 1) > 1 ? ` · continua (${a.count}×)` : ""}</b><span class="muted">${esc(a.detail)} · ${(a.count || 1) > 1 ? "desde " + tm(a.ts) + ", último " + tm(a.ts_end) : tm(a.ts)}</span><span class="more" style="grid-column:2">${crit.length > 1 ? `+ ${crit.length - 1} outro(s) alerta(s) agora · ` : ""}O que fazer ›</span></div>`).join("");
     const nb = (d.alerts || []).filter((a) => d.ts - (a.ts_end || a.ts) < 24 * 3600e3 && a.sev === "crit").length;
     $("#badge").hidden = !nb; $("#badge").textContent = nb;
   }
@@ -242,9 +243,9 @@
     const vis = trips.filter((t) => showHidden || !t.hidden);
     $("#tripCount").textContent = `${vis.length} viagens${trips.length - vis.length ? ` · ${trips.length - vis.length} ocultas` : ""}`;
     $("#tripRows").innerHTML = vis.length ? vis.map((t) => { const s = t.tb_score; const c = s == null ? "var(--muted)" : s >= 85 ? "var(--ok)" : s >= 60 ? "var(--warn)" : "var(--bad)";
-      return `<tr class="click" data-id="${t.id}" style="${t.hidden ? "opacity:.5" : ""}"><td><b>${esc(t.title || "")}</b>${t.title ? "<br>" : ""}${dt(t.start_ts)}${t.finalized ? "" : ' <span class="pill" style="--s:var(--ok)">agora</span>'}${t.note ? ` <span title="${esc(t.note)}">📝</span>` : ""}</td><td class="num">${dur(t.duration_s ?? ((t.end_ts - t.start_ts) / 1000))}</td>
-      <td class="num">${nf(t.distance_km, 1)}</td><td class="num">${nf(t.avg_speed)} km/h</td><td class="num">${nf(t.km_l, 1)}</td><td class="num">${nf(t.max_ect)} °C</td><td class="num">${t.n_alerts ?? 0}</td>
-      <td class="num">${t.eco_score ?? "—"}</td><td><div class="bar" style="--s:${c}" title="${s ?? "—"}/100"><i style="width:${s ?? 0}%"></i></div></td></tr>`; }).join("")
+      return `<tr class="click" data-id="${t.id}" style="${t.hidden ? "opacity:.5" : ""}"><td class="head"><b>${esc(t.title || "")}</b>${t.title ? "<br>" : ""}${dt(t.start_ts)}${t.finalized ? "" : ' <span class="pill" style="--s:var(--ok)">agora</span>'}${t.note ? ` <span title="${esc(t.note)}">📝</span>` : ""}${t.n_alerts ? ` <span class="pill only-m" style="--s:var(--warn)">${t.n_alerts} alerta(s)</span>` : ""}</td><td class="num" data-l="Duração">${dur(t.duration_s ?? ((t.end_ts - t.start_ts) / 1000))}</td>
+      <td class="num" data-l="Distância">${nf(t.distance_km, 1)}<span class="only-m"> km</span></td><td class="num" data-l="Vel. média">${nf(t.avg_speed)} km/h</td><td class="num" data-l="Consumo">${nf(t.km_l, 1)}<span class="only-m"> km/L</span></td><td class="num" data-l="Temp. máx">${nf(t.max_ect)} °C</td><td class="num no-m" data-l="Alertas">${t.n_alerts ?? 0}</td>
+      <td class="num" data-l="Nota eco">${t.eco_score ?? "—"}</td><td data-l="Borboleta"><div class="bar" style="--s:${c}" title="${s ?? "—"}/100"><i style="width:${s ?? 0}%"></i></div></td></tr>`; }).join("")
       : `<tr><td colspan="9"><div class="empty">Nenhuma viagem ainda. A primeira aparece quando o motor ligar com o OBD conectado.</div></td></tr>`;
   }
   const AIRL = { entrada_de_ar: "Possível entrada falsa de ar", suspeito: "Suspeito (MAF baixo parado)", maf_baixo: "MAF lendo baixo", normal: "Normal" };
@@ -301,33 +302,42 @@
   async function loadFuel() {
     const f = await api("/api/fuel");
     const sf = f.since_fill; const last = f.fills[0];
-    $("#fillHint").textContent = last ? `Último: ${dt(last.ts)} · ${last.fuel}${last.liters ? ", " + nf(last.liters, 1) + " L" : ""}` : "Toque ao encher o tanque. O 1º abastecimento inicia a medição.";
+    if (!fillMsgUntil || Date.now() > fillMsgUntil) $("#fillHint").textContent = last ? `Último: ${dt(last.ts)} · ${last.total ? "R$ " + nf(last.total, 2) + " · " : ""}${last.fuel}${last.liters ? " · " + nf(last.liters, 1) + " L" : ""}` : "Encheu o tanque? Digite o valor e toque no botão. O 1º abastecimento inicia a medição.";
+    if (last && !$("#fillMore").open) { (last.fuel === "etanol" ? $("#fuelE") : $("#fuelG")).checked = true; $("#fillP").placeholder = last.price_l ? `R$ por litro (último: ${nf(last.price_l, 2)})` : "R$ por litro"; }
+    $("#fillSum").textContent = `Detalhes (opcional) · ${last ? last.fuel + (last.price_l ? " a R$ " + nf(last.price_l, 2) + "/L" : ", preço por litro não informado") : "combustível e preço por litro"}`;
     const mix = f.mix; const mixTxt = mix == null ? "—" : mix < 0.05 ? "Gasolina" : mix > 0.95 ? "Etanol" : `${Math.round(mix * 100)}% etanol`;
     $("#fuelStats").innerHTML = `<div><span class="lbl">Desde o último tanque</span><b>${nf(sf.km, 0)} km</b></div>
       <div><span class="lbl">Gasto estimado</span><b>${nf(sf.liters_est, 1)} L</b></div>
       <div><span class="lbl">Média estimada</span><b>${nf(sf.kml_est, 1)} km/L</b></div>
       <div><span class="lbl">Média real (5 tanques)</span><b>${nf(f.avg_real_kml, 1)} km/L</b></div>
       <div><span class="lbl">Custo por km</span><b>${f.cost_per_km ? "R$ " + nf(f.cost_per_km, 2) : "—"}</b></div>
+      <div><span class="lbl">Gasto em 30 dias</span><b>${f.spent_30d ? "R$ " + nf(f.spent_30d, 2) : "—"}</b></div>
       <div><span class="lbl">No tanque</span><b style="font-size:15px">${mixTxt}</b></div>
       <div><span class="lbl">Restante estimado</span><b>${last?.full ? nf(Math.max(0, f.tank_l - sf.liters_est), 0) + " L" : "—"}</b></div>
       <div><span class="lbl">Calibração</span><b>${nf(f.calib, 2)}×</b></div>`;
     const real = f.fills.filter((x) => x.real_kml).reverse();
     lineChart($("#fuelFillChart"), [{ pts: real.map((x) => [x.ts, x.real_kml]), c: "--ok", bars: true }], { ymin: 0, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
     lineChart($("#fuelTripChart"), [{ pts: f.trips.slice().reverse().map((x) => [x.start_ts, x.km_l]), c: "--speed", dots: true, r: 4 }], { ymin: 0 });
-    $("#fillRows").innerHTML = f.fills.length ? f.fills.map((x) => `<tr><td>${dt(x.ts)}</td><td>${esc(x.fuel)}</td><td class="num">${nf(x.liters, 2)}</td><td class="num">${x.price_l ? "R$ " + nf(x.price_l, 2) : "—"}</td>
-      <td class="num">${nf(x.km_since_prev, 0)}</td><td class="num">${nf(x.real_kml, 1)}</td><td class="num">${x.mix_after == null ? "—" : Math.round(x.mix_after * 100) + "% etanol"}</td></tr>`).join("")
-      : `<tr><td colspan="7"><div class="empty">Nenhum abastecimento registrado.</div></td></tr>`;
+    $("#fillRows").innerHTML = f.fills.length ? f.fills.map((x) => `<tr><td class="head">${dt(x.ts)} · ${esc(x.fuel)}</td><td class="no-m">${esc(x.fuel)}</td><td class="num" data-l="Valor">${x.total ? "R$ " + nf(x.total, 2) : "—"}</td><td class="num" data-l="Litros">${nf(x.liters, 2)}</td><td class="num" data-l="R$/L">${x.price_l ? nf(x.price_l, 2) : "—"}</td>
+      <td class="num" data-l="Km rodados">${nf(x.km_since_prev, 0)}</td><td class="num" data-l="km/L real">${nf(x.real_kml, 1)}</td><td class="num" data-l="R$/km">${x.total && x.km_since_prev > 20 ? nf(x.total / x.km_since_prev, 2) : "—"}</td>
+      <td>${CLOUD ? "" : `<button class="rbtn" type="button" data-del="${x.id}" aria-label="Apagar abastecimento">Apagar</button>`}</td></tr>`).join("")
+      : `<tr><td colspan="9"><div class="empty">Nenhum abastecimento registrado.</div></td></tr>`;
   }
-  $("#fillBtn").addEventListener("click", () => { $("#fillForm").hidden = false; $("#fillBtn").hidden = true; $("#fillL").focus(); });
-  $("#fillCancel").addEventListener("click", () => { $("#fillForm").hidden = true; $("#fillBtn").hidden = false; });
+  let fillMsgUntil = 0;
+  $("#fillRows").addEventListener("click", async (e) => { const b = e.target.closest("[data-del]"); if (!b || !confirm("Apagar este abastecimento?")) return;
+    await fetch(`/api/fuel/fill/${b.dataset.del}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ delete: true }) }); loadFuel().catch(console.error); });
   $("#fillForm").addEventListener("submit", async (e) => {
     e.preventDefault(); $("#fillSave").disabled = true;
     try {
-      const body = { fuel: document.querySelector('input[name="fuel"]:checked').value, liters: $("#fillL").value, price_l: $("#fillP").value, full: true, ts: Date.now() };
+      const body = { total: $("#fillT").value, full: true, ts: Date.now() };
+      if ($("#fillMore").open) Object.assign(body, { fuel: document.querySelector('input[name="fuel"]:checked').value, liters: $("#fillL").value, price_l: $("#fillP").value });
       const r = await fetch("/api/fuel/fill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status);
-      $("#fillForm").hidden = true; $("#fillBtn").hidden = false; $("#fillL").value = ""; $("#fillP").value = "";
-      $("#fillHint").textContent = j.queued ? "Registrado. Será aplicado no Pi na próxima conexão (com a hora de agora)." : j.real_kml ? `Salvo. Este tanque rendeu ${nf(j.real_kml, 1)} km/L (${nf(j.km_since_prev, 0)} km).` : "Salvo. O consumo real aparece no próximo tanque cheio.";
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || j.detail || r.status);
+      const v = nf(Number(body.total), 2);
+      $("#fillT").value = ""; $("#fillL").value = ""; $("#fillP").value = ""; $("#fillMore").open = false;
+      fillMsgUntil = Date.now() + 60000;
+      $("#fillHint").textContent = j.queued ? `✅ Tanque cheio de R$ ${v} registrado. Entra no histórico quando o Pi conectar (com a hora de agora).`
+        : `✅ Tanque cheio de R$ ${v} salvo.` + (j.real_kml ? ` Rendeu ${nf(j.real_kml, 1)} km/L em ${nf(j.km_since_prev, 0)} km.` : j.cost_km ? ` Custou R$ ${nf(j.cost_km, 2)} por km (${nf(j.km_since_prev, 0)} km).` : " O consumo deste tanque aparece no próximo abastecimento.");
       setTimeout(() => loadFuel().catch(console.error), 1500);
     } catch (err) { $("#fillHint").textContent = "Não foi possível salvar: " + err.message; } finally { $("#fillSave").disabled = false; }
   });
@@ -351,8 +361,8 @@
   async function loadSignals() {
     const s = await api("/api/signals");
     for (const x of s) catalog[x.key] = x;
-    $("#sigRows").innerHTML = s.length ? s.map((x) => `<tr class="click" data-k="${esc(x.key)}"><td>${esc(x.name)} <span class="muted num" style="font-size:11px">${esc(x.key)}</span></td>
-      <td class="num">${nf(x.last, x.decimals)} ${esc(x.unit)}</td><td class="num">${nf(x.min24h, x.decimals)}</td><td class="num">${nf(x.avg24h, x.decimals)}</td><td class="num">${nf(x.max24h, x.decimals)}</td><td class="num">${x.n24h}</td></tr>`).join("")
+    $("#sigRows").innerHTML = s.length ? s.map((x) => `<tr class="click" data-k="${esc(x.key)}"><td class="head">${esc(x.name)} <span class="muted num" style="font-size:11px">${esc(x.key)}</span></td>
+      <td class="num" data-l="Atual"><b>${nf(x.last, x.decimals)} ${esc(x.unit)}</b></td><td class="num" data-l="Mín 24h">${nf(x.min24h, x.decimals)}</td><td class="num" data-l="Média 24h">${nf(x.avg24h, x.decimals)}</td><td class="num" data-l="Máx 24h">${nf(x.max24h, x.decimals)}</td><td class="num no-m" data-l="Leituras">${x.n24h}</td></tr>`).join("")
       : `<tr><td colspan="6"><div class="empty">Nenhum sinal gravado ainda.</div></td></tr>`;
   }
   async function showSignal(k) {
@@ -701,9 +711,14 @@
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });
     document.querySelectorAll("#tabs a").forEach((a) => a.dataset.v === view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+    const sec = !!document.querySelector(`#tabs a.sec[data-v="${view}"]`);
+    $("#moreBtn").classList.toggle("cur", sec); $("#tabs").classList.remove("open"); $("#moreBtn").setAttribute("aria-expanded", "false");
+    window.scrollTo(0, 0);
     LOAD[view]().catch((e) => console.error(view, e));
   }
   window.addEventListener("hashchange", route);
+  $("#moreBtn").addEventListener("click", (e) => { e.stopPropagation(); const o = $("#tabs").classList.toggle("open"); $("#moreBtn").setAttribute("aria-expanded", o); });
+  document.addEventListener("click", (e) => { if (!e.target.closest("#tabs")) { $("#tabs").classList.remove("open"); $("#moreBtn").setAttribute("aria-expanded", "false"); } });
   setInterval(() => { const v = (location.hash || "#vivo").slice(1); if (["vivo", "alertas", "viagens", "consumo"].includes(v)) LOAD[v]?.().catch(() => { }); }, 30000);
 
   // ------------------------------------------------------------ modo nuvem (painel online com a cópia dos dados)
@@ -717,7 +732,7 @@
       <b>Painel online</b> · ${on ? "Pi conectado agora (dados ao vivo)" : env.last_sync_ts ? "Pi offline · dados até " + dt(env.last_sync_ts) : "aguardando a primeira sincronização do Pi"}
       ${env.pending_cmds ? ` · ${env.pending_cmds} ação(ões) esperando o Pi` : ""}
       ${env.readonly ? '<span class="muted" style="margin-left:auto">somente visualização</span>' : '<a href="/logout" style="margin-left:auto">Sair</a>'}`;
-    const hide = ["#accGo", "#csvLink"].concat(env.readonly ? ["#fillBtn", "#annForm", "#aiRun"] : []);
+    const hide = ["#accGo", "#csvLink"].concat(env.readonly ? ["#annForm", "#aiRun"] : []);
     for (const id of hide) { const el = $(id); if (el) el.hidden = true; }
     const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
   }

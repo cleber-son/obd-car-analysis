@@ -13,21 +13,67 @@ from collections import deque
 from . import Alert
 
 
+class BinModel:
+    """Relação aprendida y = f(x) entre dois sinais redundantes, por faixas de 5 pp de x.
+
+    Uma reta ajustada com quase todas as amostras em marcha lenta extrapola mal (era a causa dos falsos
+    "sensores divergentes" e "não segue o comando" em aberturas grandes). Aqui cada faixa tem a sua média e a
+    comparação só acontece onde já houve aprendizado suficiente, interpolando entre faixas vizinhas.
+    """
+    W = 5.0
+    MIN_N = 12
+
+    def __init__(self, bins: dict | None = None):
+        self.bins: dict[int, list[float]] = {int(k): list(v) for k, v in (bins or {}).items()}   # faixa -> [n, média x, média y]
+
+    def learn(self, x: float, y: float) -> None:
+        b = self.bins.setdefault(int(x // self.W), [0, 0.0, 0.0])
+        b[0] = min(b[0] + 1, 400)                      # teto: continua acompanhando desgaste lento
+        b[1] += (x - b[1]) / b[0]
+        b[2] += (y - b[2]) / b[0]
+
+    def expected(self, x: float) -> float | None:
+        """y esperado para x, ou None se essa região ainda não foi aprendida."""
+        pts = sorted((b[1], b[2]) for b in self.bins.values() if b[0] >= self.MIN_N)
+        if len(pts) < 2:
+            return None
+        lo = [p for p in pts if p[0] <= x]
+        hi = [p for p in pts if p[0] >= x]
+        if not lo or not hi:                           # fora da faixa aprendida: aceita até meia faixa de extrapolação
+            edge = pts[0] if not lo else pts[-1]
+            if abs(x - edge[0]) > self.W / 2:
+                return None
+            a, b = (pts[0], pts[1]) if not lo else (pts[-2], pts[-1])
+        else:
+            a, b = lo[-1], hi[0]
+            if b[0] - a[0] > 4 * self.W:               # buraco grande entre faixas aprendidas: não inventa
+                return None
+        if b[0] == a[0]:
+            return a[1]
+        return a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0])
+
+    def ready(self) -> bool:
+        return sum(1 for b in self.bins.values() if b[0] >= self.MIN_N) >= 2
+
+    def state(self) -> dict:
+        return {str(k): [v[0], round(v[1], 3), round(v[2], 3)] for k, v in self.bins.items()}
+
+
 class ThrottleEngine:
-    LEARN_MIN = 300  # amostras em regime antes de ligar R1/R2
+    PAIRS = {  # regra: (x, y, título, código, tolerância base em pp, tolerância relativa)
+        "R1": ("tps_cmd", "tps", "Borboleta não segue o comando", None, 6.0, 0.06),
+        "R2": ("pedal_d", "pedal_e", "Sensores do pedal divergentes", "P2138", 4.0, 0.05),
+        "R2t": ("tps", "tps_b", "Sensores da borboleta A/B divergentes", "P2135", 4.0, 0.05),
+    }
 
     def __init__(self, state: dict | None = None):
         s = state or {}
         self.pedal_min = s.get("pedal_min", 100.0)
         self.pedal_max = s.get("pedal_max", 0.0)
-        self.off_n = s.get("off_n", 0)
-        self.off_mean = s.get("off_mean", 0.0)
-        # regressões lineares aprendidas entre sensores redundantes: n, sx, sy, sxx, sxy
-        self.regs = s.get("regs") or {"R2": s.get("reg", [0, 0.0, 0.0, 0.0, 0.0]), "R2t": [0, 0.0, 0.0, 0.0, 0.0]}
-        self.r_streak = {"R2": 0, "R2t": 0}
+        self.models = {r: BinModel((s.get("models") or {}).get(r)) for r in self.PAIRS}
+        self.r_streak = {r: 0 for r in self.PAIRS}
+        self.idle_ok = 0
         self.win: deque[dict] = deque(maxlen=40)
-        self.r1_streak = 0
-        self.r2_streak = 0
         self.idle_rpm: deque[float] = deque(maxlen=30)
         self.idle_std_hist: deque[float] = deque(maxlen=600)
         self.events: list[Alert] = []
@@ -35,8 +81,8 @@ class ThrottleEngine:
 
     # ---------- estado persistente ----------
     def state(self) -> dict:
-        return {"pedal_min": self.pedal_min, "pedal_max": self.pedal_max, "off_n": self.off_n,
-                "off_mean": self.off_mean, "regs": self.regs}
+        return {"pedal_min": self.pedal_min, "pedal_max": self.pedal_max,
+                "models": {r: m.state() for r, m in self.models.items()}}
 
     def pedal_norm(self, pedal: float | None) -> float | None:
         if pedal is None:
@@ -67,62 +113,63 @@ class ThrottleEngine:
         self.win.append(s)
         running = rpm is not None and rpm > 400
 
-        # R1 rastreio comando × posição (em regime: comando estável)
-        if running and tps is not None and cmd is not None and prev and prev.get("tps_cmd") is not None:
-            steady = abs(cmd - prev["tps_cmd"]) < 3
-            diff = cmd - tps
-            if steady:
-                if self.off_n < self.LEARN_MIN:
-                    self.off_n += 1
-                    self.off_mean += (diff - self.off_mean) / self.off_n
-                else:
-                    err = abs(diff - self.off_mean)
-                    if err > 5:
-                        self.r1_streak += 1
-                        if self.r1_streak >= 3:
-                            sev = "crit" if err > 10 and self.r1_streak >= 2 else "warn"
-                            out += self._emit("R1", sev, "Borboleta não segue o comando",
-                                              f"Comando {cmd:.1f}% × posição {tps:.1f}% (erro {err:.1f} pp)", ts, "tps", err)
-                    else:
-                        self.r1_streak = 0
-                        self.off_mean += (diff - self.off_mean) / 500
-
-        # R2 pedal D × E e R2t borboleta A × B (sensores redundantes; precursores de P2138 / P2135)
-        for rule, xk, yk, title, code in (("R2", "pedal_d", "pedal_e", "Sensores do pedal divergentes", "P2138"),
-                                          ("R2t", "tps", "tps_b", "Sensores da borboleta A/B divergentes", "P2135")):
+        # R1 comando × posição, R2 pedal D × E, R2t borboleta A × B: cada par comparado com a relação aprendida
+        # por faixas. Só em regime (os dois sinais parados em relação à leitura anterior): os PIDs de um mesmo ciclo
+        # são lidos com ~0,1–0,3 s de diferença, então em transição eles nunca batem.
+        for rule, (xk, yk, title, code, tol, rel) in self.PAIRS.items():
             x, y = s.get(xk), s.get(yk)
-            if x is None or y is None:
+            if x is None or y is None or not prev or prev.get(xk) is None or prev.get(yk) is None:
                 continue
-            n, sx, sy, sxx, sxy = self.regs[rule]
-            if n >= self.LEARN_MIN and (sxx - sx * sx / n) > 1e-6 and (sxx / n - (sx / n) ** 2) > 4:
-                a = (sxy - sx * sy / n) / (sxx - sx * sx / n)
-                b = (sy - a * sx) / n
-                res = abs(y - (a * x + b))
-                if res > 4:
-                    self.r_streak[rule] += 1
-                    if self.r_streak[rule] >= 2:
-                        out += self._emit(rule, "crit" if res > 8 else "warn", title,
-                                          f"{yk} {y:.1f}% esperado {a * x + b:.1f}% (desvio {res:.1f} pp) — precursor de {code}", ts, yk, res)
-                else:
-                    self.r_streak[rule] = 0
-            if n < 20000:
-                self.regs[rule] = [n + 1, sx + x, sy + y, sxx + x * x, sxy + x * y]
+            if rule == "R1" and not running:
+                continue
+            if abs(x - prev[xk]) > 2 or abs(y - prev[yk]) > 2:
+                self.r_streak[rule] = 0
+                continue
+            m = self.models[rule]
+            exp = m.expected(x)
+            if exp is None:
+                m.learn(x, y)
+                continue
+            res = abs(y - exp)
+            lim = tol + rel * x
+            if res > lim:
+                self.r_streak[rule] += 1
+                if self.r_streak[rule] >= 4:           # ~3 s seguidos fora da relação, em regime
+                    sev = "crit" if res > 2 * lim else "warn"
+                    what = f"Comando {x:.1f}% → posição {y:.1f}% (esperado {exp:.1f}%, desvio {res:.1f} pp)" if rule == "R1" else \
+                        f"{yk} {y:.1f}% esperado {exp:.1f}% (desvio {res:.1f} pp) — precursor de {code}"
+                    out += self._emit(rule, sev, title, what, ts, yk, res, 120)
+            else:
+                self.r_streak[rule] = 0
+                m.learn(x, y)
 
-        # R3 borboleta travada / modo de emergência
-        w = [x for x in list(self.win)[-10:] if x.get("tps") is not None and x.get("pedal_norm") is not None]
-        if running and len(w) >= 8:
-            pr = max(x["pedal_norm"] for x in w) - min(x["pedal_norm"] for x in w)
-            ts_std = statistics.pstdev([x["tps"] for x in w])
-            if pr > 20 and ts_std < 0.5:
+        # R3 borboleta travada / modo de emergência: pedal pisado de verdade (os DOIS sensores do pedal subiram) por
+        # ~3 s seguidos e nem o comando nem a posição saíram do lugar. Um toque rápido no pedal ou um pico de leitura
+        # em um sensor só não conta.
+        w = [x for x in list(self.win)[-6:] if x.get("tps") is not None and x.get("pedal_norm") is not None]
+        if running and len(w) == 6:
+            base, held = w[0], w[2:]
+            pe0 = base.get("pedal_e")
+            pressed = all(x["pedal_norm"] - base["pedal_norm"] > 20 for x in held) and base["pedal_norm"] < 10
+            both = pe0 is None or all(x.get("pedal_e") is not None and x["pedal_e"] - pe0 > 4 for x in held)
+            stuck = all(abs(x["tps"] - base["tps"]) < 1.5 for x in held)
+            if pressed and both and stuck:
+                cmd_moved = cmd is not None and base.get("tps_cmd") is not None and cmd - base["tps_cmd"] > 5
                 out += self._emit("R3", "crit", "Borboleta parada (possível modo de emergência)",
-                                  f"Pedal variou {pr:.0f} pp e a borboleta ficou fixa em ~{w[-1]['tps']:.1f}%", ts, "tps", w[-1]["tps"], 120)
+                                  f"Pedal pisado {held[-1]['pedal_norm']:.0f}% por ~3 s e a borboleta ficou em ~{w[-1]['tps']:.1f}% "
+                                  + ("(a ECU comandou abrir e ela não abriu)" if cmd_moved else "(a ECU não comandou abertura)"),
+                                  ts, "tps", w[-1]["tps"], 120)
         self.r3b = getattr(self, "r3b", 0) + 1 if (running and pn is not None and pn > 30 and s.get("tps_rel") is not None and s["tps_rel"] < 5) else 0
         if self.r3b >= 3:
             out += self._emit("R3b", "crit", "Pedal pressionado sem abrir a borboleta",
                               f"Pedal {pn:.0f}% e borboleta relativa {s['tps_rel']:.1f}%", ts, "tps_rel", s["tps_rel"], 120)
 
         # R4/R5 marcha lenta quente
-        idle = running and spd == 0 and (pn is None or pn < 2) and (ect or 0) >= 70 and rpm < 1500
+        # só conta depois de ~5 s com o pé fora do pedal e a rotação já de volta (a queda depois de uma acelerada
+        # não é marcha lenta irregular)
+        calm = running and spd == 0 and (pn is None or pn < 2) and (ect or 0) >= 70 and rpm < 1200
+        self.idle_ok = self.idle_ok + 1 if calm else 0
+        idle = self.idle_ok > 6
         if idle:
             self.idle_rpm.append(rpm)
             if len(self.idle_rpm) == 30:
@@ -165,17 +212,19 @@ class ThrottleEngine:
                     self.r6_pending = {"ts": ts, "sev": "info", "title": "Motor morreu (arrancada)",
                                        "detail": f"Rotação caiu de {max(hist):.0f} para {rpm:.0f} rpm"}
 
-        # R9 salto de sinal (vai e volta em 1 amostra, sem mudança de comando/pedal)
+        # R9 salto de sinal: UM sensor vai e volta em 1 leitura enquanto o seu par redundante fica parado.
+        # Se o par acompanha (pedal D e E juntos, borboleta A e B juntas), foi movimento de verdade: toque no pedal.
         if len(self.win) >= 3 and running:
             a, b, c = list(self.win)[-3:]
-            for k, ref in (("tps", "tps_cmd"), ("pedal_d", None)):
-                if all(x.get(k) is not None for x in (a, b, c)):
-                    jump = b[k] - a[k]
-                    back = c[k] - b[k]
-                    ref_ok = ref is None or (all(x.get(ref) is not None for x in (a, b)) and abs(b[ref] - a[ref]) < 3)
-                    if abs(jump) > 15 and abs(back + jump) < 4 and ref_ok:
-                        out += self._emit(f"R9:{k}", "warn", "Salto no sinal do sensor",
-                                          f"{k} saltou {jump:+.1f} pp e voltou (mau contato / sensor)", ts, k, jump, 30)
+            for k, twin, ref in (("tps", "tps_b", "tps_cmd"), ("pedal_d", "pedal_e", None), ("pedal_e", "pedal_d", None), ("tps_b", "tps", "tps_cmd")):
+                if not all(x.get(k) is not None and x.get(twin) is not None for x in (a, b, c)):
+                    continue                           # sem o sensor par não dá para distinguir de um toque rápido
+                jump, back = b[k] - a[k], c[k] - b[k]
+                twin_still = abs(b[twin] - a[twin]) < 3 and abs(c[twin] - b[twin]) < 3
+                ref_ok = ref is None or (all(x.get(ref) is not None for x in (a, b)) and abs(b[ref] - a[ref]) < 3)
+                if abs(jump) > 15 and abs(back + jump) < 4 and twin_still and ref_ok:
+                    out += self._emit(f"R9:{k}", "warn", "Salto no sinal do sensor",
+                                      f"{k} saltou {jump:+.1f} pp e voltou, com {twin} parado (mau contato / sensor)", ts, k, jump, 30)
         return out
 
     def idle_std_recent(self) -> float | None:

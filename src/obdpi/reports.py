@@ -88,7 +88,7 @@ def build(con: sqlite3.Connection, kind: str, offset: int = 0, day: str | None =
     for t in (cur, prev):
         t["kml"] = round(t["km"] / t["fuel"], 1) if t["fuel"] and t["fuel"] > 0.3 else None
     fills = [dict(r) for r in con.execute("SELECT * FROM fuel_fill WHERE ts>=? AND ts<? ORDER BY ts", (a, b))]
-    spent = sum((f["liters"] or 0) * (f["price_l"] or 0) for f in fills)
+    spent = sum(f.get("total") or ((f["liters"] or 0) * (f["price_l"] or 0)) for f in fills)
     price = con.execute("SELECT price_l FROM fuel_fill WHERE price_l IS NOT NULL ORDER BY ts DESC LIMIT 1").fetchone()
     est_cost = round(cur["fuel"] * price[0], 2) if price and cur["fuel"] else None
     real = [f["real_kml"] for f in fills if f["real_kml"]]

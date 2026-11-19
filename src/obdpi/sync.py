@@ -241,7 +241,7 @@ class Sync:
 
     # -------------------------------------------------------------- ações do painel online
     def commands(self) -> int:
-        cmds = self.cloud("/api/sync/commands").get("commands", [])
+        cmds = self.cloud("/api/sync/commands?cap=total").get("commands", [])
         done, results = [], {}
         for c in cmds:
             body = c.get("body") or "{}"
