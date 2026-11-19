@@ -196,17 +196,21 @@
   document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else connectStream(); });
 
   // ------------------------------------------------------------ borboleta
+  // [quando está tudo certo, quando houve ocorrência]
   const RULES = {
-    R1: "Borboleta segue o comando", R2: "Sensores do pedal coerentes", R2t: "Sensores da borboleta A/B coerentes", R3: "Sem travamento / modo de emergência", R3b: "Pedal abre a borboleta",
-    R4: "Marcha lenta estável (sem oscilar)", R5: "Marcha lenta regular", R5b: "Marcha lenta no alvo", R6: "Sem morrer em marcha lenta", R9: "Sinais sem saltos",
+    R1: ["Borboleta segue o comando", "Borboleta não seguiu o comando"], R2: ["Sensores do pedal concordam", "Sensores do pedal discordaram"],
+    R2t: ["Sensores da borboleta concordam", "Sensores da borboleta discordaram"], R3: ["Sem travamento / modo de emergência", "Borboleta não abriu com o pedal pisado"],
+    R3b: ["Pedal abre a borboleta", "Pedal pisado sem abrir a borboleta"], R4: ["Marcha lenta sem oscilar", "Marcha lenta oscilou"], R5: ["Marcha lenta regular", "Marcha lenta irregular"],
+    R5b: ["Marcha lenta na rotação certa", "Marcha lenta fora da rotação certa"], R6: ["Motor não morreu parado", "Motor morreu"], R9: ["Sinais sem saltos", "Salto no sinal de um sensor"],
   };
   async function loadThrottle(target = "both") {
     const t = await api("/api/throttle?days=30");
-    const counts = {}; for (const r of t.rules) { const k = r.rule; counts[k] ??= { n: 0, sev: "info", last: 0 }; counts[k].n += r.n; counts[k].last = Math.max(counts[k].last, r.last_ts); if ((r.severity === "crit") || (r.severity === "warn" && counts[k].sev !== "crit")) counts[k].sev = r.severity; }
+    const counts = {}; for (const r of t.rules) { const k = r.rule.split(":")[0]; counts[k] ??= { n: 0, sev: "info", last: 0 }; counts[k].n += r.n; counts[k].last = Math.max(counts[k].last, r.last_ts); if ((r.severity === "crit") || (r.severity === "warn" && counts[k].sev !== "crit")) counts[k].sev = r.severity; }
     const dtcRules = Object.keys(counts).filter((k) => /^P\d/.test(k));
     const li = (s, title, d, pill) => `<li style="--s:${SEV[s][0]}"><span class="ic">${SEV[s][2]}</span><div><div class="t">${esc(title)}</div><div class="d">${esc(d)}</div></div><span class="pill">${pill || SEV[s][1]}</span></li>`;
     const ruleItems = Object.entries(RULES).map(([k, name]) => { const c = counts[k];
-      return { k, html: li(c ? c.sev : "ok", name, c ? `${c.n}× em 30 dias · último ${dt(c.last)}` : "Nenhuma ocorrência em 30 dias") }; });
+      return { k, html: li(c ? c.sev : "ok", name[c ? 1 : 0], c ? `${c.n}× em 30 dias · último ${dt(c.last)}` : "Nenhuma ocorrência em 30 dias", c ? `${c.n}×` : "OK") }; })
+      .sort((a, b) => (counts[b.k] ? 1 : 0) - (counts[a.k] ? 1 : 0));
     const dtcItems = Object.keys(counts).filter((k) => /^P\d/.test(k)).map((k) => li("crit", `Código ${k}`, `${counts[k].n}× · último ${dt(counts[k].last)}`, "DTC"));
     const checks = ruleItems.map((x) => x.html).join("") + dtcItems.join("");
     const txt = t.score == null ? "Aprendendo: a nota aparece após a primeira viagem completa." : t.score >= 85 ? "Funcionando bem." : t.score >= 60 ? "Atenção: veja os itens em amarelo." : "Problema provável: veja os itens em vermelho.";
@@ -214,12 +218,11 @@
     $("#healthChecks").innerHTML = ruleItems.filter((x) => ["R1", "R3", "R4", "R6"].includes(x.k)).map((x) => x.html).join("") + dtcItems.join("");
     $("#tbRules").innerHTML = checks;
     if (target === "live") return;
-    lineChart($("#scoreChart"), [{ pts: t.trips.map((x) => [x.start_ts, x.tb_score]), c: "--ok", area: true }], { ymin: 0, ymax: 100 });
-    lineChart($("#idleChart"), [
-      { pts: t.idle.map((x) => [x.day, x.rpm]), c: "--rpm" },
-      { pts: t.idle.map((x) => [x.day, x.rpm_std * 10]), c: "--temp", w: 1.5 },
-      { pts: t.idle.map((x) => [x.day, x.tps * 100]), c: "--tps", w: 1.5 },
-    ], { ymin: 0, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
+    lineChart($("#scoreChart"), [{ pts: t.trips.filter((x) => x.tb_score != null).map((x, i) => [i + 1, x.tb_score]), c: "--ok", dots: true, r: 4 }], { ymin: 0, ymax: 100, xfmt: (x) => Number.isInteger(x) ? "#" + x : "" });
+    lineChart($("#idleChart"), [{ pts: t.idle.map((x) => [x.day + 43200e3, x.rpm_std]), c: "--temp", bars: true }],
+      { ymin: 0, ymax: Math.max(80, ...t.idle.map((x) => x.rpm_std || 0)) * 1.1, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
+    const li0 = t.idle[t.idle.length - 1];
+    $("#idleNow").innerHTML = li0 ? `<div><span class="lbl">Rotação parado</span><b>${nf(li0.rpm)} rpm</b></div><div><span class="lbl">Variação</span><b style="color:${li0.rpm_std < 40 ? "var(--ok)" : li0.rpm_std < 75 ? "var(--warn)" : "var(--bad)"}">±${nf(li0.rpm_std)} rpm</b></div><div><span class="lbl">Abertura parado</span><b>${nf(li0.tps, 1)} %</b></div>` : "";
     lineChart($("#scatter"), [
       { pts: t.scatter.map((p) => [p[0], p[2]]), c: "--speed", dots: true, r: 1.6, op: .5 },
       { pts: t.scatter.map((p) => [p[0], p[1]]), c: "--tps", dots: true, r: 2, op: .7 },
@@ -294,6 +297,20 @@
       if (r.ok && !j.queued) loadTrips().catch(console.error);
     });
     $("#tripDetail").scrollIntoView({ behavior: "smooth" });
+    // análise desta viagem: por sistema (regras do Pi) e, se houver, o laudo da IA
+    $("#tripDetail").insertAdjacentHTML("beforeend", `<div class="card"><h2>🩺 Como estava o carro nesta viagem</h2><div id="tripIns" style="margin-top:10px"><div class="empty">Carregando…</div></div></div>
+      <div class="card"><div class="row-head"><h2>🤖 Análise da IA desta viagem</h2><button class="btn" type="button" id="tripAiRun" hidden>Analisar esta viagem</button></div><div id="tripAi" class="md" style="margin-top:8px"></div></div>`);
+    api(`/api/report/period?kind=trip&trip=${id}`).then((r) => { $("#tripIns").innerHTML = insightHtml(r.insight); }).catch(() => { $("#tripIns").innerHTML = insightHtml(null); });
+    const showAi = async () => {
+      const a = await api(`/api/ai/analysis?trip=${id}`).catch(() => ({ status: "idle" }));
+      const box = $("#tripAi"), btn = $("#tripAiRun"); if (!box) return;
+      btn.hidden = !!CLOUD?.readonly || a.status === "running";
+      if (a.status === "running") { box.innerHTML = `<span class="spin"></span>Analisando… (${a.elapsed_s || 0} s)`; setTimeout(showAi, 4000); }
+      else if (a.status === "done") { box.innerHTML = `<div class="muted" style="font-size:12px">${dt(a.ts)} · ${esc(a.model || "")}</div>` + md(a.text); btn.textContent = "Analisar de novo"; }
+      else box.innerHTML = `<div class="empty">Ainda sem laudo da IA para esta viagem. Com a chave configurada (Mais → Sistema → Análise por IA), o Pi gera sozinho ao fim de cada viagem de mais de 5 min ou 1 km, quando tem internet.</div>`;
+    };
+    $("#tripAiRun").addEventListener("click", async () => { $("#tripAiRun").hidden = true; await fetch("/api/ai/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trip: id }) }); setTimeout(showAi, 800); });
+    showAi();
   }
   document.addEventListener("change", (e) => { if (e.target.id === "tripHidden") loadTrips().catch(console.error); });
   $("#tripRows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) showTrip(tr.dataset.id).catch(console.error); });
@@ -493,8 +510,36 @@
 
   // ------------------------------------------------------------ diagnóstico
   const AIRV = { entrada_de_ar: ["var(--bad)", "Assinatura de entrada falsa de ar"], suspeito: ["var(--warn)", "Suspeito: MAF baixo em marcha lenta"], maf_baixo: ["var(--warn)", "MAF lendo baixo em todas as cargas"], normal: ["var(--ok)", "Normal"] };
+  // ------------------------------------------------------------ análise por sistema (linguagem simples)
+  const ISTAT = { ok: ["var(--ok)", "Normal", "✓"], warn: ["var(--warn)", "Atenção", "!"], bad: ["var(--bad)", "Problema", "!"], unk: ["var(--muted)", "Sem dados", "?"] };
+  function insightHtml(ins) {
+    if (!ins || ins.erro || !ins.sistemas) return `<div class="empty">A análise deste período ainda não está disponível${ins?.erro ? " (" + esc(ins.erro) + ")" : ". Ela aparece depois que o Pi sincronizar."}</div>`;
+    const [vc, , vi] = ISTAT[ins.nivel] || ISTAT.unk;
+    const order = { bad: 0, warn: 1, ok: 2, unk: 3 };
+    const sys = ins.sistemas.slice().sort((a, b) => order[a.status] - order[b.status]);
+    const row = (s) => { const [c, l, i] = ISTAT[s.status] || ISTAT.unk;
+      const nums = (s.numeros || []).filter((n) => n.v != null);
+      return `<details class="alert ins"${s.status === "bad" ? " open" : ""} style="--s:${c}"><summary><span class="ic">${i}</span><div><div class="t">${s.icone} ${esc(s.nome)}</div><div class="d">${esc(s.resumo)}</div></div><span class="pill">${l}</span></summary>
+        <div class="adv">${s.fazer ? `<div><h4>O que fazer</h4>${esc(s.fazer)}</div>` : ""}
+        ${nums.length ? `<div><h4>Os números</h4><div class="nums">${nums.map((n) => `<div><span>${esc(n.l)}</span><b style="color:${n.ok === false ? "var(--bad)" : n.ok === true ? "var(--ok)" : "inherit"}">${typeof n.v === "number" ? nf(n.v, Number.isInteger(n.v) ? 0 : n.u === "V" ? 2 : 1) : esc(n.v)} ${esc(n.u || "")}</b></div>`).join("")}</div></div>` : ""}
+        ${!s.fazer && !nums.length ? `<div class="muted">Nada a fazer.</div>` : ""}</div></details>`; };
+    const hyp = (ins.hipoteses || []).length ? `<h3 class="lbl" style="margin-top:16px">Causa mais provável da mistura errada</h3><div class="list" style="margin-top:8px">${ins.hipoteses.map((h, k) => `<details class="alert ins"${k === 0 ? " open" : ""} style="--s:${k === 0 ? "var(--bad)" : "var(--muted)"}"><summary><span class="ic">${k + 1}</span><div><div class="t">${esc(h.nome)}</div>
+        <div class="hbar"><i style="width:${h.prob}%"></i></div></div><span class="pill">${h.prob}%</span></summary><div class="adv">
+        ${h.a_favor.length ? `<div><h4>O que aponta para isso</h4><ul>${h.a_favor.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+        ${h.contra.length ? `<div><h4>O que pesa contra</h4><ul>${h.contra.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+        <div><h4>Como confirmar</h4>${esc(h.confirmar)}</div></div></details>`).join("")}</div>` : "";
+    const ev = (ins.evolucao || []).length > 1 ? `<h3 class="lbl" style="margin-top:16px">Dia a dia</h3><div class="tbl" style="margin-top:8px"><table class="cards"><thead><tr><th>Dia</th><th>Ajuste parado</th><th>Ajuste rodando</th><th>Ar medido parado</th><th>Variação da lenta</th><th>Temp. máx</th></tr></thead><tbody>
+      ${ins.evolucao.slice().reverse().map((e) => `<tr><td class="head">${e.dia.slice(8)}/${e.dia.slice(5, 7)}</td><td class="num" data-l="Ajuste parado" style="color:${e.ajuste_parado == null ? "" : Math.abs(e.ajuste_parado) <= 12 ? "var(--ok)" : "var(--bad)"}">${e.ajuste_parado == null ? "—" : (e.ajuste_parado > 0 ? "+" : "") + nf(e.ajuste_parado, 0) + " %"}</td>
+        <td class="num" data-l="Ajuste rodando">${e.ajuste_rodando == null ? "—" : (e.ajuste_rodando > 0 ? "+" : "") + nf(e.ajuste_rodando, 0) + " %"}</td><td class="num" data-l="Ar medido parado">${e.ar_parado == null ? "—" : e.ar_parado + " %"}</td>
+        <td class="num" data-l="Variação lenta">${e.rpm_variacao == null ? "—" : "±" + e.rpm_variacao + " rpm"}</td><td class="num" data-l="Temp. máx">${e.temp_max == null ? "—" : nf(e.temp_max) + " °C"}</td></tr>`).join("")}</tbody></table></div>` : "";
+    return `<div class="banner" style="--s:${vc};margin-bottom:10px"><span class="ic">${vi}</span><b>${esc(ins.veredito)}</b>${ins.tendencia ? `<span class="muted">📈 ${esc(ins.tendencia)}</span>` : `<span class="muted">Do mais importante para o menos importante.</span>`}</div>
+      <div class="list">${sys.map(row).join("")}</div>${hyp}${ev}`;
+  }
+  const insBase = (ins) => ins?.base ? `${nf(ins.base.motor_ligado_h, 1)} h de motor ligado analisadas · ${ins.base.parado} leituras parado, ${ins.base.rodando} rodando · toque em um item para ver os números` : "";
+
   async function loadDiag() {
     const d = await api("/api/diagnostics?days=60");
+    $("#insBox").innerHTML = insightHtml(d.insight); if (d.insight?.base) $("#insBase").textContent = "Últimos 30 dias · " + insBase(d.insight);
     const tr = d.trips; const last = [...tr].reverse().find((t) => t.air_json);
     if (last) { const b = last.air_json.buckets; const [c, l] = AIRV[last.air_verdict] || ["var(--muted)", "Dados insuficientes"];
       $("#airBox").innerHTML = `<div class="alert" style="--s:${c}"><span class="ic">${last.air_verdict === "normal" ? "✓" : "!"}</span><div><div class="t">${l}</div><div class="d">${esc(last.air_json.txt)} · viagem de ${dt(last.start_ts)}</div></div><span></span></div>
@@ -658,6 +703,7 @@
     const recs = r.recommendations ?? await recsFromAlerts(r.alerts);
     $("#perRecs").innerHTML = recsHtml(recs);
     $("#planBox").innerHTML = planHtml(actionPlan(recs, r));
+    $("#perIns").innerHTML = insightHtml(r.insight); $("#perInsBase").textContent = insBase(r.insight);
     $("#planTitle").textContent = `🧭 Plano de ação geral · ${r.label}`;
     $("#perList").innerHTML = (r.alerts.slice(0, 5).map((a) => alertItem({ ...a, ts: a.last_ts, detail: `${a.n}× no período`, count: 1 })).join("") +
       r.tips.map((t) => `<div class="alert" style="--s:var(--ok)"><span class="ic">💡</span><div><div class="t">${esc(t)}</div></div><span></span></div>`).join("")) || `<div class="empty">Nada a destacar no período.</div>`;

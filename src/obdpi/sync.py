@@ -36,7 +36,7 @@ SPANS = [3600_000, 21600_000, 86400_000, 604800_000, 2592000_000]   # períodos 
 KEEP = {
     "/api/series": ["signals", "span"], "/api/alerts": ["days", "severity"], "/api/report": ["days"],
     "/api/report/period": ["kind", "offset", "day", "trip"], "/api/summary": ["days"], "/api/throttle": ["days"],
-    "/api/diagnostics": ["days"], "/api/trips": ["limit"], "/api/advice": ["rule"],
+    "/api/diagnostics": ["days"], "/api/trips": ["limit"], "/api/advice": ["rule"], "/api/ai/analysis": ["trip"],
 }
 
 
@@ -70,6 +70,7 @@ class Sync:
         self.last_live_hash = None
         self._conn = None
         self._last_meta = 0.0
+        self.last_ai = 0.0
         self.last_live_engine = False
 
     # -------------------------------------------------------------- HTTP
@@ -154,6 +155,8 @@ class Sync:
         for t in trips:
             self.gather(f"/api/trips/{t['id']}", docs)
             self.gather(f"/api/report/period?kind=trip&trip={t['id']}", docs)
+            if (t.get("duration_s") or 0) >= 300 or (t.get("distance_km") or 0) >= 1:
+                self.gather(f"/api/ai/analysis?trip={t['id']}", docs)      # laudo da IA desta viagem (ou {"status":"idle"})
             if t.get("start_ts") and t["start_ts"] > time.time() * 1000 - 120 * 86400_000:
                 days.add(time.strftime("%Y-%m-%d", time.localtime(t["start_ts"] / 1000)))
         for d in sorted(days):
@@ -280,6 +283,12 @@ class Sync:
                 if now - self.last_cmd >= CMD_EVERY:
                     self.last_cmd = now
                     self.commands()
+                if now - self.last_ai >= 120:           # com internet: laudo da IA da última viagem terminada, se faltar
+                    self.last_ai = now
+                    st, raw = self.local("/api/ai/auto", "POST", b"{}")
+                    if st == 200 and json.loads(raw or b"{}").get("started"):
+                        log.info("laudo da IA pedido para a viagem %s", json.loads(raw).get("trip"))
+                        self.last_full = now - FULL_EVERY + 150                    # sobe o laudo assim que ficar pronto
                 driving = bool(self.last_live_engine)
                 if now - self.last_full >= (FULL_EVERY * 2 if driving else FULL_EVERY):
                     t0 = time.monotonic()

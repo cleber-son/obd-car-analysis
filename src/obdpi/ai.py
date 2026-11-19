@@ -38,7 +38,32 @@ O que não dá para concluir e quais dados ajudariam (ex.: rodar mais, completar
 
 Regras: baseie-se nos números do JSON e diga quando algo é inferência. Considere as particularidades conhecidas
 listadas em "observacoes" (ex.: PIDs que este ECU informa de forma não confiável). Não invente leituras que não estão
-nos dados. Prefira causas comuns a raras."""
+nos dados. Prefira causas comuns a raras.
+
+O campo "analise_automatica_30_dias" é o resultado de regras fixas rodando no Pi (um veredito por sistema, causas
+prováveis com pontuação e a evolução dia a dia). Use como ponto de partida, confira contra os dados brutos e discorde
+quando os números não sustentarem. Se houver "laudo_anterior", diga logo depois do veredito o que mudou desde ele
+(melhorou, piorou, igual) em vez de repetir tudo."""
+
+SYSTEM_TRIP = """Você é um mecânico especialista em injeção eletrônica e diagnóstico OBD-II, com profundo conhecimento do
+Honda Civic 8ª geração 1.8 i-VTEC flex (motor R18A, câmbio manual, corpo de borboleta eletrônico). O dono acabou de
+desligar o carro. Você recebe em JSON os dados do Pi ligado ao OBD: o campo "foco" traz a viagem que acabou (resumo,
+retratos da partida e da chegada, alertas, análise automática do trecho e as viagens anteriores para comparar); o resto
+é o histórico recente do carro.
+
+Escreva um laudo curto desta viagem, em português do Brasil, simples para quem não é mecânico, em Markdown:
+## Veredito
+Uma linha começando com 🟢, 🟡 ou 🔴 e, no máximo, duas frases.
+## O que apareceu nesta viagem
+Só o que importa, com os números. Diga o que é novo e o que já vinha de antes. Se nada mudou, diga em uma linha.
+## Comparado com as viagens anteriores
+Melhorou, piorou ou igual (mistura, marcha lenta, temperatura, consumo, borboleta).
+## O que fazer
+Lista numerada e curta, ou "Nada a fazer" se for o caso.
+
+Regras: baseie-se nos números; diga quando for inferência; respeite "observacoes"; não invente leituras. Uma viagem
+curta ou quase toda parada não permite concluir sobre consumo: diga isso em vez de avaliar. Seja breve: o dono lê no
+celular."""
 
 
 SETTINGS = Path("/data/obd/ai.json")       # chaves salvas pelo painel (modo 600, fora do git)
@@ -111,7 +136,35 @@ def _stats(vals):
             "desvio": round(statistics.pstdev(v), 3) if len(v) > 1 else 0}
 
 
-def build_context(db_path: str, live: dict, days: int = 14) -> dict:
+def _trip_context(con, trip: int) -> dict | None:
+    """Tudo sobre uma viagem: resumo, retratos da partida/chegada, alertas dela e a análise automática só do trecho."""
+    from .analytics import insight
+    t = con.execute("SELECT * FROM trip WHERE id=?", (trip,)).fetchone()
+    if not t:
+        return None
+    t = dict(t)
+    a, b = t["start_ts"], (t["end_ts"] or int(time.time() * 1000)) + 1
+    for k in ("air_json", "eco_json", "start_snapshot", "end_snapshot"):
+        if t.get(k):
+            try:
+                t[k] = json.loads(t[k])
+            except ValueError:
+                pass
+    t["inicio"] = time.strftime("%d/%m/%Y %H:%M", time.localtime(a / 1000))
+    alerts = [dict(r) for r in con.execute("""SELECT severity, title, rule, detail, COALESCE(count,1) ocorrencias FROM alert
+                                               WHERE ts>=? AND ts<? ORDER BY ts""", (a, b))]
+    prev = [dict(r) for r in con.execute("""SELECT start_ts, duration_s, distance_km, idle_s, km_l, tb_score, eco_score, air_verdict, n_alerts, max_ect
+                                             FROM trip WHERE finalized=1 AND start_ts<? ORDER BY start_ts DESC LIMIT 5""", (a,))]
+    for p in prev:
+        p["inicio"] = time.strftime("%d/%m %H:%M", time.localtime(p.pop("start_ts") / 1000))
+    try:
+        ins = insight.build(con, a, b)
+    except Exception as e:
+        ins = {"erro": str(e)}
+    return {"viagem": t, "alertas_da_viagem": alerts, "analise_automatica_da_viagem": ins, "viagens_anteriores": prev}
+
+
+def build_context(db_path: str, live: dict, days: int = 14, trip: int | None = None) -> dict:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
     con.row_factory = sqlite3.Row
     now = int(time.time() * 1000)
@@ -172,7 +225,9 @@ def build_context(db_path: str, live: dict, days: int = 14) -> dict:
         "periodo_dias": days,
         "observacoes": [
             "O corpo de borboleta foi trocado recentemente; os códigos de falha foram apagados há poucos km.",
-            "O PID 06 (ajuste curto) fica cravado em +46,9 % em marcha lenta (limite de correção da ECU) e varia normalmente rodando (−14 a +47 %): é real, indica mistura pobre em marcha lenta.",
+            "O PID 06 (ajuste curto) é real neste ECU: +46,9 % é o limite de correção. Nos primeiros dias depois da troca do corpo de borboleta ele ficava cravado nesse limite em marcha lenta; veja em analise_automatica_30_dias.evolucao como isso mudou dia a dia.",
+            "A posição absoluta da borboleta (PID 11) vai de ~12 % (fechada) a ~78 % (toda aberta) quando o comando (PID 4C) vai de 0 a 100 %: escalas diferentes, não é defeito.",
+            "Alertas das regras R1, R2t, R3 e R9 anteriores a 20/11/2026 vinham de regras antigas com falsos positivos; trate-os com desconfiança.",
             "PID 07 (ajuste longo) não é suportado por este ECU.",
             "PID 34: os bytes A/B (λ) às vezes não batem com a corrente da sonda (bytes C/D); a corrente ≈ 0 mA indica mistura próxima do estequiométrico.",
             "Consumo é estimado pelo MAF + λ comandado, calibrado a cada tanque cheio.",
@@ -191,8 +246,26 @@ def build_context(db_path: str, live: dict, days: int = 14) -> dict:
         "testes_0_100": q("SELECT ts, t60, t80, t100, hz FROM accel_run ORDER BY ts DESC LIMIT 5"),
         "diario_manutencao": q("SELECT ts, kind, text FROM annotation ORDER BY ts DESC LIMIT 20"),
     }
+    from .analytics import insight
+    try:
+        out["analise_automatica_30_dias"] = insight.build(con, now - 30 * DAY, now + 1, live)
+    except Exception as e:
+        out["analise_automatica_30_dias"] = {"erro": str(e)}
+    prev = con.execute("SELECT ts, text FROM ai_analysis WHERE COALESCE(scope,'')='' ORDER BY id DESC LIMIT 1").fetchone() if _has_table(con) else None
+    if prev:
+        out["laudo_anterior"] = {"data": time.strftime("%d/%m/%Y %H:%M", time.localtime(prev["ts"] / 1000)), "texto": prev["text"][:6000]}
+    if trip is not None:
+        out["foco"] = _trip_context(con, trip)
     con.close()
     return out
+
+
+def _has_table(con) -> bool:
+    try:
+        return bool(con.execute("SELECT 1 FROM sqlite_master WHERE name='ai_analysis'").fetchone()) and \
+            any(r[1] == "scope" for r in con.execute("PRAGMA table_info(ai_analysis)"))
+    except sqlite3.Error:
+        return False
 
 
 # ---------------------------------------------------------------- execução em segundo plano
@@ -204,17 +277,22 @@ def job() -> dict:
     return dict(_job)
 
 
-def start(db_path: str, live: dict) -> dict:
+def configured() -> bool:
+    st = settings()
+    return bool(st.get("openai_key")) if st.get("provider") == "openai" else bool(st.get("anthropic_key") or _secrets_key())
+
+
+def start(db_path: str, live: dict, trip: int | None = None, auto: bool = False) -> dict:
     with _lock:
         if _job.get("status") == "running":
             return job()
         _job.clear()
-        _job.update(status="running", started=time.time())
-    threading.Thread(target=_run, args=(db_path, live), daemon=True).start()
+        _job.update(status="running", started=time.time(), trip=trip)
+    threading.Thread(target=_run, args=(db_path, live, trip, auto), daemon=True).start()
     return job()
 
 
-def _run_openai(db_path: str, payload: str) -> None:
+def _run_openai(db_path: str, payload: str, trip: int | None = None, auto: bool = False) -> None:
     import urllib.error
     import urllib.request
     st = settings()
@@ -222,8 +300,8 @@ def _run_openai(db_path: str, payload: str) -> None:
     if not key:
         raise RuntimeError("Chave da OpenAI não configurada (aba Sistema → Análise por IA).")
     body = json.dumps({"model": model, "messages": [
-        {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": "Dados do carro (JSON):\n" + payload + "\n\nFaça a análise completa: está tudo ok? O que merece atenção?"}]}).encode()
+        {"role": "system", "content": SYSTEM_TRIP if trip is not None else SYSTEM},
+        {"role": "user", "content": "Dados do carro (JSON):\n" + payload + _ask(trip)}]}).encode()
     req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=body, method="POST",
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     try:
@@ -236,38 +314,55 @@ def _run_openai(db_path: str, payload: str) -> None:
         raise RuntimeError("Sem internet no Pi (conecte no WiFi ou hotspot).") from None
     text = (j["choices"][0]["message"].get("content") or "").strip()
     usage = {"input": j.get("usage", {}).get("prompt_tokens"), "output": j.get("usage", {}).get("completion_tokens")}
-    _save(db_path, j.get("model", model), text, usage)
+    _save(db_path, j.get("model", model), text, usage, trip, auto)
 
 
-def _save(db_path: str, model: str, text: str, usage: dict) -> None:
-    rw = sqlite3.connect(db_path, timeout=30)
+def _ask(trip: int | None) -> str:
+    return "\n\nFaça o laudo da viagem em \"foco\"." if trip is not None else "\n\nFaça a análise completa: está tudo ok? O que merece atenção?"
+
+
+def _table(rw) -> None:
     rw.execute("CREATE TABLE IF NOT EXISTS ai_analysis (id INTEGER PRIMARY KEY, ts INTEGER, model TEXT, text TEXT, usage TEXT)")
-    rw.execute("INSERT INTO ai_analysis(ts, model, text, usage) VALUES (?,?,?,?)", (int(time.time() * 1000), model, text, json.dumps(usage)))
+    if not any(r[1] == "scope" for r in rw.execute("PRAGMA table_info(ai_analysis)")):
+        rw.execute("ALTER TABLE ai_analysis ADD COLUMN scope TEXT")      # '' = laudo geral; 'trip:<id>' = laudo de uma viagem
+
+
+def _save(db_path: str, model: str, text: str, usage: dict, trip: int | None = None, auto: bool = False) -> None:
+    rw = sqlite3.connect(db_path, timeout=30)
+    _table(rw)
+    rw.execute("INSERT INTO ai_analysis(ts, model, text, usage, scope) VALUES (?,?,?,?,?)",
+               (int(time.time() * 1000), model, text, json.dumps(usage), f"trip:{trip}" if trip is not None else ""))
+    if auto and trip is not None:                      # aviso no celular com o veredito (1ª linha depois de "## Veredito")
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
+        try:
+            rw.execute("INSERT INTO outbox(ts, title, body, priority, tags) VALUES (?,?,?,?,?)",
+                       (int(time.time() * 1000), "Análise da viagem", (lines[0] if lines else text)[:300].replace("**", ""), 3, "robot,car"))
+        except sqlite3.Error:
+            pass
     rw.commit()
     rw.close()
-    _job.update(status="done", text=text, model=model, usage=usage, finished=time.time())
+    _job.update(status="done", text=text, model=model, usage=usage, finished=time.time(), trip=trip)
 
 
-def _run(db_path: str, live: dict) -> None:
+def _run(db_path: str, live: dict, trip: int | None = None, auto: bool = False) -> None:
     try:
         if settings().get("provider") == "openai":
-            _run_openai(db_path, json.dumps(build_context(db_path, live), ensure_ascii=False, default=str))
+            _run_openai(db_path, json.dumps(build_context(db_path, live, trip=trip), ensure_ascii=False, default=str), trip, auto)
             return
         c = client()
         if c is None:
             raise RuntimeError("Chave da Anthropic não configurada (aba Sistema → Análise por IA).")
-        ctx = build_context(db_path, live)
+        ctx = build_context(db_path, live, trip=trip)
         payload = json.dumps(ctx, ensure_ascii=False, default=str)
         with c.beta.messages.stream(
             model=MODEL,
-            max_tokens=32000,
+            max_tokens=12000 if trip is not None else 32000,
             thinking={"type": "adaptive"},
-            output_config={"effort": "high"},
+            output_config={"effort": "medium" if trip is not None else "high"},   # laudo por viagem: curto e barato
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
-            system=SYSTEM,
-            messages=[{"role": "user", "content": "Dados do carro (JSON):\n" + payload +
-                       "\n\nFaça a análise completa: está tudo ok? O que merece atenção?"}],
+            system=SYSTEM_TRIP if trip is not None else SYSTEM,
+            messages=[{"role": "user", "content": "Dados do carro (JSON):\n" + payload + _ask(trip)}],
         ) as stream:
             msg = stream.get_final_message()
         if msg.stop_reason == "refusal":
@@ -275,7 +370,7 @@ def _run(db_path: str, live: dict) -> None:
         text = "".join(b.text for b in msg.content if b.type == "text").strip()
         if msg.stop_reason == "max_tokens":
             text += "\n\n_(resposta cortada por tamanho)_"
-        _save(db_path, msg.model, text, {"input": msg.usage.input_tokens, "output": msg.usage.output_tokens})
+        _save(db_path, msg.model, text, {"input": msg.usage.input_tokens, "output": msg.usage.output_tokens}, trip, auto)
     except anthropic.AuthenticationError:
         _job.update(status="error", error="Chave da API inválida.")
     except anthropic.RateLimitError:
@@ -288,11 +383,26 @@ def _run(db_path: str, live: dict) -> None:
         _job.update(status="error", error=str(e))
 
 
-def last(db_path: str) -> dict | None:
+def last(db_path: str, trip: int | None = None) -> dict | None:
+    """Último laudo geral ou, com trip, o laudo daquela viagem."""
     try:
         con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        r = con.execute("SELECT ts, model, text, usage FROM ai_analysis ORDER BY id DESC LIMIT 1").fetchone()
+        if not _has_table(con):                        # banco de antes do laudo por viagem
+            r = None if trip is not None else con.execute("SELECT ts, model, text, usage FROM ai_analysis ORDER BY id DESC LIMIT 1").fetchone()
+        else:
+            r = con.execute("SELECT ts, model, text, usage FROM ai_analysis WHERE COALESCE(scope,'')=? ORDER BY id DESC LIMIT 1",
+                            (f"trip:{trip}" if trip is not None else "",)).fetchone()
         con.close()
         return {"ts": r[0], "model": r[1], "text": r[2], "usage": json.loads(r[3])} if r else None
     except sqlite3.Error:
         return None
+
+
+def trips_done(db_path: str) -> set[int]:
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        out = {int(r[0].split(":")[1]) for r in con.execute("SELECT scope FROM ai_analysis WHERE scope LIKE 'trip:%'")} if _has_table(con) else set()
+        con.close()
+        return out
+    except (sqlite3.Error, ValueError):
+        return set()

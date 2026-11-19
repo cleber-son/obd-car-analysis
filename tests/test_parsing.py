@@ -60,6 +60,45 @@ def test_throttle_stall_and_hunt():
     assert any(a.rule == "R6" and a.severity == "crit" for a in out)
 
 
+
+def _drive(t, ts, cmd, pedal, n=6, tps=None, tps_b=None, pedal_e=None, rpm=2500, speed=50):
+    """n leituras em regime com a relação real do Civic: posição = 11,7 + 0,667 × comando."""
+    out = []
+    for _ in range(n):
+        ts += 600
+        pos = 11.7 + 0.667 * cmd if tps is None else tps
+        out += t.feed({"rpm": rpm, "speed": speed, "tps_cmd": cmd, "tps": pos, "tps_b": 2 * pos + 3 if tps_b is None else tps_b,
+                       "pedal_d": pedal, "pedal_e": pedal / 2 if pedal_e is None else pedal_e, "tps_rel": pos - 11.7}, ts, 90)
+    return ts, out
+
+
+def test_throttle_no_false_alarms_and_real_faults():
+    t = ThrottleEngine(); ts = 0; out = []
+    for _ in range(40):                                   # aprende: quase tudo em marcha lenta, pouco em abertura grande
+        ts, o = _drive(t, ts, 3, 20, n=20, rpm=780, speed=0); out += o
+        for cmd in (15, 30, 45, 60, 80, 100):
+            ts, o = _drive(t, ts, cmd, 20 + cmd * 0.6, n=3); out += o
+    ts, o = _drive(t, ts, 100, 80, n=10); out += o        # pé no fundo: comando 100 % = posição 78 %, é normal
+    assert not [a for a in out if a.rule in ("R1", "R2", "R2t", "R3", "R9:pedal_d", "R9:tps")], [(a.rule, a.detail) for a in out]
+    # toque rápido no pedal (os dois sensores sobem juntos numa leitura só): não é salto de sinal nem borboleta parada
+    ts, a = _drive(t, ts, 3, 20, n=3, rpm=780, speed=0); ts, b = _drive(t, ts, 3, 58, n=1, rpm=780, speed=0); ts, c = _drive(t, ts, 3, 20, n=3, rpm=780, speed=0)
+    assert not [x for x in a + b + c if x.rule.startswith(("R9", "R3"))], [(x.rule, x.detail) for x in a + b + c]
+    # pico só no sensor D do pedal, com o E parado: aí sim é salto de sinal
+    ts, _ = _drive(t, ts, 3, 20, n=3, rpm=780, speed=0); ts, _ = _drive(t, ts, 3, 58, n=1, pedal_e=10, rpm=780, speed=0); ts, c = _drive(t, ts, 3, 20, n=2, rpm=780, speed=0)
+    assert any(x.rule == "R9:pedal_d" for x in c), [(x.rule, x.detail) for x in c]
+    # borboleta presa: comando 60 % e posição parada em 30 %
+    ts, o = _drive(t, ts, 60, 56, n=8, tps=30.0)
+    assert any(x.rule == "R1" for x in o), [(x.rule, x.detail) for x in o]
+    # sensor B fugindo do A em abertura média
+    t2 = ThrottleEngine(t.state()); ts2 = ts + 600000
+    ts2, o = _drive(t2, ts2, 30, 38, n=8, tps_b=2 * (11.7 + 0.667 * 30) + 3 + 12)
+    assert any(x.rule == "R2t" for x in o), [(x.rule, x.detail) for x in o]
+    # pedal pisado de verdade por ~3 s e nada abre
+    t3 = ThrottleEngine(t.state()); ts3 = ts2 + 600000
+    ts3, _ = _drive(t3, ts3, 3, 20, n=3, rpm=780, speed=0); ts3, o = _drive(t3, ts3, 3, 70, n=6, rpm=780, speed=0)
+    assert any(x.rule == "R3" for x in o), [(x.rule, x.detail) for x in o]
+
+
 def test_keyoff_is_not_stall():
     t = ThrottleEngine(); ts = 0; out = []
     for rpm in [780] * 10 + [0]:           # chave desligada: depois disso a ECU some (sem mais leituras)

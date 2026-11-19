@@ -238,3 +238,12 @@ details.alert[open] > summary { border-bottom: 1px solid var(--line) }
 .subnav[hidden] { display: none }
 .subnav a { flex: 1 0 auto; text-align: center; text-decoration: none; color: var(--muted); font: 600 13px var(--f-body); padding: 10px 12px; border-radius: 10px; white-space: nowrap }
 .subnav a[aria-current="page"] { background: var(--panel2); color: var(--fg) }
+
+/* análise por sistema */
+details.ins > summary .d { font-size: 13px; line-height: 1.4; margin-top: 2px }
+.nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px }
+.nums div { display: flex; justify-content: space-between; gap: 10px; background: var(--panel); border-radius: 10px; padding: 8px 10px; font-size: 13px }
+.nums span { color: var(--muted) } .nums b { font-family: var(--f-mono); white-space: nowrap }
+.hbar { height: 6px; border-radius: 3px; background: var(--panel); margin-top: 6px; overflow: hidden } .hbar i { display: block; height: 100%; background: var(--s); border-radius: 3px }
+details.tech > summary { cursor: pointer; list-style: none } details.tech > summary::-webkit-details-marker { display: none }
+details.tech > summary::after { content: "Mostrar ▾"; float: right; font: 600 12px var(--f-body); color: var(--speed) } details.tech[open] > summary::after { content: "Ocultar ▴" }

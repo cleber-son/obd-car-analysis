@@ -191,3 +191,23 @@ Bug corrigido nos testes: cooldown das regras da borboleta suprimia o 1º alerta
 - Painel: botões Semanal · Mensal · Desde o dia · Viagem; seletor só com dias/viagens que existem (mostra km e ⚠️ alertas); ◀ ▶ navegam no histórico.
 - Nuvem: o Pi envia também um relatório por viagem e um "desde o dia" para cada dia com viagem nos últimos 120 dias (`KEEP` ganhou `day` e `trip`, igual no Worker e no Pi). Até o Pi sincronizar a versão nova, o painel online avisa que o relatório ainda não está disponível.
 - Teste novo: `test_report_since_and_trip`.
+
+## 2026-11-19 (noite) — Tempo real, celular, análise nova, tanque cheio pelo valor
+Pedidos: melhorar a análise dos dados; modo direção todo em tempo real; melhorar celular e UI/UX; coleta independente do painel; tanque cheio só com o valor pago; botão de limpar alertas; Alertas e Relatório dentro de Diagnóstico; diagnóstico mais fácil de entender; IA ao fim de cada viagem.
+
+- **Tempo real**
+  - Coletor: ajuste curto + avanço (06, 0E) e sonda (34) entram num rodízio dentro do ciclo rápido, só para a tela (a gravação continua na varredura de 5 s).
+  - Painel do Pi: SSE confere o estado 4×/s (antes 1×/s).
+  - Nuvem: fio próprio no `obd-sync` envia o estado a cada 1 s com o motor ligado (10 s desligado), numa conexão HTTPS mantida aberta, lendo `/run/obd/live.json` direto; o Worker virou SSE de verdade (confere o D1 1×/s, conexões de ~40 s).
+- **Coleta independente do painel**: já era (serviço `obd-collector` separado, o painel só lê). O envio ao vivo agora também não passa pelo painel.
+- **Regras da borboleta refeitas** (`analytics/throttle.py`): os dados reais mostraram comando 100 % = posição 78 % (posição ≈ 11,7 + 0,667 × comando). As regras antigas comparavam com diferença fixa ou com reta ajustada quase só em marcha lenta e geravam falsos críticos em aberturas grandes.
+  - R1/R2/R2t: modelo por faixas de 5 pp (`BinModel`), só em regime, só onde já aprendeu.
+  - R3: pedal pisado de verdade (os dois sensores) por ~3 s sem resposta.
+  - R9: salto só conta se o sensor par ficou parado (toque rápido no pedal não é salto).
+  - R4/R5: marcha lenta só depois de assentar.
+- **Análise por sistema** (`analytics/insight.py`): veredito em linguagem simples para mistura, marcha lenta, borboleta, temperatura, ar admitido, elétrica, códigos e consumo; causas prováveis da mistura errada com pontuação (entrada de ar × MAF × combustível), evolução dia a dia; mistura e marcha lenta valem pelo último dia com dados. Vai nos relatórios (semana, mês, desde o dia, viagem), no Diagnóstico e no contexto da IA.
+- **IA ao fim de cada viagem**: `obd-sync` chama `/api/ai/auto` a cada 2 min com internet; viagem ≥ 5 min ou ≥ 1 km, terminada há mais de 3 min, sem laudo → laudo curto (`SYSTEM_TRIP`, esforço médio) + aviso no celular. Precisa da chave em Sistema.
+- **Tanque cheio**: só o valor pago; combustível e preço por litro herdados do último; coluna `fuel_fill.total`; custo real por km; apagar abastecimento. No painel online (público) só esse formulário aceita envio: validado, no máximo 5 pendentes, 1 a cada 20 s; o Worker só entrega ao Pi já atualizado (`?cap=total`).
+- **Limpar alertas**: arquiva em `alert_archive` (não apaga); só no painel do Pi.
+- **Celular**: cabeçalho compacto, barra inferior com Ao vivo · Viagens · Consumo · Diagnóstico · Mais; Diagnóstico com Resumo · Alertas · Relatório · Borboleta; tabelas viram cartões; alerta do topo só se for recente de verdade (1 + contador); modo direção: faixa de alerta não ocupa mais a tela, quadros esmaecidos com o carro desligado.
+- Tanque do Civic 2008: fichas técnicas dão 50 L (mantido).

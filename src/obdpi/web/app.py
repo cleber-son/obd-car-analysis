@@ -274,7 +274,12 @@ def diagnostics(days: int = 60):
         for k in ("air_json", "eco_json"):
             t[k] = json.loads(t[k]) if t.get(k) else None
     lv = read_live()
-    return {"trips": tr, "readiness": lv.get("readiness")}
+    from ..analytics import insight
+    try:
+        ins = insight.build(con, now_ms() - 30 * DAY, now_ms() + 1, lv)
+    except Exception as e:
+        ins = {"erro": str(e)}
+    return {"trips": tr, "readiness": lv.get("readiness"), "insight": ins}
 
 
 # ---------------------------------------------------------------- relatórios
@@ -485,10 +490,11 @@ def fuel_fill(body: dict, x_token: str | None = Header(None)):
 
 # ---------------------------------------------------------------- análise por IA
 @app.post("/api/ai/analyze")
-def ai_analyze(x_token: str | None = Header(None)):
+def ai_analyze(body: dict | None = None, x_token: str | None = Header(None)):
     check_admin(x_token)
     from .. import ai
-    return ai.start(DB, read_live())
+    trip = (body or {}).get("trip")
+    return ai.start(DB, read_live(), trip=int(trip) if trip is not None else None)
 
 
 @app.get("/api/ai/settings")
@@ -512,15 +518,42 @@ def ai_settings_save(body: dict, x_token: str | None = Header(None)):
 
 
 @app.get("/api/ai/analysis")
-def ai_analysis():
+def ai_analysis(trip: int | None = None):
+    """Sem trip: laudo geral (ou o que está rodando). Com trip: o laudo daquela viagem, se existir."""
     from .. import ai
     j = ai.job()
-    if j.get("status") in ("idle", None):
+    if trip is not None:
+        if j.get("status") == "running" and j.get("trip") == trip:
+            return {"status": "running", "elapsed_s": int(time.time() - j["started"])}
+        last = ai.last(DB, trip)
+        return {"status": "done", **last} if last else {"status": "idle"}
+    if j.get("status") in ("idle", None) or j.get("trip") is not None:
         last = ai.last(DB)
         return {"status": "done", **last} if last else {"status": "idle"}
     if j.get("status") == "running":
         j["elapsed_s"] = int(time.time() - j["started"])
     return j
+
+
+@app.post("/api/ai/auto")
+def ai_auto(x_token: str | None = Header(None)):
+    """Chamado pelo obd-sync quando há internet (no fim da viagem ou na próxima vez que o Pi ligar): faz o laudo da
+    viagem mais recente que terminou e ainda não tem laudo.
+    Só viagens de verdade (≥ 5 min ou ≥ 1 km) e só se houver chave de IA configurada."""
+    from .. import ai
+    check_admin(x_token)
+    if not ai.configured() or ai.job().get("status") == "running":
+        return {"started": False}
+    lv = read_live()
+    con = ro()
+    done = ai.trips_done(DB)
+    # terminou há mais de 3 min (uma parada curta continua a mesma viagem) e há menos de 3 dias
+    for t in con.execute("""SELECT id FROM trip WHERE finalized=1 AND COALESCE(hidden,0)=0 AND end_ts > ? AND end_ts < ?
+                            AND (duration_s >= 300 OR distance_km >= 1) ORDER BY start_ts DESC LIMIT 3""", (now_ms() - 3 * DAY, now_ms() - 180_000)):
+        if t["id"] not in done:
+            ai.start(DB, lv, trip=t["id"], auto=True)
+            return {"started": True, "trip": t["id"]}
+    return {"started": False}
 
 
 # ---------------------------------------------------------------- teste 0–100

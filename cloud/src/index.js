@@ -11,7 +11,7 @@
 const KEEP = {
   "/api/series": ["signals", "span"], "/api/alerts": ["days", "severity"], "/api/report": ["days"],
   "/api/report/period": ["kind", "offset", "day", "trip"], "/api/summary": ["days"], "/api/throttle": ["days"],
-  "/api/diagnostics": ["days"], "/api/trips": ["limit"], "/api/advice": ["rule"],
+  "/api/diagnostics": ["days"], "/api/trips": ["limit"], "/api/advice": ["rule"], "/api/ai/analysis": ["trip"],
 };
 const QUEUEABLE = [/^\/api\/fuel\/fill$/, /^\/api\/annotations$/, /^\/api\/trips\/\d+$/, /^\/api\/ai\/analyze$/];
 const SESSION_DAYS = 30;

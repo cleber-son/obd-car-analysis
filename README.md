@@ -30,6 +30,8 @@ eletrônico**, que foi trocado recentemente.
 | 📊 **Painel web** | Ao vivo, Borboleta, Viagens (histórico de motor ligado), Consumo, Alertas/DTCs, Sensores (gráfico individual tempo real + histórico), Relatório + CSV, Sistema. Tema escuro. |
 | 🩺 **Diagnóstico** | **Entrada falsa de ar × MAF** (MAF medido ÷ ar esperado por carga, com veredito por viagem), **bateria na partida** (repouso e queda ao dar partida), **válvula termostática** (tempo até 80 °C), **autotestes da ECU** (monitores prontos/pendentes). |
 | 🌱 **Direção econômica** | Nota 0–100 por viagem (giro alto, arrancadas e freadas bruscas, tempo parado ligado, acima de 110 km/h, marcha alta forçando) com dicas. |
+| 🩺 **Análise por sistema** | "Como está o carro" em linguagem simples: mistura, marcha lenta, borboleta, temperatura, ar admitido, elétrica, códigos e consumo, com causas prováveis em % e evolução dia a dia. Roda no Pi, sem IA. |
+| 🤖 **IA por viagem** | Com a chave configurada, um laudo curto ao fim de cada viagem (≥ 5 min ou ≥ 1 km) e aviso no celular. |
 | 🗓 **Relatórios** | Semanal, mensal, **desde um dia escolhido** ou **de uma viagem só**, cada um com "O que fazer" e plano de ação geral. Semanal e mensal são **enviados no iPhone** toda segunda e todo dia 1º. |
 | 🤖 **Analisar dados (IA)** | Um botão envia o resumo de tudo (sensores por condição, viagens, diagnósticos, alertas, códigos) para o **Claude Opus 5.5** (ou OpenAI, à escolha), que devolve um laudo completo: veredito, pontos de atenção, sistema por sistema e o que fazer. Chave configurada no próprio painel. |
 | 📲 **Notificações** | Push no iPhone via [ntfy](https://ntfy.sh) para alertas e para avisar o IP sempre que o Pi entra em uma rede. |

@@ -83,9 +83,8 @@
       <div class="card" style="display:grid;gap:14px;align-content:start"><h2>Situação (30 dias)</h2><div class="ring" id="tbRing"></div><ul class="checks" id="tbRules"></ul></div>
     </div>
     <div class="grid2e">
-      <div class="card"><h2>Marcha lenta por dia</h2>
-        <div class="legend" style="margin:6px 0 10px"><span style="--c:var(--rpm)">Rotação média</span><span style="--c:var(--temp)">Oscilação (desvio)</span><span style="--c:var(--tps)">Abertura da borboleta %</span></div>
-        <svg class="chart" id="idleChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
+      <div class="card"><h2>Marcha lenta por dia</h2><div class="lbl" style="margin:4px 0 10px">Quanto a rotação varia parado, em rpm · bom: menos de 40</div>
+        <svg class="chart sm" id="idleChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg><div class="stats" id="idleNow" style="margin-top:10px"></div></div>
       <div class="card"><h2>Pedal × borboleta (última viagem)</h2><div class="lbl" style="margin:4px 0 10px">Cada ponto é uma leitura. Linha fina e contínua = saudável</div>
         <svg class="chart" id="scatter" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
     </div>
@@ -154,6 +153,10 @@
 
   <!-- DIAGNÓSTICO -->
   <section class="view" id="v-diagnostico" hidden>
+    <div class="card"><h2>🩺 Como está o carro</h2><div class="lbl" style="margin:4px 0 10px" id="insBase">Últimos 30 dias · toque em um item para ver os números</div>
+      <div id="insBox"><div class="empty">Carregando…</div></div></div>
+    <details class="card tech" id="techBox"><summary><h2 style="display:inline">🔧 Detalhes técnicos</h2><div class="lbl" style="margin-top:4px">Ar × MAF, autotestes da central, bateria na partida, aquecimento e direção econômica</div></summary>
+    <div class="view" style="margin-top:14px">
     <div class="grid2e">
       <div class="card"><h2>Entrada falsa de ar × MAF</h2><div class="lbl" style="margin:4px 0 10px">MAF medido ÷ ar que o motor deveria admitir, por carga (última viagem)</div>
         <div id="airBox"></div></div>
@@ -169,6 +172,7 @@
     <div class="card"><div class="row-head"><div><h2>Direção econômica</h2><div class="lbl" style="margin-top:4px">Nota por viagem: giro, arrancadas, freadas, tempo parado, velocidade</div></div><b class="num big2" id="ecoNow">—</b></div>
       <svg class="chart sm" id="ecoChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:8px"></svg>
       <div class="list" id="ecoTips" style="margin-top:10px"></div></div>
+    </div></details>
   </section>
 
   <!-- SENSORES -->
@@ -183,6 +187,7 @@
   <!-- RELATÓRIO -->
   <section class="view" id="v-relatorio" hidden>
     <div class="card"><h2 id="planTitle">🧭 Plano de ação geral</h2><div id="planBox" style="margin-top:10px"><div class="empty">Carregando…</div></div></div>
+    <div class="card"><h2>🩺 Como estava o carro neste período</h2><div class="lbl" style="margin:4px 0 10px" id="perInsBase"></div><div id="perIns"></div></div>
     <div class="card"><div class="row-head"><div><h2 id="perTitle">Relatório da semana</h2><div class="lbl" style="margin-top:4px"><span id="perSub">Comparado com o período anterior · enviado no iPhone toda segunda e todo dia 1º</span></div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap"><div class="theme" id="perKind"><button type="button" data-k="week" aria-pressed="true">Semanal</button><button type="button" data-k="month">Mensal</button><button type="button" data-k="since">Desde o dia</button><button type="button" data-k="trip">Viagem</button></div>
       <select id="perPick" aria-label="Escolher dia ou viagem" hidden></select>
@@ -216,6 +221,7 @@
     </div>
     <div class="grid2e">
       <div class="card"><h2>Análise por IA</h2><div class="lbl" style="margin:4px 0 10px">Chaves salvas só no Pi; o painel nunca mostra a chave inteira</div>
+        <div class="muted" style="font-size:13px;margin-bottom:10px">Com a chave salva, além do botão <b>Analisar dados</b>, o Pi gera sozinho um laudo curto ao fim de cada viagem (mais de 5 min ou 1 km) e avisa no celular.</div>
         <form id="aiForm" style="display:grid;gap:10px">
           <div class="seg small" role="radiogroup" aria-label="Provedor">
             <label><input type="radio" name="aiprov" value="anthropic" id="provA"><span>Claude (Anthropic)</span></label>
