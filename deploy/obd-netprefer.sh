@@ -8,18 +8,27 @@
 PROFILE="hotspot-iphone"
 SSID="Android 17"
 FAST_S=600
+LOG=/data/obd/net.log    # diário de rede no cartão: o journal fica só na memória e some quando o carro desliga
+log() {
+  logger -t obd-netprefer "$*"
+  echo "$(date '+%F %T') up=$(cut -d. -f1 /proc/uptime)s $*" >> "$LOG" 2>/dev/null
+  [ "$(wc -l < "$LOG" 2>/dev/null || echo 0)" -gt 400 ] && { tail -200 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; }
+}
 active() { nmcli -t -f NAME,DEVICE con show --active | awk -F: '$2=="wlan0"{print $1}'; }
+log "iniciado"
+LAST="?"
 while true; do
   CUR=$(active)
+  [ "$CUR" = "$LAST" ] || { log "rede atual: ${CUR:-nenhuma}"; LAST="$CUR"; }
   if [ "$CUR" != "$PROFILE" ]; then
     nmcli dev wifi rescan ifname wlan0 ssid "$SSID" >/dev/null 2>&1
     sleep 3
     if nmcli -t -f SSID dev wifi list ifname wlan0 --rescan no 2>/dev/null | grep -qxF "$SSID"; then
-      logger -t obd-netprefer "hotspot \"$SSID\" visível (conectado em: ${CUR:-nenhuma}) — trocando"
-      if nmcli -w 30 con up "$PROFILE" ifname wlan0 >/dev/null 2>&1; then
-        logger -t obd-netprefer "conectado no hotspot"
+      log "hotspot \"$SSID\" visível (conectado em: ${CUR:-nenhuma}) — trocando"
+      if ERR=$(nmcli -w 30 con up "$PROFILE" ifname wlan0 2>&1 >/dev/null); then
+        log "conectado no hotspot"
       else
-        logger -t obd-netprefer "falha ao conectar no hotspot; volta para a rede anterior e tenta de novo"
+        log "falha ao conectar no hotspot (${ERR:0:160}); volta para a rede anterior e tenta de novo"
         sleep 5
         [ -n "$(active)" ] || nmcli -w 30 dev connect wlan0 >/dev/null 2>&1    # não ficar sem rede nenhuma
       fi
