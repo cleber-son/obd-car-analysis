@@ -30,10 +30,10 @@ case "${1:-status}" in
     dpkg -s overlayroot >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq overlayroot
     # sem o overlayroot dentro do initramfs a marca no cmdline não faria nada: melhor avisar do que fingir
     INITRD=$(ls -t /boot/firmware/initramfs* /boot/initrd.img-"$(uname -r)" 2>/dev/null | head -1 || true)
-    if [ -z "$INITRD" ] || ! lsinitramfs "$INITRD" 2>/dev/null | grep -q overlayroot; then
+    if [ -z "$INITRD" ] || ! lsinitramfs "$INITRD" 2>/dev/null | grep overlayroot >/dev/null; then
       update-initramfs -u -k "$(uname -r)" >/dev/null 2>&1 || true
       INITRD=$(ls -t /boot/firmware/initramfs* /boot/initrd.img-"$(uname -r)" 2>/dev/null | head -1 || true)
-      if [ -z "$INITRD" ] || ! lsinitramfs "$INITRD" 2>/dev/null | grep -q overlayroot; then
+      if [ -z "$INITRD" ] || ! lsinitramfs "$INITRD" 2>/dev/null | grep overlayroot >/dev/null; then
         echo "ERRO: initramfs sem overlayroot ($INITRD); proteção não ativada"; exit 1
       fi
     fi
