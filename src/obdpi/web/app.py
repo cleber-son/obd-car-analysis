@@ -173,6 +173,8 @@ def trip(tid: int):
     t["cost"] = round(t["fuel_l"] * price[0], 2) if price and t.get("fuel_l") else None
     for k in ("air_json", "eco_json", "start_snapshot", "end_snapshot"):
         t[k] = json.loads(t[k]) if t.get(k) else None
+    from .. import extras
+    t["habits"] = extras.habits(con, t["start_ts"], end + 1)
     return t
 
 
@@ -401,7 +403,7 @@ def fuel_info():
         "avg_real_kml": round(sum(f["real_kml"] for f in real[-5:]) / len(real[-5:]), 1) if real else None,
         "cost_per_km": _cost_km(fills) or (round(prices[-1] / (real[-1]["real_kml"] if real else kml_est), 3) if prices and (real or kml_est) else None),
         "spent_30d": round(sum(f.get("total") or ((f["liters"] or 0) * (f["price_l"] or 0)) for f in fills if f["ts"] > now_ms() - 30 * DAY), 2),
-        "trips": trips, "tank_l": fm.TANK_L,
+        "trips": trips, "tank_l": fm.TANK_L, "kml_by_fuel": __import__("obdpi.extras", fromlist=["x"]).kml_by_fuel(fills),
     }
 
 
@@ -571,6 +573,77 @@ def accel_runs():
     return rows(ro().execute("SELECT * FROM accel_run ORDER BY ts DESC LIMIT 50"))
 
 
+# ---------------------------------------------------------------- impressão digital, antes/depois, manutenção
+@app.get("/api/fingerprint")
+def fingerprint(days: int = 7):
+    from .. import extras
+    return extras.fp_status(ro(), days)
+
+
+@app.post("/api/fingerprint")
+def fingerprint_save(body: dict | None = None, x_token: str | None = Header(None)):
+    """Grava a referência do motor saudável com as leituras dos últimos dias. {label?, days?}"""
+    from .. import extras
+    check_admin(x_token)
+    try:
+        return extras.fp_save(db.connect(DB), str((body or {}).get("label") or "Carro saudável"), int((body or {}).get("days") or 7))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/impact")
+def impact():
+    """Antes e depois de cada serviço anotado no diário de manutenção."""
+    from .. import extras
+    return extras.impact(ro())
+
+
+@app.get("/api/maintenance")
+def maintenance():
+    from .. import extras
+    return extras.maintenance(ro())
+
+
+@app.post("/api/maintenance/odometer")
+def maintenance_odo(body: dict, x_token: str | None = Header(None)):
+    from .. import extras
+    check_admin(x_token)
+    km = _num(body.get("km"), 1, 999999, "hodômetro")
+    if km is None:
+        raise HTTPException(400, "informe os km do hodômetro")
+    extras.maint_set_odometer(db.connect(DB), km, int(body.get("ts") or now_ms()))
+    return {"ok": True}
+
+
+@app.post("/api/maintenance/done")
+def maintenance_done(body: dict, x_token: str | None = Header(None)):
+    """Marca um item como feito: {key, odo?, ts?, note?, km_int?, month_int?}"""
+    from .. import extras
+    check_admin(x_token)
+    try:
+        extras.maint_done(db.connect(DB), str(body.get("key")), _num(body.get("odo"), 0, 999999, "hodômetro"), int(body["ts"]) if body.get("ts") else None,
+                          str(body.get("note") or "") or None, _num(body.get("km_int"), 500, 300000, "intervalo em km"), _num(body.get("month_int"), 1, 240, "intervalo em meses"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/ai/chat")
+def ai_chat():
+    from .. import ai
+    return ai.chat_list(DB)
+
+
+@app.post("/api/ai/ask")
+def ai_ask(body: dict, x_token: str | None = Header(None)):
+    from .. import ai
+    check_admin(x_token)
+    q = str(body.get("question") or "").strip()
+    if len(q) < 3:
+        raise HTTPException(400, "escreva a pergunta")
+    return ai.ask(DB, read_live(), q[:600])
+
+
 # ---------------------------------------------------------------- diário de manutenção
 @app.get("/api/annotations")
 def annotations():
@@ -643,6 +716,21 @@ def repairs():
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/oficina")
+def oficina():
+    return FileResponse(STATIC / "oficina.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/sw.js")
+def sw():
+    return FileResponse(STATIC / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/dirigir")

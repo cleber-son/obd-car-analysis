@@ -231,3 +231,19 @@ O Pi fica fixo no carro e perde a energia a cada desligada. Melhorias só de sof
 - WiFi sem economia de energia (menos atraso no ao vivo e no SSH).
 - Banco: backup diário conferido (7 cópias, antes semanal com 2); se o banco amanhecer corrompido, o coletor restaura o backup íntegro mais recente, guarda o arquivo ruim (com -wal/-shm, que antes ficavam para trás) e avisa no celular. Teste `test_corrupt_db_restores_backup`.
 - Página de ideias de expansão (GPS, 4G, CAN, acelerômetro, câmera…): https://claude.ai/artifact/Kv93ZhNmJaoJuetEdDFvSd
+
+## 2026-11-19/20 — As 12 ideias de software
+Pedido: implementar todas, sem perguntar. Código novo em `src/obdpi/extras.py` (Pi) e `web/static/extras.js` (telas).
+1. **Impressão digital do motor** (`fp_*`): média/desvio de MAF, MAP, ajuste curto, avanço, sonda e borboleta por faixa de 500 rpm × 20 % de carga, motor quente. Referência gravada pelo dono (painel do Pi); a comparação usa só leituras posteriores e marca o que mudou, com a pior faixa. Diagnóstico → Resumo.
+2. **Antes e depois dos consertos** (`impact`): cada serviço anotado compara 4 dias antes × 4 depois (ajuste parado/rodando, variação da lenta, ar medido, temperatura, consumo, alertas/h).
+3. **Página do mecânico**: `/oficina` (veredito, causas com evidências, sistemas, DTCs, alertas, evolução, serviços e testes).
+4. **Replay da viagem**: controle deslizante com todos os sensores no instante escolhido, reprodução e atalhos para 8 s antes de cada alerta.
+5. **Perguntas à IA**: `/api/ai/ask` + histórico (`ai_chat`), na janela "Analisar dados". Só no painel do Pi, com chave.
+6. **Gasolina × etanol**: usa o km/L medido em cada combustível (tanque a tanque); sem os dois, regra dos 70 %.
+7. **Plano de manutenção**: hodômetro informado + km do Pi; 10 itens com intervalos típicos; uso severo (muito tempo parado ou trajetos curtos) corta pela metade os itens sensíveis. Aba Mais → Manutenção.
+8. **Custo dos hábitos**: litros e R$ gastos parado e acima de 3.000 rpm, por viagem e por período.
+9. **Resumo da viagem no celular** ao fechar a viagem (km, km/L, R$, tempo parado, alertas).
+10. **Aplicativo**: manifest, ícones, atalhos (modo direção, tanque cheio, testes).
+11. **Sem internet**: service worker (rede primeiro, cópia guardada se cair). Não guarda o fluxo ao vivo.
+12. **Dados além do básico**: `obdctl probe-extra` (ajuste longo, modo 06 com falha de ignição por cilindro, quadro congelado, modo 09). Exploratório: precisa do carro ligado e o adaptador clone pode cortar respostas longas.
+- Painel online (público): além do tanque cheio, aceita anotar serviço, hodômetro e item de manutenção feito (campos validados, fila com teto); o Pi só recebe as ações de manutenção depois de atualizado (`cap=maint`).

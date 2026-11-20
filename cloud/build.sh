@@ -3,7 +3,11 @@
 set -e
 cd "$(dirname "$0")"
 rm -rf public && mkdir -p public/static
-cp ../src/obdpi/web/static/style.css ../src/obdpi/web/static/app.js ../src/obdpi/web/static/tests.js public/static/
-cp ../src/obdpi/web/static/index.html public/index.html
-cp ../src/obdpi/web/static/drive.html public/drive.html
+S=../src/obdpi/web/static
+cp $S/*.css $S/*.js $S/*.png public/static/
+cp $S/index.html public/index.html
+cp $S/drive.html public/drive.html
+cp $S/oficina.html public/oficina.html
+cp $S/sw.js public/sw.js                              # o service worker precisa ficar na raiz para valer para o site todo
+cp $S/manifest.webmanifest public/manifest.webmanifest
 echo "public/ pronto"

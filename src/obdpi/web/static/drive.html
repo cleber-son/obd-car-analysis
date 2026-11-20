@@ -9,6 +9,8 @@
 <meta name="apple-mobile-web-app-title" content="Civic Dirigir">
 <meta name="theme-color" content="#05070a">
 <title>Civic Dirigir</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
 <style>
 /* Painel de direção — iPhone 17 Pro Max (440×956 pt), retrato e paisagem. Fundo preto (OLED, não ofusca à noite). */
 :root {
@@ -314,6 +316,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   connect();
   if (location.hash === "#acc") { acc.hidden = false; post("arm"); }
   document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else { connect(); lock(); } });
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { });
   // manter a tela acesa (quando o navegador permitir)
   let wl = null;
   async function lock() { try { if ("wakeLock" in navigator && !wl) { wl = await navigator.wakeLock.request("screen"); wl.addEventListener("release", () => { wl = null; }); } } catch { } }

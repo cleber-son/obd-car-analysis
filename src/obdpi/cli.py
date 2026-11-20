@@ -3,6 +3,8 @@
   obdctl scan              procura adaptadores OBD no Bluetooth
   obdctl pair MAC          pareia e confia no adaptador
   obdctl probe [--tcp]     conecta, lista PIDs suportados, lê todos uma vez e mede a taxa
+  obdctl probe-extra       (coletor parado) tenta ler o que a central guarda além do básico: ajuste longo, autotestes
+                           detalhados (modo 06, falha de ignição por cilindro), quadro congelado e identificação
   obdctl status            mostra /run/obd/live.json resumido
   obdctl test-push         envia notificação de teste ao iPhone
 """
@@ -70,6 +72,60 @@ def probe(cfg, tcp: bool):
     t.close()
 
 
+def _open(cfg):
+    a = cfg["adapter"]
+    st = config.State(cfg["storage"]["state_path"])
+    if a["transport"] == "tcp":
+        t = TcpTransport(a["tcp_host"], a["tcp_port"])
+    else:
+        mac = a["mac"] or st.get("adapter_mac")
+        if not mac:
+            sys.exit("Adaptador ainda não pareado: rode 'obdctl probe' primeiro.")
+        t = RfcommTransport(mac, a["rfcomm_channel"])
+    t.open()
+    e = ELM327(t, "auto")
+    e.init()
+    return t, e
+
+
+def probe_extra(cfg, out_path: str = "/data/obd/probe-extra.txt"):
+    """Sondagem exploratória (só leitura) do que a central responde além do modo 01 básico. Ignição ligada e coletor
+    parado (sudo systemctl stop obd-collector). O adaptador clone só devolve o 1º quadro de respostas longas: o que
+    aparecer cortado aqui pede um adaptador melhor ou leitura direta da rede CAN."""
+    t, e = _open(cfg)
+    lines = [f"# probe-extra {time.strftime('%Y-%m-%d %H:%M:%S')} · ELM {e.version} · {e.protocol_desc}"]
+
+    def ask(label: str, cmd: str, timeout: float = 3.0):
+        try:
+            r = e.cmd(cmd, timeout=timeout)
+        except Exception as ex:                         # NO DATA, erro do adaptador etc.: registra e segue
+            r = [f"<{type(ex).__name__}: {ex}>"]
+        lines.append(f"{cmd:10s} {label:44s} {' | '.join(r)}")
+        print(lines[-1])
+
+    for pid, name in ((0x07, "ajuste longo banco 1"), (0x08, "ajuste curto banco 2"), (0x09, "ajuste longo banco 2"), (0x14, "sonda O2 B1S1 (tensão/ajuste)"),
+                      (0x24, "sonda larga B1S1 (lambda/tensão)"), (0x2E, "purga EVAP"), (0x3C, "temperatura do catalisador B1S1"), (0x43, "carga absoluta"),
+                      (0x46, "temperatura ambiente"), (0x5C, "temperatura do óleo"), (0x5E, "consumo instantâneo")):
+        ask(name, f"01{pid:02X}")
+    ask("quadro congelado: DTC que o gerou", "020200")
+    for pid, name in ((0x04, "carga"), (0x05, "temperatura do motor"), (0x06, "ajuste curto"), (0x0B, "MAP"), (0x0C, "rotação"), (0x0D, "velocidade")):
+        ask(f"quadro congelado: {name}", f"02{pid:02X}00")
+    for mid in (0x00, 0x20, 0x40, 0x60, 0x80, 0xA0):
+        ask(f"modo 06: monitores suportados a partir de {mid:02X}", f"06{mid:02X}")
+    for mid, name in ((0x01, "sonda B1S1"), (0x02, "sonda B1S2"), (0x21, "catalisador B1"), (0x31, "EGR/VVT"), (0x39, "EVAP (tampa)"), (0x3B, "EVAP (0,040\")"), (0x3C, "EVAP (0,020\")"),
+                      (0xA1, "falha de ignição geral"), (0xA2, "falha de ignição cilindro 1"), (0xA3, "falha de ignição cilindro 2"), (0xA4, "falha de ignição cilindro 3"), (0xA5, "falha de ignição cilindro 4")):
+        ask(f"modo 06: {name}", f"06{mid:02X}", 4.0)
+    for pid, name in ((0x00, "itens de informação suportados"), (0x02, "VIN"), (0x04, "identificação da calibração"), (0x06, "CVN"), (0x08, "contadores de uso dos monitores"), (0x0A, "nome da central")):
+        ask(f"modo 09: {name}", f"09{pid:02X}", 4.0)
+    ask("códigos permanentes (modo 0A)", "0A")
+    t.close()
+    try:
+        open(out_path, "w").write("\n".join(lines) + "\n")
+        print(f"\nSalvo em {out_path}")
+    except OSError as ex:
+        print(f"\n(não consegui salvar em {out_path}: {ex})")
+
+
 def main():
     cfg = config.load()
     args = sys.argv[1:] or ["help"]
@@ -80,6 +136,8 @@ def main():
         print("OK" if bt.pair(args[1]) else "Falhou (veja journalctl -u obd-btagent)")
     elif args[0] == "probe":
         probe(cfg, "--tcp" in args)
+    elif args[0] == "probe-extra":
+        probe_extra(cfg)
     elif args[0] == "status":
         try:
             d = json.load(open("/run/obd/live.json"))

@@ -383,6 +383,72 @@ def _run(db_path: str, live: dict, trip: int | None = None, auto: bool = False) 
         _job.update(status="error", error=str(e))
 
 
+# ---------------------------------------------------------------- perguntas do dono sobre os dados
+SYSTEM_ASK = """Você é um mecânico especialista em injeção eletrônica e no Honda Civic 8ª geração 1.8 flex (R18A, manual).
+O dono do carro faz uma pergunta sobre o carro dele. Você recebe em JSON tudo que o Raspberry Pi ligado ao OBD registrou.
+Responda em português do Brasil, direto, em linguagem simples, com os números dos dados que sustentam a resposta.
+Se os dados não permitem responder, diga o que falta. Não invente leituras. Respeite o campo "observacoes". Seja breve:
+ele lê no celular. Use Markdown simples (negrito e listas curtas), sem títulos."""
+
+
+def _chat_table(rw) -> None:
+    rw.execute("CREATE TABLE IF NOT EXISTS ai_chat (id INTEGER PRIMARY KEY, ts INTEGER, question TEXT, answer TEXT, model TEXT, status TEXT)")
+
+
+def chat_list(db_path: str) -> list[dict]:
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        out = [dict(r) for r in con.execute("SELECT * FROM ai_chat ORDER BY id DESC LIMIT 12")]
+        con.close()
+        return out
+    except sqlite3.Error:
+        return []
+
+
+def ask(db_path: str, live: dict, question: str) -> dict:
+    if not configured():
+        return {"ok": False, "error": "Chave de IA não configurada (Mais → Sistema → Análise por IA)."}
+    rw = sqlite3.connect(db_path, timeout=30)
+    _chat_table(rw)
+    cid = rw.execute("INSERT INTO ai_chat(ts, question, status) VALUES (?,?,?)", (int(time.time() * 1000), question, "running")).lastrowid
+    rw.commit()
+    rw.close()
+    threading.Thread(target=_ask_run, args=(db_path, live, question, cid), daemon=True).start()
+    return {"ok": True, "id": cid}
+
+
+def _ask_run(db_path: str, live: dict, question: str, cid: int) -> None:
+    def done(answer: str, model: str, status: str) -> None:
+        rw = sqlite3.connect(db_path, timeout=30)
+        rw.execute("UPDATE ai_chat SET answer=?, model=?, status=? WHERE id=?", (answer, model, status, cid))
+        rw.commit()
+        rw.close()
+    try:
+        payload = json.dumps(build_context(db_path, live), ensure_ascii=False, default=str)
+        user = "Dados do carro (JSON):\n" + payload + "\n\nPergunta do dono: " + question
+        st = settings()
+        if st.get("provider") == "openai":
+            import urllib.request
+            model = st.get("openai_model") or OPENAI_MODEL
+            req = urllib.request.Request("https://api.openai.com/v1/chat/completions", method="POST",
+                                         data=json.dumps({"model": model, "messages": [{"role": "system", "content": SYSTEM_ASK}, {"role": "user", "content": user}]}).encode(),
+                                         headers={"Authorization": f"Bearer {st.get('openai_key')}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=300) as r:
+                j = json.loads(r.read())
+            return done((j["choices"][0]["message"].get("content") or "").strip(), j.get("model", model), "done")
+        c = client()
+        with c.beta.messages.stream(model=MODEL, max_tokens=6000, thinking={"type": "adaptive"}, output_config={"effort": "medium"},
+                                    betas=["server-side-fallback-2026-07-01"], fallbacks="default", system=SYSTEM_ASK,
+                                    messages=[{"role": "user", "content": user}]) as stream:
+            msg = stream.get_final_message()
+        if msg.stop_reason == "refusal":
+            return done("O modelo não respondeu a esta pergunta.", msg.model, "error")
+        done("".join(b.text for b in msg.content if b.type == "text").strip(), msg.model, "done")
+    except Exception as e:
+        done(f"Não consegui responder: {e}", "", "error")
+
+
 def last(db_path: str, trip: int | None = None) -> dict | None:
     """Último laudo geral ou, com trip, o laudo daquela viagem."""
     try:

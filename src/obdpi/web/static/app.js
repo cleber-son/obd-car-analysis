@@ -310,6 +310,7 @@
       if (r.ok && !j.queued) loadTrips().catch(console.error);
     });
     $("#tripDetail").scrollIntoView({ behavior: "smooth" });
+    window.obdExtras?.trip(t);
     // análise desta viagem: por sistema (regras do Pi) e, se houver, o laudo da IA
     $("#tripDetail").insertAdjacentHTML("beforeend", `<div class="card"><h2>🩺 Como estava o carro nesta viagem</h2><div id="tripIns" style="margin-top:10px"><div class="empty">Carregando…</div></div></div>
       <div class="card"><div class="row-head"><h2>🤖 Análise da IA desta viagem</h2><button class="btn" type="button" id="tripAiRun" hidden>Analisar esta viagem</button></div><div id="tripAi" class="md" style="margin-top:8px"></div></div>`);
@@ -345,6 +346,7 @@
       <div><span class="lbl">No tanque</span><b style="font-size:15px">${mixTxt}</b></div>
       <div><span class="lbl">Restante estimado</span><b>${last?.full ? nf(Math.max(0, f.tank_l - sf.liters_est), 0) + " L" : "—"}</b></div>
       <div><span class="lbl">Calibração</span><b>${nf(f.calib, 2)}×</b></div>`;
+    window.obdExtras?.fuel(f);
     const real = f.fills.filter((x) => x.real_kml).reverse();
     lineChart($("#fuelFillChart"), [{ pts: real.map((x) => [x.ts, x.real_kml]), c: "--ok", bars: true }], { ymin: 0, xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) });
     lineChart($("#fuelTripChart"), [{ pts: f.trips.slice().reverse().map((x) => [x.start_ts, x.km_l]), c: "--speed", dots: true, r: 4 }], { ymin: 0 });
@@ -574,6 +576,7 @@
 
   async function loadDiag() {
     const d = await api("/api/diagnostics?days=60");
+    window.obdExtras?.diag();
     $("#insBox").innerHTML = insightHtml(d.insight); if (d.insight?.base) $("#insBase").textContent = "Últimos 30 dias · " + insBase(d.insight);
     const tr = d.trips; const last = [...tr].reverse().find((t) => t.air_json);
     if (last) { const b = last.air_json.buckets; const [c, l] = AIRV[last.air_verdict] || ["var(--muted)", "Dados insuficientes"];
@@ -738,6 +741,7 @@
     const recs = r.recommendations ?? await recsFromAlerts(r.alerts);
     $("#perRecs").innerHTML = recsHtml(recs);
     $("#planBox").innerHTML = planHtml(actionPlan(recs, r));
+    window.obdExtras?.report(r);
     $("#perIns").innerHTML = insightHtml(r.insight); $("#perInsBase").textContent = insBase(r.insight);
     $("#planTitle").textContent = `🧭 Plano de ação geral · ${r.label}`;
     $("#perList").innerHTML = (r.alerts.slice(0, 5).map((a) => alertItem({ ...a, ts: a.last_ts, detail: `${a.n}× no período`, count: 1 })).join("") +
@@ -781,7 +785,7 @@
     if (j.status === "done" && j.text) { $("#aiSub").textContent = `${j.ts ? dt(j.ts) : "agora"} · ${j.model || ""}`; $("#aiBody").innerHTML = md(j.text); return; }
     $("#aiSub").textContent = ""; $("#aiBody").innerHTML = CLOUD?.readonly ? `<div class="empty">Nenhuma análise ainda. Ela é pedida no painel do Pi e aparece aqui depois da sincronização.</div>` : `<div class="empty">Nenhuma análise ainda. Toque em <b>Analisar agora</b>: o Pi envia o resumo dos dados para o Claude (precisa de internet).</div>`;
   }
-  $("#aiBtn").addEventListener("click", () => { $("#aiModal").hidden = false; aiPoll(); });
+  $("#aiBtn").addEventListener("click", () => { $("#aiModal").hidden = false; aiPoll(); window.obdExtras?.chat(); });
   $("#aiClose").addEventListener("click", () => { $("#aiModal").hidden = true; clearTimeout(aiTimer); });
   $("#aiModal").addEventListener("click", (e) => { if (e.target.id === "aiModal") { $("#aiModal").hidden = true; clearTimeout(aiTimer); } });
   $("#aiRun").addEventListener("click", async () => { $("#aiRun").disabled = true; const r = await fetch("/api/ai/analyze", { method: "POST" }); const j = await r.json().catch(() => ({}));
@@ -794,7 +798,8 @@
   setTheme(document.documentElement.dataset.theme || "dark");
 
   // ------------------------------------------------------------ roteamento
-  const LOAD = { testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs()]) };
+  window.OBD = { api, esc, nf, dt, tm, dur, md, lineChart, cloud: () => CLOUD, live: () => LIVE_D };
+  const LOAD = { manutencao: async () => window.obdExtras?.maint(), testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs()]) };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });
@@ -824,7 +829,7 @@
       <b>Painel online</b> · ${on ? "Pi conectado agora (dados ao vivo)" : env.last_sync_ts ? "Pi offline · dados até " + dt(env.last_sync_ts) : "aguardando a primeira sincronização do Pi"}
       ${env.pending_cmds ? ` · ${env.pending_cmds} ação(ões) esperando o Pi` : ""}
       ${env.readonly ? '<span class="muted" style="margin-left:auto">somente visualização</span>' : '<a href="/logout" style="margin-left:auto">Sair</a>'}`;
-    const hide = ["#accGo", "#csvLink"].concat(env.readonly ? ["#annForm", "#aiRun", "#alertClear"] : []);
+    const hide = ["#accGo", "#csvLink"].concat(env.readonly ? ["#annForm", "#aiRun", "#alertClear", "#askForm", "#fpSave"] : []);
     for (const id of hide) { const el = $(id); if (el) el.hidden = true; }
     const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
   }

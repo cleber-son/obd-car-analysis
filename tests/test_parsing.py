@@ -153,6 +153,61 @@ def test_corrupt_db_restores_backup():
     assert any("corrompido" in f for f in os.listdir(d))
 
 
+
+def _extras_db():
+    """Banco de exemplo: um dia com vazamento, o conserto anotado, um dia saudável."""
+    import random
+    import tempfile
+    import time
+    from obdpi import db
+    con = db.init(tempfile.mkdtemp() + "/x.db")
+    now, D = int(time.time() * 1000), 86400000
+    ids = {}
+
+    def sig(k):
+        if k not in ids:
+            ids[k] = con.execute("INSERT INTO signal(key,name,unit) VALUES(?,?,?)", (k, k, "")).lastrowid
+        return ids[k]
+
+    def day(t0, stft_idle, maf_idle):
+        random.seed(3)
+        for i in range(400):
+            ts = t0 + i * 5000
+            v = (dict(rpm=770 + random.gauss(0, 20), speed=0, ect=92, iat=50, load=25, maf=maf_idle, map=30, stft1=stft_idle + random.gauss(0, 1), o2c1_lambda=1.0, lambda_cmd=0.99, tps_cmd=1.5, tps=12.5, timing=8)
+                 if i < 200 else dict(rpm=2600, speed=60, ect=92, iat=40, load=55, maf=22, map=70, stft1=4 + random.gauss(0, 2), o2c1_lambda=1.0, lambda_cmd=0.99, tps_cmd=25, tps=28, timing=25))
+            con.executemany("INSERT INTO sample(signal_id, ts, value) VALUES (?,?,?)", [(sig(k), ts, x) for k, x in v.items()])
+            con.execute("INSERT OR REPLACE INTO fast_sample(ts, trip_id, rpm, speed, fuel_lh) VALUES (?,?,?,?,?)", (ts, 1, v["rpm"], v["speed"], 0.9 if i < 200 else 6.0))
+    day(now - 6 * D, 45, 1.4)
+    con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)", (now - 5 * D, "manutencao", "Junta do corpo de borboleta"))
+    day(now - 4 * D, 6, 3.4)
+    con.commit()
+    return con, now, D, day
+
+
+def test_impact_fingerprint_maintenance_habits():
+    import json
+    from obdpi import extras
+    con, now, D, day = _extras_db()
+    imp = extras.impact(con)[0]
+    assert imp["nivel"] == "ok" and any(i["nome"].startswith("Correção de combustível parado") and i["veredito"] == "melhorou" for i in imp["indicadores"]), imp
+    assert extras.fp_status(con, 4.5)["referencia"] is None
+    con.execute("CREATE TABLE IF NOT EXISTS fingerprint (id INTEGER PRIMARY KEY, ts INTEGER, label TEXT, days INTEGER, profile TEXT)")
+    con.execute("INSERT INTO fingerprint(ts,label,days,profile) VALUES(?,?,?,?)", (now - 3 * D, "ok", 1, json.dumps(extras.fp_profile(con, now - 4.5 * D, now - 3.5 * D))))
+    day(now - 1 * D, 6, 3.4); con.commit()
+    assert extras.fp_status(con, 7)["nivel"] == "ok"                      # igual à referência: nada a apontar
+    day(now - 0.5 * D, 30, 1.8); con.commit()
+    st = extras.fp_status(con, 0.8)
+    assert st["nivel"] == "bad" and {s["key"] for s in st["sinais"] if s["status"] != "ok"} >= {"stft1", "maf"}, st
+    h = extras.habits(con, now - 7 * D, now)
+    assert h["parado"]["litros"] > 0 and h["parado"]["segundos"] > 0 and h["giro_alto"]["litros"] == 0
+    extras.maint_set_odometer(con, 182000)
+    extras.maint_done(con, "oleo", 170000, now - 30 * D)
+    oil = next(i for i in extras.maintenance(con)["itens"] if i["key"] == "oleo")
+    assert oil["status"] == "bad" and oil["km_restante"] == -2000, oil      # 170.000 + 10.000 < 182.000
+    assert extras.kml_by_fuel([{"ts": 1, "mix_after": 0.0, "real_kml": None}, {"ts": 2, "mix_after": 1.0, "real_kml": 11.0}, {"ts": 3, "mix_after": 1.0, "real_kml": 7.7}]) == \
+        {"gasolina": {"kml": 11.0, "tanques": 1}, "etanol": {"kml": 7.7, "tanques": 1}}
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

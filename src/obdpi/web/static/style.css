@@ -283,3 +283,13 @@ details.tech > summary::after { content: "Mostrar ▾"; float: right; font: 600 
 .stile.bad .sv { color: var(--bad) }
 @media (max-width: 900px) { .sgrid { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
 @media (max-width: 900px) { .subnav a { padding: 10px 8px; font-size: 12.5px; flex: 1 1 auto } }
+
+/* replay e hábitos */
+.rpv { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)) } .rpv b small { font: 500 11px var(--f-body); color: var(--muted) }
+input[type=range] { accent-color: var(--speed); height: 28px }
+input[type=date] { font: 600 14px var(--f-body); color: var(--fg); background: var(--panel2); border: 1px solid var(--line); padding: 8px 10px; border-radius: 10px }
+@media (max-width: 900px) { .rpv { grid-template-columns: repeat(3, minmax(0, 1fr)) } input[type=date] { font-size: 16px; min-height: 40px } }
+@media (max-width: 900px) {
+  .tabs.open a.sec[data-v="sensores"] { border-radius: 0 }
+  .tabs.open a.sec[data-v="manutencao"] { bottom: calc(100% + 114px); border-radius: 16px 16px 0 0 }
+}

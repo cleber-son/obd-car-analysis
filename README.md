@@ -32,6 +32,12 @@ eletrônico**, que foi trocado recentemente.
 | 🌱 **Direção econômica** | Nota 0–100 por viagem (giro alto, arrancadas e freadas bruscas, tempo parado ligado, acima de 110 km/h, marcha alta forçando) com dicas. |
 | 🩺 **Análise por sistema** | "Como está o carro" em linguagem simples: mistura, marcha lenta, borboleta, temperatura, ar admitido, elétrica, códigos e consumo, com causas prováveis em % e evolução dia a dia. Roda no Pi, sem IA. |
 | 🤖 **IA por viagem** | Com a chave configurada, um laudo curto ao fim de cada viagem (≥ 5 min ou ≥ 1 km) e aviso no celular. |
+| 🧬 **Impressão digital do motor** | Grava como o motor se comporta saudável e avisa de qualquer desvio pequeno depois. |
+| 🔧 **Antes e depois** | Anote um conserto: o painel compara os dias antes e depois e diz se resolveu. |
+| 🎯 **Testes guiados** | 8 testes caça-problema com o celular ao lado do carro (vazamento de ar, raio-X da mistura, catalisador, bateria, ventoinha…). |
+| 🛠️ **Manutenção** | Plano pelos km reais, com uso severo detectado pelos dados. |
+| 👨‍🔧 **Página do mecânico** | `/oficina`: problema, evidências e o que já foi testado. |
+| 📱 **Aplicativo** | Instalável na tela inicial e abre sem internet com a última cópia. |
 | 🗓 **Relatórios** | Semanal, mensal, **desde um dia escolhido** ou **de uma viagem só**, cada um com "O que fazer" e plano de ação geral. Semanal e mensal são **enviados no iPhone** toda segunda e todo dia 1º. |
 | 🤖 **Analisar dados (IA)** | Um botão envia o resumo de tudo (sensores por condição, viagens, diagnósticos, alertas, códigos) para o **Claude Opus 5.5** (ou OpenAI, à escolha), que devolve um laudo completo: veredito, pontos de atenção, sistema por sistema e o que fazer. Chave configurada no próprio painel. |
 | 📲 **Notificações** | Push no iPhone via [ntfy](https://ntfy.sh) para alertas e para avisar o IP sempre que o Pi entra em uma rede. |

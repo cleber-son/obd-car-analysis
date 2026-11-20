@@ -199,12 +199,37 @@ async function publicFill(req, env) {
   return json({ ok: true, queued: true });
 }
 
+// Outras anotações que o dono faz pelo painel público: serviço feito, hodômetro, item de manutenção.
+// Cada uma aceita só os campos esperados, com limites, e a fila tem teto. O Pi aplica quando conecta.
+const PUBLIC_NOTES = {
+  "/api/annotations": (b) => { const text = String(b.text || "").trim().slice(0, 200); if (text.length < 3) return null;
+    return { text, kind: ["manutencao", "teste"].includes(b.kind) ? b.kind : "manutencao", ts: Date.now() }; },
+  "/api/maintenance/odometer": (b) => { const km = Number(b.km); return km >= 1 && km <= 999999 ? { km, ts: Date.now() } : null; },
+  "/api/maintenance/done": (b) => { if (!/^[a-z_]{3,20}$/.test(String(b.key || ""))) return null;
+    const out = { key: b.key, ts: Number(b.ts) > 9e11 && Number(b.ts) <= Date.now() + 864e5 ? Number(b.ts) : Date.now() };
+    const odo = Number(b.odo); if (b.odo !== "" && b.odo != null && odo >= 0 && odo <= 999999) out.odo = odo; return out; },
+};
+async function publicNote(req, env, path) {
+  let b; try { b = JSON.parse((await req.text()).slice(0, 2000)); } catch { return json({ error: "dados inválidos" }, 400); }
+  const clean = PUBLIC_NOTES[path](b || {});
+  if (!clean) return json({ error: "Preencha o campo corretamente." }, 400);
+  const pend = await env.DB.prepare("SELECT COUNT(*) n FROM cmd WHERE done=0").first();
+  if (pend && pend.n >= 30) return json({ error: "Há muitas ações esperando o Pi conectar. Tente depois." }, 429);
+  if (path === "/api/annotations" && clean.kind === "teste") {            // resultados de teste: não deixa repetir em menos de 30 s
+    const last = await env.DB.prepare("SELECT MAX(ts) t FROM cmd WHERE path=? AND done=0").bind(path).first();
+    if (last && last.t && Date.now() - last.t < 30_000) return json({ ok: true, queued: true, duplicate: true });
+  }
+  await env.DB.prepare("INSERT INTO cmd(ts, method, path, body) VALUES (?,?,?,?)").bind(Date.now(), "POST", path, JSON.stringify(clean)).run();
+  return json({ ok: true, queued: true });
+}
+
 async function syncCommands(req, env) {
   if (req.method === "GET") {
     const r = await env.DB.prepare("SELECT id, ts, method, path, body FROM cmd WHERE done=0 ORDER BY id LIMIT 50").all();
     // abastecimentos "só com o valor pago" esperam o Pi já atualizado (uma versão antiga gravaria sem o valor)
     const cap = new URL(req.url).searchParams.get("cap") || "";
-    return json({ commands: r.results.filter((c) => cap.includes("total") || !(c.path === "/api/fuel/fill" && /"total"/.test(c.body || ""))) });
+    return json({ commands: r.results.filter((c) => (cap.includes("total") || !(c.path === "/api/fuel/fill" && /"total"/.test(c.body || "")))
+      && (cap.includes("maint") || !c.path.startsWith("/api/maintenance/"))) });
   }
   const { ids = [], results = {} } = await req.json();
   if (ids.length)
@@ -285,6 +310,7 @@ export default {
     // páginas
     if (p === "/" || p === "/index.html") return env.ASSETS.fetch(new Request(new URL("/index.html", url), req));
     if (p === "/dirigir") return env.ASSETS.fetch(new Request(new URL("/drive.html", url), req));
+    if (p === "/oficina") return env.ASSETS.fetch(new Request(new URL("/oficina.html", url), req));
     if (!p.startsWith("/api/")) return env.ASSETS.fetch(req);
 
     // API
@@ -294,6 +320,7 @@ export default {
     if (req.method === "POST" || req.method === "DELETE") {
       // "Tanque cheio" funciona no painel público (pedido do dono): só esse formulário, validado e com limite
       if (!env.DASH_PASSWORD && p === "/api/fuel/fill" && req.method === "POST") return publicFill(req, env);
+      if (!env.DASH_PASSWORD && req.method === "POST" && PUBLIC_NOTES[p]) return publicNote(req, env, p);
       if (env.DASH_PASSWORD && QUEUEABLE.some((re) => re.test(p))) {
         const body = req.method === "POST" ? await req.text() : "";
         if (body.length > 20000) return json({ error: "conteúdo grande demais" }, 413);

@@ -463,6 +463,30 @@ class Collector:
         c.execute("UPDATE trip SET fuel_l=?, km_l=? WHERE id=?",
                   (round(fuel_l, 3) if fuel_l else None, round(dist / fuel_l, 1) if fuel_l > 0.05 else None, tid))
         self.trip_diagnostics(tid, a, b)
+        self.trip_summary_push(tid)
+
+    def trip_summary_push(self, tid: int) -> None:
+        """Resumo curto no celular quando a viagem termina (uma vez por viagem; só viagens de verdade)."""
+        try:
+            t = self.con.execute("SELECT * FROM trip WHERE id=?", (tid,)).fetchone()
+            if not t or self.state.get("trip_pushed") == tid or ((t["distance_km"] or 0) < 1 and (t["duration_s"] or 0) < 300):
+                return
+            price = self.con.execute("SELECT price_l FROM fuel_fill WHERE price_l IS NOT NULL ORDER BY ts DESC LIMIT 1").fetchone()
+            n = self.con.execute("SELECT COUNT(*) FROM alert WHERE trip_id=? AND severity!='info'", (tid,)).fetchone()[0]
+            crit = self.con.execute("SELECT COUNT(*) FROM alert WHERE trip_id=? AND severity='crit'", (tid,)).fetchone()[0]
+            br = lambda v, d=1: f"{v:.{d}f}".replace(".", ",")
+            parts = [f"{br(t['distance_km'] or 0)} km em {int((t['duration_s'] or 0) // 60)} min"]
+            if t["km_l"]:
+                parts.append(f"{br(t['km_l'])} km/L")
+            if price and t["fuel_l"]:
+                parts.append(f"R$ {br(t['fuel_l'] * price[0], 2)}")
+            if (t["duration_s"] or 0) > 0 and (t["idle_s"] or 0) / t["duration_s"] > 0.35:
+                parts.append(f"{int(t['idle_s'] / t['duration_s'] * 100)}% parado ligado")
+            parts.append(f"{n} alerta(s)" if n else "sem alertas")
+            self.queue_push("Viagem encerrada", " · ".join(parts), "warn" if crit else "info")
+            self.state.set("trip_pushed", tid)
+        except Exception as e:                                # o resumo nunca atrapalha o fechamento da viagem
+            log.debug("resumo da viagem: %s", e)
 
     def trip_diagnostics(self, tid: int, a: int, b: int) -> None:
         c = self.con

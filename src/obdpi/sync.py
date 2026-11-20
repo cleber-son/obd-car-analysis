@@ -50,6 +50,7 @@ def doc_key(url: str) -> str:
 
 STATIC = (["/api/summary?days=14", "/api/throttle?days=30", "/api/trips?limit=1000", "/api/fuel", "/api/dtc", "/api/signals",
            "/api/diagnostics?days=60", "/api/accel", "/api/annotations", "/api/system", "/api/ai/analysis", "/api/ai/settings", "/api/repairs",
+           "/api/fingerprint", "/api/impact", "/api/maintenance", "/api/ai/chat",
            "/api/alerts?days=90"] + [f"/api/alerts?days=90&severity={s}" for s in ("crit", "warn", "info")]
           + [f"/api/report?days={d}" for d in (1, 7, 30, 90, 365)]
           + [f"/api/report/period?kind=week&offset={-i}" for i in range(12)]
@@ -264,7 +265,7 @@ class Sync:
 
     # -------------------------------------------------------------- ações do painel online
     def commands(self) -> int:
-        cmds = self.cloud("/api/sync/commands?cap=total").get("commands", [])
+        cmds = self.cloud("/api/sync/commands?cap=total,maint").get("commands", [])
         done, results = [], {}
         for c in cmds:
             body = c.get("body") or "{}"

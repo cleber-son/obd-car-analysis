@@ -118,7 +118,12 @@ def build(con: sqlite3.Connection, kind: str, offset: int = 0, day: str | None =
         ins = insight.build(con, a, b)
     except Exception as e:                     # a análise nunca derruba o relatório
         ins = {"erro": str(e)}
-    return {"insight": ins, "kind": kind, "offset": offset, "day": day, "trip": trip, "label": label, "from": a, "to": b, "cur": cur, "prev": prev, "recommendations": recs,
+    try:
+        from . import extras
+        hab = extras.habits(con, a, b)
+    except Exception:
+        hab = None
+    return {"habits": hab, "insight": ins, "kind": kind, "offset": offset, "day": day, "trip": trip, "label": label, "from": a, "to": b, "cur": cur, "prev": prev, "recommendations": recs,
             "delta": {k: delta(k) for k in ("km", "dur", "fuel", "kml", "eco_score", "tb_score")},
             "fills": fills, "spent": round(spent, 2) if spent else None, "est_cost": est_cost,
             "real_kml": round(sum(real) / len(real), 1) if real else None,
