@@ -31,14 +31,29 @@ known_ssids() {
     nmcli -g 802-11-wireless.ssid con show "$n" 2>/dev/null
   done | grep -v '^$' | sort -u
 }
+# perfis que sumiram ou ficaram vazios (queda de energia durante uma gravação) voltam da cópia em /etc/obd/wifi
+restore_profiles() {
+  local changed=0 f t
+  for f in /etc/obd/wifi/*.nmconnection; do
+    [ -s "$f" ] || continue
+    t=/etc/NetworkManager/system-connections/$(basename "$f")
+    if [ ! -s "$t" ] || ! grep -q '^psk=' "$t"; then
+      install -m 600 "$f" "$t"; changed=1; log "perfil $(basename "$f" .nmconnection) restaurado da cópia"
+    fi
+  done
+  find /etc/netplan -name '90-NM-*.yaml' -size 0 -delete 2>/dev/null
+  if [ "$changed" = 1 ]; then sync; nmcli con reload; KNOWN=$(known_ssids); fi
+}
 radio_cycle() { nmcli radio wifi off; sleep 3; nmcli radio wifi on; }
 driver_reload() { modprobe -r brcmfmac_wcc 2>/dev/null; modprobe -r brcmfmac 2>/dev/null; sleep 2; modprobe brcmfmac; sleep 8; }
 
 log "iniciado"
-LAST="?"; DOWN=0; STAGE=0; ESTAGE=0; FAILS=0; NEXT_TRY=0; NEXT_RECON=0
+restore_profiles
+LAST="?"; DOWN=0; STAGE=0; ESTAGE=0; FAILS=0; NEXT_TRY=0; NEXT_RECON=0; NEXT_RESTORE=0
 KNOWN=$(known_ssids)
 while true; do
   T=$(now); CUR=$(active); VIS=""
+  [ "$T" -ge "$NEXT_RESTORE" ] && { restore_profiles; NEXT_RESTORE=$((T + 300)); }
   [ "$CUR" = "$LAST" ] || { log "rede atual: ${CUR:-nenhuma}"; LAST="$CUR"; }
 
   # ---- 1. hotspot
