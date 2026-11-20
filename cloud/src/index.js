@@ -99,7 +99,9 @@ function liveView(raw, meta) {
       d.engine_on = false;
       d.trip_id = null; d.trip_start = null; d.trip = null;
     }
-    if (d.ts) d.age_s = Math.round((Date.now() - d.ts) / 100) / 10;
+    // idade pela hora em que a nuvem recebeu: o Pi não tem relógio próprio e fica minutos atrasado logo depois de ligar
+    const seen = meta.live_updated || d.ts;
+    if (seen) d.age_s = Math.max(0, Math.round((Date.now() - seen) / 100) / 10);
     d.cloud = true;
     return JSON.stringify(d);
   } catch { return raw; }
@@ -110,6 +112,7 @@ async function liveNow(env) {
   const r = await env.DB.prepare("SELECT key, json, updated_ts FROM doc WHERE key IN ('/api/live', '_meta')").all();
   const live = r.results.find((x) => x.key === "/api/live"), m = r.results.find((x) => x.key === "_meta");
   let mt = {}; try { mt = m ? JSON.parse(m.json) : {}; } catch { }
+  if (m && mt.last_sync_ts) mt.last_sync_ts = m.updated_ts;
   mt.live_updated = live ? live.updated_ts : 0;
   return { stamp: `${live ? live.updated_ts : 0}:${Date.now() - Math.max(mt.last_sync_ts || 0, mt.live_updated) > OFFLINE_AFTER_MS}`,
            data: live ? liveView(live.json, mt) : JSON.stringify({ state: "pi_offline", engine_on: false, values: {}, alerts: [], dtc: {}, cloud: true }) };
@@ -141,7 +144,8 @@ function liveStream(env) {
 
 async function meta(env) {
   const m = await getDoc(env, "_meta");
-  try { return m ? JSON.parse(m.data) : {}; } catch { return {}; }
+  // "último sinal do Pi" = hora em que a nuvem recebeu, não a hora que o Pi informou (relógio dele atrasa após ligar)
+  try { const o = m ? JSON.parse(m.data) : {}; if (o.last_sync_ts) o.last_sync_ts = m.updated; return o; } catch { return {}; }
 }
 
 async function envInfo(env) {
