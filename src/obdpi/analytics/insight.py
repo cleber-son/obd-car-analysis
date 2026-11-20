@@ -212,7 +212,8 @@ def _electric(reg: dict, con: sqlite3.Connection, a: int, b: int) -> dict:
     if len(v) < 12:
         return {"status": "unk", "resumo": "Sem leituras de tensão com o motor ligado.", "fazer": None, "numeros": []}
     med, lo, hi = statistics.median(v), min(v), max(v)
-    crank = con.execute("SELECT MIN(crank_v) FROM trip WHERE start_ts>=? AND start_ts<? AND crank_v IS NOT NULL", (a, b)).fetchone()[0]
+    # só vale como "mínima na partida" o que realmente afundou; leitura já com o alternador carregando não é partida
+    crank = con.execute("SELECT MIN(crank_v) FROM trip WHERE start_ts>=? AND start_ts<? AND crank_v IS NOT NULL AND crank_v < 12.6", (a, b)).fetchone()[0]
     nums = [_num("Carga com o motor ligado", _r(med), "V", 13.2 <= med <= 14.8), _num("Mínima", _r(lo), "V", lo >= 12.3), _num("Máxima", _r(hi), "V", hi <= 15.0),
             _num("Mínima na partida", _r(crank), "V", None if crank is None else crank >= 9.6)]
     if hi > 15.1:
