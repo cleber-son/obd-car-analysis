@@ -152,9 +152,13 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   let fuelInfo = null;
   const loadFuel = () => fetch("/api/fuel").then((r) => r.json()).then((j) => { fuelInfo = j; }).catch(() => { });
   loadFuel(); setInterval(loadFuel, 60000);
+  // valor em R$ entre parênteses, pelo preço do último abastecimento: " (R$ 7,20/h)"; vazio sem preço ou sem valor
+  const brl = (liters, suf = "") => { const pr = fuelInfo?.fills?.find((f) => f.price_l)?.price_l;
+    return pr && liters != null && liters > 0 ? ` (R$ ${nf(liters * pr, 2)}${suf})` : ""; };
   const sgn = (x, d = 1) => x == null ? "—" : (x > 0 ? "+" : "") + nf(x, d);
   const CAT = {
-    kml: { l: "Consumo", c: "--o2", r: (v) => v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" : ""] : [nf(v.fuel_lh, 1), "L/h", "parado"] },
+    kml: { l: "Consumo", c: "--o2", r: (v) => { const rh = brl(v.fuel_lh, "/h");
+      return v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" + rh : ""] : [nf(v.fuel_lh, 1), "L/h", "parado" + rh]; } },
     kmlavg: { l: "Média viagem", c: "--o2", r: (v, t) => [nf(t.kml, 1), "km/L", t.fuel_l ? nf(t.fuel_l, 2) + " L" + (t.cost ? " · R$ " + nf(t.cost, 2) : "") : "calculando…"] },
     kmltank: { l: "Média do tanque", c: "--o2", r: (v, t) => { const sf = fuelInfo?.since_fill; if (!sf) return ["—", "km/L", ""];
       const km = (sf.km || 0) + (t.km || 0), l = (sf.liters_est || 0) + (t.fuel_l || 0);     // viagens fechadas desde o tanque + a viagem de agora
@@ -162,8 +166,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     prev: { l: "Previsão da viagem", c: "--o2", wide: true, r: (v, t) => {
       const el = t.elapsed_s || 0, lh = el > 60 ? t.fuel_l / (el / 3600) : v.fuel_lh;   // média de L/h desde que ligou
       const kml = t.kml ?? fuelInfo?.avg_real_kml ?? fuelInfo?.since_fill?.kml_est;
-      const price = fuelInfo?.fills?.find((f) => f.price_l)?.price_l;
-      return [nf(kml, 1), "km/L", `${nf(lh, 2)} L/h desde que ligou${price && lh ? " · ≈ R$ " + nf(lh * price, 2) + "/h" : ""} · ${nf((t.fuel_l || 0), 2)} L até agora`]; } },
+      return [nf(kml, 1), "km/L", `${nf(lh, 2)} L/h${brl(lh, "/h")} desde que ligou · ${nf((t.fuel_l || 0), 2)} L${brl(t.fuel_l)} até agora`]; } },
     auto: { l: "Autonomia", c: "--o2", r: (v, t) => { const f = fuelInfo; if (!f?.fills?.length) return ["—", "", "registre um tanque cheio"];
       const rest = Math.max(0, f.tank_l - (f.since_fill?.liters_est || 0) - (t.fuel_l || 0)); const kml = f.avg_real_kml ?? t.kml ?? f.since_fill?.kml_est;
       return [kml ? nf(rest * kml, 0) : "—", "km", `≈ ${nf(rest, 0)} L no tanque`]; } },
