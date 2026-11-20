@@ -6,7 +6,7 @@
 #    A busca é dirigida ao nome do hotspot: o iPhone para de se anunciar quando fica sem ninguém conectado, mas responde
 #    a quem pergunta por ele. Se a conexão falha, espera cada vez mais (20 s … 5 min) antes de tentar de novo: tentar
 #    sem parar derrubaria o WiFi de casa a cada tentativa.
-# 2. Autoconserto: sem rede e com uma rede conhecida ao alcance, sobe um degrau de cada vez: reconectar → desligar e
+# 2. Autoconserto: sem rede e com uma rede conhecida ao alcance, sobe um degrau de cada vez: reconectar (por 3 min) → desligar e
 #    ligar o rádio → reiniciar o NetworkManager → recarregar o driver do WiFi. Sem nenhuma rede à vista por muito tempo
 #    (rádio travado), desliga/liga o rádio e recarrega o driver. Na estrada, com redes à vista mas nenhuma conhecida,
 #    não faz nada. Nunca reinicia o Pi: a coleta do carro não depende de rede.
@@ -35,7 +35,7 @@ radio_cycle() { nmcli radio wifi off; sleep 3; nmcli radio wifi on; }
 driver_reload() { modprobe -r brcmfmac_wcc 2>/dev/null; modprobe -r brcmfmac 2>/dev/null; sleep 2; modprobe brcmfmac; sleep 8; }
 
 log "iniciado"
-LAST="?"; DOWN=0; STAGE=0; ESTAGE=0; FAILS=0; NEXT_TRY=0
+LAST="?"; DOWN=0; STAGE=0; ESTAGE=0; FAILS=0; NEXT_TRY=0; NEXT_RECON=0
 KNOWN=$(known_ssids)
 while true; do
   T=$(now); CUR=$(active); VIS=""
@@ -72,11 +72,13 @@ while true; do
     D=$(( $(now) - DOWN ))
     if [ -n "$KNOWN" ] && [ -n "$VIS" ] && grep -qxFf <(echo "$KNOWN") <<<"$VIS"; then
       ESTAGE=0
-      if   [ "$STAGE" = 0 ] && [ "$D" -ge 45 ];   then STAGE=1; log "sem rede há ${D}s com rede conhecida à vista: reconectando"; nmcli -w 30 dev connect wlan0 >/dev/null 2>&1
-      elif [ "$STAGE" = 1 ] && [ "$D" -ge 120 ];  then STAGE=2; log "sem rede há ${D}s: desligando e ligando o rádio WiFi"; radio_cycle
-      elif [ "$STAGE" = 2 ] && [ "$D" -ge 240 ];  then STAGE=3; log "sem rede há ${D}s: reiniciando o NetworkManager"; systemctl restart NetworkManager; sleep 10
-      elif [ "$STAGE" = 3 ] && [ "$D" -ge 420 ];  then STAGE=4; log "sem rede há ${D}s: recarregando o driver do WiFi"; driver_reload
-      elif [ "$STAGE" = 4 ] && [ "$D" -ge 1320 ]; then STAGE=0; DOWN=$(now); log "ainda sem rede: recomeçando o autoconserto"
+      # degrau 1 dura 3 min: dos 45 s aos 3 min 45 s tenta reconectar a cada ~30 s antes de mexer no rádio
+      if   [ "$STAGE" = 1 ] && [ "$D" -ge 225 ];  then STAGE=2; log "sem rede há ${D}s: desligando e ligando o rádio WiFi"; radio_cycle
+      elif [ "$STAGE" -le 1 ] && [ "$D" -ge 45 ] && [ "$(now)" -ge "$NEXT_RECON" ]; then
+        STAGE=1; NEXT_RECON=$(( $(now) + 30 )); log "sem rede há ${D}s com rede conhecida à vista: reconectando"; nmcli -w 30 dev connect wlan0 >/dev/null 2>&1
+      elif [ "$STAGE" = 2 ] && [ "$D" -ge 360 ];  then STAGE=3; log "sem rede há ${D}s: reiniciando o NetworkManager"; systemctl restart NetworkManager; sleep 10
+      elif [ "$STAGE" = 3 ] && [ "$D" -ge 540 ];  then STAGE=4; log "sem rede há ${D}s: recarregando o driver do WiFi"; driver_reload
+      elif [ "$STAGE" = 4 ] && [ "$D" -ge 1440 ]; then STAGE=0; DOWN=$(now); log "ainda sem rede: recomeçando o autoconserto"
       fi
     elif [ -z "$VIS" ]; then
       if   [ "$ESTAGE" = 0 ] && [ "$D" -ge 300 ];  then ESTAGE=1; log "nenhuma rede à vista há ${D}s: desligando e ligando o rádio WiFi"; radio_cycle
