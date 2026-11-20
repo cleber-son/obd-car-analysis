@@ -213,6 +213,7 @@ MAINT = [
     ("oleo", "Óleo do motor e filtro de óleo", 10000, 12, True, "0W-20 ou 5W-30 conforme o manual. Em uso severo a Honda pede metade do intervalo."),
     ("filtro_ar", "Filtro de ar do motor", 20000, 24, True, "Antes disso se rodar em estrada de terra ou muita poeira."),
     ("filtro_cabine", "Filtro de ar da cabine", 10000, 12, False, "Ar-condicionado fraco ou com cheiro pede troca antes."),
+    ("filtro_comb", "Filtro de combustível", 40000, None, False, "No Civic fica dentro do tanque, junto da bomba. Intervalo típico para carro flex; confira no manual."),
     ("fluido_freio", "Fluido de freio", None, 36, False, "Por tempo, não por km: absorve umidade."),
     ("velas", "Velas de ignição (irídio)", 100000, None, False, "NGK IZFR6K13 ou Denso SKJ20DR-M13; confira no manual."),
     ("arrefecimento", "Líquido de arrefecimento", 100000, 60, False, "Honda Type 2, já diluído. Nunca completar com água de torneira."),
