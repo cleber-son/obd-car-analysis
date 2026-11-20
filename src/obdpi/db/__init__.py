@@ -20,6 +20,7 @@ def connect(path: str, readonly: bool = False) -> sqlite3.Connection:
     return con
 
 
+SHORT_TRIP_S = 180            # motor ligado por menos que isso não entra no histórico de viagens
 RESTORED: list[str] = []      # nomes dos backups restaurados nesta execução (o coletor registra e avisa)
 
 
@@ -82,3 +83,7 @@ def migrate(con) -> None:
     for col, decl in (("title", "TEXT"), ("note", "TEXT"), ("hidden", "INTEGER DEFAULT 0"), ("last_run_time", "REAL"),
                       ("start_snapshot", "TEXT"), ("end_snapshot", "TEXT")):
         _add_col(con, "trip", col, decl)
+    # uma vez só: as viagens curtas que já estavam gravadas também saem do histórico (ficam em "Mostrar ocultas")
+    if not con.execute("SELECT 1 FROM meta WHERE key='short_trips_hidden'").fetchone():
+        con.execute("UPDATE trip SET hidden=2 WHERE finalized=1 AND COALESCE(hidden,0)=0 AND duration_s < ?", (SHORT_TRIP_S,))
+        con.execute("INSERT INTO meta VALUES ('short_trips_hidden','1')")

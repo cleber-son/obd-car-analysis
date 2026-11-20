@@ -465,6 +465,10 @@ class Collector:
                      max_ect=?, min_volt=?, max_volt=?, avg_ltft=?, tb_score=?, n_alerts=? WHERE id=?""",
                   (int((b - a) / 1000), round(dist, 2), int(idle), agg["av"], agg["ms"], agg["mr"], sagg("ect", "MAX"),
                    sagg("batt", "MIN"), sagg("batt", "MAX"), sagg("ltft1", "AVG"), score, len(alerts), tid))
+        # motor ligado por menos de 3 min não vai para o histórico (hidden=2 = oculta por ser curta; 1 = oculta pelo dono).
+        # Se a viagem for retomada e passar dos 3 min, volta a aparecer.
+        c.execute("UPDATE trip SET hidden = CASE WHEN duration_s < ? THEN 2 ELSE 0 END WHERE id=? AND COALESCE(hidden,0) IN (0, 2)",
+                  (db.SHORT_TRIP_S, tid))
         c.execute("UPDATE trip SET fuel_l=?, km_l=? WHERE id=?",
                   (round(fuel_l, 3) if fuel_l else None, round(dist / fuel_l, 1) if fuel_l > 0.05 else None, tid))
         self.trip_diagnostics(tid, a, b)
