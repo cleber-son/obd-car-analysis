@@ -1,0 +1,15 @@
+[Unit]
+Description=OBD: /data gravando no cartão com o sistema somente leitura
+DefaultDependencies=no
+ConditionPathIsMountPoint=/media/root-ro
+After=local-fs-pre.target
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/obd/deploy/overlay.sh mount-data
+
+[Install]
+WantedBy=local-fs.target

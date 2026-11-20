@@ -3,6 +3,14 @@
 set -euo pipefail
 HOST=${1:-obd.local}
 cd "$(dirname "$0")/.."
+# sistema somente leitura ligado: destrava e reinicia antes (senão a atualização some no próximo boot), religa no fim
+PROT=$(ssh "obd@$HOST" '[ -f /etc/obd/protegido ] && echo 1 || echo 0')
+if [ "$PROT" = 1 ]; then
+  echo "== proteção do cartão ligada: destravando para atualizar (o Pi reinicia duas vezes)"
+  ssh "obd@$HOST" 'sudo /opt/obd/deploy/overlay.sh off --keep-mark'
+  scripts/pi-reboot.sh "$HOST"
+  trap 'echo "== religando a proteção do cartão"; ssh "obd@$HOST" "sudo /opt/obd/deploy/overlay.sh on" && scripts/pi-reboot.sh "$HOST"' EXIT
+fi
 rsync -az --delete --exclude '__pycache__' src deploy config requirements.txt "obd@$HOST:/opt/obd/"
 ssh "obd@$HOST" 'sudo bash /opt/obd/deploy/install.sh'
 if [ -f secrets/cloud.txt ]; then

@@ -253,3 +253,10 @@ Pedido: implementar todas, sem perguntar. Código novo em `src/obdpi/extras.py` 
 11. **Sem internet**: service worker (rede primeiro, cópia guardada se cair). Não guarda o fluxo ao vivo.
 12. **Dados além do básico**: `obdctl probe-extra` (ajuste longo, modo 06 com falha de ignição por cilindro, quadro congelado, modo 09). Exploratório: precisa do carro ligado e o adaptador clone pode cortar respostas longas.
 - Painel online (público): além do tanque cheio, aceita anotar serviço, hodômetro e item de manutenção feito (campos validados, fila com teto); o Pi só recebe as ações de manutenção depois de atualizado (`cap=maint`).
+
+## 2026-11-20 — Sistema somente leitura (proteção do cartão contra corte de energia)
+- `deploy/overlay.sh` (pacote overlayroot + `overlayroot=tmpfs` no cmdline.txt, como o raspi-config, mas sem travar a partição de boot). Com a proteção ativa, o que o sistema grava fora de `/data` vai para a RAM; os arquivos do sistema no cartão não são reescritos (foi a reescrita durante o corte que apagou as redes WiFi).
+- `/data`, `/var/lib/bluetooth` e `/var/lib/systemd/timesync` continuam no cartão: `obd-data.service` remonta o cartão (`/media/root-ro`) como gravável e liga essas pastas por bind. Se isso falhar, ele desliga a proteção e reinicia (para não gravar dados que sumiriam).
+- Não há partição `/data` separada (a raiz se expandiu no 1º boot), por isso o cartão fica montado gravável por baixo; só `/data` e o obd-doctor (`overlay.sh persist`, depois de uma correção aprovada) escrevem nele.
+- Ligar/desligar: `scripts/protect.sh <host> on|off|status` (reinicia o Pi). Com a marca `/etc/obd/protegido`, o `scripts/deploy.sh` destrava, reinicia, atualiza, religa e reinicia de novo.
+- Não resolve a reinicialização na partida por subtensão (isso é elétrico: no-break/conversor).

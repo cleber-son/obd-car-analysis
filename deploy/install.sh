@@ -41,6 +41,9 @@ done
 printf 'vm.dirty_expire_centisecs = 500\nvm.dirty_writeback_centisecs = 500\n' > /etc/sysctl.d/90-obd-flush.conf
 sysctl -q --system || true
 
+# sistema somente leitura (deploy/overlay.sh): não liga aqui; quem liga é scripts/protect.sh, e o deploy respeita
+chmod 755 deploy/overlay.sh
+
 echo "== WiFi sem economia de energia (menos atraso no painel ao vivo e no SSH)"
 install -d /etc/NetworkManager/conf.d
 printf '[connection]\nwifi.powersave = 2\n' > /etc/NetworkManager/conf.d/obd-wifi-powersave.conf
@@ -56,7 +59,7 @@ echo "== serviços"
 install -m 644 deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl restart systemd-journald
-systemctl enable obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service obd-sync.service obd-doctor.timer
+systemctl enable obd-data.service obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service obd-sync.service obd-doctor.timer
 for u in obd-btagent obd-collector obd-web obd-maint.timer obd-netprefer obd-sync obd-doctor.timer; do
   systemctl restart "$u" || echo "AVISO: $u não iniciou (veja journalctl -u $u)"   # um serviço com problema não impede o resto
 done

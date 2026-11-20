@@ -282,6 +282,8 @@ class Doctor:
             sh("systemctl", "restart", err["unit"], timeout=60)
             self.record("ia", err["unit"], "correção aplicada mas o erro continuou; backup restaurado", "revertido", fix["explanation"], sig)
             return
+        # com o sistema somente leitura a correção ficaria só na memória: grava no cartão (sem proteção não faz nada)
+        sh(str(APP / "deploy/overlay.sh"), "persist", *[str(APP / e["path"].lstrip("/").removeprefix("opt/obd/")) for e in fix["edits"]], timeout=60)
         self.record("ia", err["unit"], f"correção do Fable aplicada ({len(fix['edits'])} edição(ões)); serviço estável",
                     "ok", json.dumps(fix, ensure_ascii=False)[:7000], sig)
 
