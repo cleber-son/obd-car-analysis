@@ -791,6 +791,26 @@
   $("#aiRun").addEventListener("click", async () => { $("#aiRun").disabled = true; const r = await fetch("/api/ai/analyze", { method: "POST" }); const j = await r.json().catch(() => ({}));
     if (j.queued) { $("#aiRun").disabled = false; $("#aiSub").textContent = "Pedido enviado: o Pi faz a análise quando conectar na internet e o laudo aparece aqui."; return; } aiPoll(); });
 
+  // ------------------------------------------------------------ resetar tudo
+  $("#resetAll").addEventListener("click", async () => {
+    const btn = $("#resetAll"), msg = (t) => { $("#resetMsg").textContent = t; };
+    if (!confirm("Resetar tudo?\n\nViagens, leituras, alertas, abastecimentos, manutenção, diário, laudos da IA e o que o Pi aprendeu sobre o carro serão apagados. O painel recomeça do zero.\n\nUma cópia do banco atual fica guardada no Pi.")) return;
+    if ((prompt("Para confirmar, digite RESETAR") || "").trim().toUpperCase() !== "RESETAR") { msg("Reset cancelado: a palavra não conferiu."); return; }
+    btn.disabled = true; msg("Resetando…");
+    const r = await fetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: "RESETAR" }) }).catch(() => null);
+    const jn = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) { btn.disabled = false; msg(jn.error || jn.detail || "Não foi possível resetar. Nada foi apagado."); return; }
+    try { localStorage.clear(); } catch { }
+    try { if (window.caches) for (const k of await caches.keys()) await caches.delete(k); } catch { }       // cópia offline dos dados antigos
+    msg("Reiniciando o coletor…");
+    for (let i = 0; i < 60; i++) {
+      await new Promise((ok) => setTimeout(ok, 1500));
+      const s = await fetch("/api/reset").then((x) => x.json()).catch(() => null);
+      if (s && !s.pending) { location.hash = "#vivo"; location.reload(); return; }
+    }
+    btn.disabled = false; msg("O Pi ainda está terminando o reset. Recarregue a página em instantes.");
+  });
+
   // ------------------------------------------------------------ tema
   const setTheme = (t) => { document.documentElement.dataset.theme = t; try { localStorage.setItem("theme", t); } catch { }
     document.querySelectorAll("#theme button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.t === t)); };
@@ -829,7 +849,7 @@
       <b>Painel online</b> · ${on ? "Pi conectado agora (dados ao vivo)" : env.last_sync_ts ? "Pi offline · dados até " + dt(env.last_sync_ts) : "aguardando a primeira sincronização do Pi"}
       ${env.pending_cmds ? ` · ${env.pending_cmds} ação(ões) esperando o Pi` : ""}
       ${env.readonly ? '<span class="muted" style="margin-left:auto">somente visualização</span>' : '<a href="/logout" style="margin-left:auto">Sair</a>'}`;
-    const hide = ["#accGo", "#csvLink"].concat(env.readonly ? ["#annForm", "#aiRun", "#alertClear", "#askForm", "#fpSave"] : []);
+    const hide = ["#accGo", "#csvLink", "#resetCard"].concat(env.readonly ? ["#annForm", "#aiRun", "#alertClear", "#askForm", "#fpSave"] : []);
     for (const id of hide) { const el = $(id); if (el) el.hidden = true; }
     const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
   }

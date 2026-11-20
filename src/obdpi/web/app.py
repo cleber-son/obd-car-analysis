@@ -704,6 +704,28 @@ def system():
     }
 
 
+@app.get("/api/reset")
+def reset_status():
+    from .. import reset
+    return {"pending": reset.pending(CFG), "last_ts": reset.last(CFG)}
+
+
+@app.post("/api/reset")
+def reset_all(body: dict | None = None, x_token: str | None = Header(None)):
+    """Botão "Resetar tudo": histórico, aprendizado e anotações recomeçam do zero (ver obdpi/reset.py).
+    Exige {confirm: "RESETAR"}. O banco anterior fica guardado em backup/antes-do-reset-*."""
+    import sys
+    from .. import reset
+    check_admin(x_token)
+    if (body or {}).get("confirm") != "RESETAR":
+        raise HTTPException(400, 'para confirmar, envie {"confirm": "RESETAR"}')
+    ai = sys.modules.get("obdpi.ai")
+    if ai and ai.job().get("status") != "running":
+        ai._job.clear()
+        ai._job.update(status="idle")             # o último laudo em memória também some
+    return {"ok": True, **reset.request(CFG)}
+
+
 @app.get("/api/repairs")
 def repairs():
     try:

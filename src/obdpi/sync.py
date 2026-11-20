@@ -59,6 +59,7 @@ STATIC = (["/api/summary?days=14", "/api/throttle?days=30", "/api/trips?limit=10
 
 class Sync:
     def __init__(self, cfg: dict):
+        self.cfg = cfg
         c = cfg.get("cloud", {})
         self.url = (c.get("url") or "").rstrip("/")
         self.token = c.get("token") or ""
@@ -284,6 +285,22 @@ class Sync:
             self.last_full = 0          # reflete o resultado no próximo ciclo
         return len(done)
 
+    def purge_after_reset(self) -> None:
+        """Depois de um "Resetar tudo" no Pi, apaga da nuvem tudo o que este Pi já enviou (os ids das viagens recomeçam
+        do 1: sem isso, o laudo de uma viagem antiga apareceria numa nova) e reenvia do zero."""
+        from . import reset
+        ts = reset.last(self.cfg)
+        if not ts or self.state.get("reset_ts") == ts:
+            return
+        keys = sorted(self.state["hashes"])
+        for i in range(0, len(keys), 50):
+            self.cloud("/api/sync/docs", {"docs": [], "delete": keys[i:i + 50]})
+        self.state["hashes"] = {}
+        self.state["reset_ts"] = ts
+        self.save_state()
+        self.last_full = 0
+        log.info("reset no Pi: %d documento(s) antigos apagados da nuvem", len(keys))
+
     # -------------------------------------------------------------- laço
     def run(self) -> None:
         if not self.url or not self.token:
@@ -300,6 +317,7 @@ class Sync:
                 if not self.online():
                     time.sleep(30)
                     continue
+                self.purge_after_reset()
                 now = time.monotonic()
                 if now - self.last_cmd >= CMD_EVERY:
                     self.last_cmd = now

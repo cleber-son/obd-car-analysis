@@ -213,3 +213,32 @@ if __name__ == "__main__":
         if k.startswith("test_"):
             f(); print("ok", k)
 
+
+
+def test_reset_all(tmp_path=None):
+    """Resetar tudo: banco e backups vão para backup/antes-do-reset-*, aprendizado some, adaptador fica."""
+    import json, tempfile
+    from pathlib import Path
+    from obdpi import db, reset
+    base = Path(tmp_path or tempfile.mkdtemp())
+    cfg = {"storage": {"db_path": str(base / "obd.db"), "state_path": str(base / "state.json"), "backup_dir": str(base / "backup")}}
+    con = db.init(cfg["storage"]["db_path"])
+    con.execute("INSERT INTO trip(start_ts) VALUES (1)")
+    con.execute("INSERT INTO fuel_fill(ts, fuel) VALUES (1, 'gasolina')")
+    con.commit()
+    con.close()
+    (base / "backup").mkdir()
+    (base / "backup" / "obd-20261119.db").write_bytes(b"x")
+    (base / "state.json").write_text(json.dumps({"adapter_mac": "AA", "throttle": {"n": 5}, "trip_pushed": 7}))
+    assert reset.apply(cfg) is False and reset.last(cfg) is None          # sem pedido, nada acontece
+    assert reset.request(cfg) == {"pending": False}                       # sem coletor rodando, aplica na hora
+    con = db.init(cfg["storage"]["db_path"])
+    assert con.execute("SELECT COUNT(*) FROM trip").fetchone()[0] == 0 and con.execute("SELECT COUNT(*) FROM fuel_fill").fetchone()[0] == 0
+    con.close()
+    keep = list((base / "backup").glob("antes-do-reset-*"))
+    assert len(keep) == 1 and (keep[0] / "obd-20261119.db").exists() and not list((base / "backup").glob("obd-*.db"))
+    old = db.connect(str(keep[0] / "obd.db"), readonly=True)
+    assert old.execute("SELECT COUNT(*) FROM trip").fetchone()[0] == 1    # a cópia guardada está inteira
+    old.close()
+    assert json.loads((base / "state.json").read_text()) == {"adapter_mac": "AA"}
+    assert reset.last(cfg) and not reset.pending(cfg) and reset.apply(cfg) is False

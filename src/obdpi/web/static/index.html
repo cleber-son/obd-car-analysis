@@ -283,6 +283,12 @@
     <div class="card"><h2>Auto-reparo</h2><div class="lbl" style="margin:4px 0 10px">O Pi se vigia a cada 2 min e conserta sozinho; bugs no código são corrigidos com o Claude Fable (testado antes, desfeito se piorar)</div>
       <div class="list" id="repairList"></div></div>
     <div class="card"><h2>Eventos do sistema</h2><div class="tbl" style="margin-top:10px"><table><tbody id="sysEvents"></tbody></table></div></div>
+    <div class="card" id="resetCard"><div class="row-head"><div><h2>Resetar tudo</h2><div class="lbl" style="margin-top:4px">Apaga o histórico e começa do zero, como um Pi recém-instalado</div></div>
+      <button class="btn danger" type="button" id="resetAll">🗑️ Resetar tudo</button></div>
+      <div class="muted" style="font-size:13px;margin-top:10px"><b>Apaga:</b> viagens, leituras dos sensores, alertas e códigos de falha, abastecimentos, plano de manutenção e hodômetro, diário, laudos e perguntas à IA, referência do motor saudável, o que o Pi aprendeu como normal, resultados dos testes e as preferências do painel neste aparelho (tema, quadros do modo direção).<br>
+        <b>Continua como está:</b> WiFi, adaptador Bluetooth, chaves de IA, notificações e painel online.<br>
+        Uma cópia do banco de antes do reset fica guardada no Pi em <code class="k">/data/obd/backup/antes-do-reset-…</code> (só a do último reset).</div>
+      <div id="resetMsg" style="font-size:13px;margin-top:8px" role="status"></div></div>
   </section>
 </main>
 <div class="modal" id="sigModal" hidden role="dialog" aria-modal="true" aria-labelledby="mTitle">

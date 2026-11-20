@@ -84,6 +84,8 @@ class Collector:
         self.fast_pids_cfg = [int(p, 16) for p in c["fast_pids"]]
         st = cfg["storage"]
         self.db_path = st["db_path"]
+        from .. import reset
+        was_reset = reset.apply(cfg)               # "Resetar tudo" pedido no painel: banco e aprendizado recomeçam do zero
         self.state = config.State(st["state_path"])
         self.con = db.init(self.db_path)
         self._restored = list(db.RESTORED)
@@ -94,6 +96,9 @@ class Collector:
         self.boot_ts = self.clock.now()            # tudo gravado por este processo é >= boot_ts
         self.sig_ids = {r["key"]: r["id"] for r in self.con.execute("SELECT id, key FROM signal")}
         self.limits = LimitsEngine([dict(r) for r in self.con.execute("SELECT * FROM baseline")], period_s=c["full_period_s"])
+        if was_reset:
+            self.event("warn", "reset", "tudo resetado pelo painel; cópia do banco anterior em backup/antes-do-reset-*")
+            self.con.commit()
         if self._restored:
             self.event("warn", "banco_restaurado", f"banco corrompido (queda de energia?); restaurado do backup {self._restored[0]}")
             self.queue_push("Banco de dados restaurado", f"O banco estava corrompido e voltou do backup {self._restored[0]}. Os dados depois dele ficaram no arquivo .corrompido.", "warn")

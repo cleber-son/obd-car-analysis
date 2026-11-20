@@ -209,6 +209,7 @@ Pedidos: melhorar a análise dos dados; modo direção todo em tempo real; melho
 - **IA ao fim de cada viagem**: `obd-sync` chama `/api/ai/auto` a cada 2 min com internet; viagem ≥ 5 min ou ≥ 1 km, terminada há mais de 3 min, sem laudo → laudo curto (`SYSTEM_TRIP`, esforço médio) + aviso no celular. Precisa da chave em Sistema.
 - **Tanque cheio**: só o valor pago; combustível e preço por litro herdados do último; coluna `fuel_fill.total`; custo real por km; apagar abastecimento. No painel online (público) só esse formulário aceita envio: validado, no máximo 5 pendentes, 1 a cada 20 s; o Worker só entrega ao Pi já atualizado (`?cap=total`).
 - **Limpar alertas**: arquiva em `alert_archive` (não apaga); só no painel do Pi.
+- **Resetar tudo** (Sistema, só no painel do Pi; `obdpi/reset.py`): o painel grava `reset.pending` e reinicia o coletor, que ao subir move o banco e os backups diários para `backup/antes-do-reset-<data>/`, zera o aprendizado da borboleta e cria um banco novo; o `obd-sync` apaga a cópia antiga na nuvem. Mantém Bluetooth, WiFi, chaves de IA e nuvem.
 - **Celular**: cabeçalho compacto, barra inferior com Ao vivo · Viagens · Consumo · Diagnóstico · Mais; Diagnóstico com Resumo · Alertas · Relatório · Borboleta; tabelas viram cartões; alerta do topo só se for recente de verdade (1 + contador); modo direção: faixa de alerta não ocupa mais a tela, quadros esmaecidos com o carro desligado.
 - Tanque do Civic 2008: fichas técnicas dão 50 L (mantido).
 
