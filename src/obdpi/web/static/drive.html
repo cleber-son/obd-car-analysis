@@ -22,6 +22,7 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent }
+[hidden] { display: none !important }             /* sem isso, os quadros continuavam na tela por baixo dos gráficos */
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: var(--disp); overflow: hidden; -webkit-user-select: none; user-select: none }
 .app { height: 100%; display: grid; grid-template-rows: auto auto auto auto 1fr auto; gap: 8px;
   padding: calc(env(safe-area-inset-top, 0px) + 6px) max(14px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 8px) max(14px, env(safe-area-inset-left, 0px)) }
@@ -83,13 +84,34 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .cfg li input { width: 20px; height: 20px; vertical-align: middle; margin-right: 8px } .cfg li button { font-size: 14px; background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 8px; padding: 4px 9px; margin-left: 4px }
 .t.good .v { color: var(--ok) }
 .lam.trim { background: linear-gradient(90deg, var(--bad), var(--warn) 30%, var(--o2) 40% 60%, var(--warn) 70%, var(--bad)) }
-.graphs { display: grid; grid-template-columns: 1fr; gap: 8px; align-content: start; min-height: 0; overflow: auto }
-.graphs[hidden] { display: none } .g { background: var(--tile); border: 1px solid var(--line); border-radius: 16px; padding: 8px 10px 6px }
-.g .h { display: flex; justify-content: space-between; font: 600 11px var(--disp); color: var(--muted); text-transform: uppercase; letter-spacing: .06em }
-.g .h b { font: 700 15px var(--mono); color: var(--fg); text-transform: none; letter-spacing: 0 } .g canvas { width: 100%; height: 74px; display: block }
+/* modo gráfico: velocidade compacta em cima, gráficos dividindo a altura que sobra (rolam se forem muitos) */
+.graphs { display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: hidden }
+.graphs[hidden] { display: none }
+.gbar { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: none; padding-bottom: 2px; -webkit-overflow-scrolling: touch }
+.gbar::-webkit-scrollbar { display: none }
+.gchip { flex: none; font: 600 12px var(--disp); padding: 7px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--tile); color: var(--muted); white-space: nowrap }
+.gchip[aria-pressed="true"] { color: var(--bg); background: var(--c, var(--fg)); border-color: var(--c, var(--fg)) }
+.gchip.span[aria-pressed="true"] { background: var(--line); color: var(--fg); border-color: var(--line) }
+.gsep { flex: none; width: 1px; background: var(--line); margin: 4px 2px }
+.glist { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain }
+.g { flex: 1 0 84px; min-height: 84px; display: flex; flex-direction: column; background: var(--tile); border: 1px solid var(--line); border-radius: 14px; padding: 6px 10px 4px; position: relative; overflow: hidden }
+.g .h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex: none }
+.g .h span { font: 600 11px var(--disp); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.g .h b { font: 700 17px var(--mono); color: var(--fg); white-space: nowrap; font-variant-numeric: tabular-nums } .g .h b small { font: 600 10px var(--disp); color: var(--muted); margin-left: 2px }
+.g canvas { flex: 1; min-height: 0; width: 100%; display: block }
 .g.bad { border-color: var(--bad) } .g.bad .h b { color: var(--bad) }
-.app.graphmode .core { grid-template-columns: 1fr auto } .app.graphmode .spd b { font-size: clamp(70px, 22vw, 120px) } .app.graphmode .gear { width: 70px; height: 70px; font-size: 40px }
-@media (orientation: landscape) { .app > .graphs { grid-row: 4; grid-template-columns: 1fr 1fr } }
+.gempty { color: var(--muted); font-size: 13px; text-align: center; padding: 18px }
+.app.graphmode .core { grid-template-columns: 1fr auto; align-items: center }
+.app.graphmode .spd { display: flex; align-items: baseline; gap: 8px } .app.graphmode .spd b { font-size: 64px; line-height: 1 } .app.graphmode .spd span { margin: 0; font-size: 14px }
+.app.graphmode .side { display: flex; align-items: center; gap: 10px } .app.graphmode .gear { width: 54px; height: 54px; border-radius: 14px; font-size: 30px } .app.graphmode .gear small { display: none }
+.app.graphmode .rpmnum b { font-size: 24px } .app.graphmode .hint { display: none }
+@media (orientation: landscape) {
+  .app.graphmode { grid-template-columns: 1fr }
+  .app.graphmode > .graphs { grid-row: 5; grid-column: 1 } .app.graphmode > .core { grid-row: 4; grid-column: 1 } .app.graphmode > .foot { grid-row: 6 }
+  .app.graphmode { grid-template-rows: auto auto auto auto 1fr auto }
+  .glist { flex-direction: row; flex-wrap: wrap; align-content: flex-start } .g { flex: 1 0 calc(33.3% - 6px); min-height: 78px; height: calc(50% - 3px) }
+  .app.graphmode .spd b { font-size: 44px } .app.graphmode .gear { width: 42px; height: 42px; font-size: 24px }
+}
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
 </style>
 </head>
@@ -195,56 +217,104 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   let lastD = null;
 
   // ---- modo gráfico: séries em tempo real enquanto dirige
+  // band = faixa normal desenhada no fundo; ref = linha de referência; dec = casas decimais do valor
   const GR = [
-    { id: "spd", l: "Velocidade", u: "km/h", lines: [["speed", "--speed"]] },
-    { id: "rpm", l: "Rotação", u: "rpm", lines: [["rpm", "--rpm"]], k: "rpm" },
-    { id: "thr", l: "Pedal × borboleta", u: "%", lines: [["pedal_d", "--pedal"], ["tps", "--o2"], ["tps_cmd", "--speed"]], min: 0 },
-    { id: "fuel", l: "Consumo", u: "L/h", lines: [["fuel_lh", "--o2"]], min: 0 },
-    { id: "maf", l: "Fluxo de ar (MAF)", u: "g/s", lines: [["maf", "--speed"]], min: 0 },
-    { id: "lam", l: "Sonda λ (real × alvo)", u: "λ", lines: [["o2c1_lambda", "--o2"], ["lambda_cmd", "--muted"]], k: "o2c1_lambda" },
-    { id: "tim", l: "Avanço", u: "°", lines: [["timing", "--volt"]], k: "timing" },
-    { id: "load", l: "Carga / MAP", u: "%", lines: [["load", "--rpm"], ["map", "--speed"]], min: 0 },
-    { id: "ect", l: "Temp. motor", u: "°C", lines: [["ect", "--temp"]], k: "ect" },
-    { id: "stft", l: "Ajuste curto", u: "%", lines: [["stft1", "--o2"]], k: "stft1" },
+    { id: "rpm", l: "Rotação", u: "rpm", c: "--rpm", lines: [["rpm", "--rpm"]], k: "rpm", min: 0, dec: 0 },
+    { id: "spd", l: "Velocidade", u: "km/h", c: "--speed", lines: [["speed", "--speed"]], min: 0, dec: 0 },
+    { id: "thr", l: "Pedal × borboleta", u: "%", c: "--pedal", lines: [["pedal_d", "--pedal"], ["tps", "--o2"]], min: 0, dec: 0 },
+    { id: "stft", l: "Ajuste curto", u: "%", c: "--o2", lines: [["stft1", "--o2"]], k: "stft1", band: [-10, 10], ref: 0, dec: 1, sign: true },
+    { id: "lam", l: "Sonda λ", u: "λ", c: "--speed", lines: [["o2c1_lambda", "--speed"]], k: "o2c1_lambda", band: [0.97, 1.03], ref: 1, dec: 2, clip: [0.7, 1.4] },
+    { id: "fuel", l: "Consumo", u: "L/h", c: "--o2", lines: [["fuel_lh", "--o2"]], min: 0, dec: 1 },
+    { id: "tim", l: "Avanço", u: "°", c: "--volt", lines: [["timing", "--volt"]], k: "timing", dec: 1 },
+    { id: "maf", l: "Fluxo de ar", u: "g/s", c: "--speed", lines: [["maf", "--speed"]], min: 0, dec: 1 },
+    { id: "load", l: "Carga", u: "%", c: "--rpm", lines: [["load", "--rpm"]], min: 0, dec: 0 },
+    { id: "ect", l: "Temp. motor", u: "°C", c: "--temp", lines: [["ect", "--temp"]], k: "ect", dec: 0 },
+    { id: "batt", l: "Bateria", u: "V", c: "--volt", lines: [["batt", "--volt"]], k: "batt", dec: 1 },
   ];
-  let grSpan = 120e3;
-  const H = {};                                   // key -> [[t, v]]
+  const GR_DEFAULT = ["rpm", "thr", "stft", "lam", "fuel"];
+  let grSpan = 120e3, grOn = GR_DEFAULT;
+  try { grOn = (JSON.parse(localStorage.getItem("driveGraphs")) || GR_DEFAULT).filter((id) => GR.some((g) => g.id === id)); grSpan = +localStorage.getItem("driveSpan") || 120e3; } catch { }
+  const H = {};                                   // sinal -> [[t, v]]
   const css = getComputedStyle(document.documentElement);
   const col = (v) => css.getPropertyValue(v).trim() || "#888";
   function buildGraphs() {
-    $("graphs").innerHTML = `<div class="g" style="padding:6px 10px;display:flex;gap:6px;justify-content:flex-end">${[[60e3, "1 min"], [120e3, "2 min"], [300e3, "5 min"]].map(([v, l]) => `<button type="button" class="rb" data-s="${v}" style="font:600 12px var(--disp);background:${v === grSpan ? "var(--line)" : "none"};color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:5px 10px">${l}</button>`).join("")}</div>`
-      + GR.map((g) => `<div class="g" id="g-${g.id}"><div class="h"><span>${g.l}</span><b id="gv-${g.id}">—</b></div><canvas id="gc-${g.id}"></canvas></div>`).join("");
+    const act = GR.filter((g) => grOn.includes(g.id));
+    $("graphs").innerHTML = `<div class="gbar" role="group" aria-label="Gráficos e período">
+        ${[[60e3, "1 min"], [120e3, "2 min"], [300e3, "5 min"]].map(([v, l]) => `<button type="button" class="gchip span" data-s="${v}" aria-pressed="${v === grSpan}">${l}</button>`).join("")}<span class="gsep"></span>
+        ${GR.map((g) => `<button type="button" class="gchip" data-g="${g.id}" aria-pressed="${grOn.includes(g.id)}" style="--c:var(${g.c})">${g.l}</button>`).join("")}</div>
+      <div class="glist">${act.length ? act.map((g) => `<div class="g" id="g-${g.id}"><div class="h"><span>${g.l}</span><b id="gv-${g.id}">—</b></div><canvas id="gc-${g.id}"></canvas></div>`).join("")
+        : `<div class="gempty">Toque nos nomes acima para escolher os gráficos.</div>`}</div>`;
   }
   buildGraphs();
-  $("graphs").addEventListener("click", (e) => { const b = e.target.closest("[data-s]"); if (b) { grSpan = +b.dataset.s; buildGraphs(); drawGraphs(); } });
-  let graphMode = false; try { graphMode = localStorage.getItem("driveGraph") === "1"; } catch { }
-  const applyMode = () => { $("graphs").hidden = !graphMode; $("tiles").hidden = graphMode; document.querySelector(".app").classList.toggle("graphmode", graphMode); $("grBtn").textContent = graphMode ? "▦" : "📈"; };
+  $("graphs").addEventListener("click", (e) => {
+    const sp = e.target.closest("[data-s]"), g = e.target.closest("[data-g]");
+    if (sp) grSpan = +sp.dataset.s;
+    else if (g) { const id = g.dataset.g; grOn = grOn.includes(id) ? grOn.filter((x) => x !== id) : GR.map((x) => x.id).filter((x) => x === id || grOn.includes(x)); }
+    else return;
+    try { localStorage.setItem("driveGraphs", JSON.stringify(grOn)); localStorage.setItem("driveSpan", grSpan); } catch { }
+    const left = document.querySelector(".gbar")?.scrollLeft || 0;
+    buildGraphs(); document.querySelector(".gbar").scrollLeft = left; drawGraphs();
+  });
+  let graphMode = false; try { graphMode = localStorage.getItem("driveGraph") === "1" || /[?&]graf=1/.test(location.search); } catch { }
+  const applyMode = () => { $("graphs").hidden = !graphMode; $("tiles").hidden = graphMode; document.querySelector(".app").classList.toggle("graphmode", graphMode); $("grBtn").textContent = graphMode ? "▦" : "📈"; $("grBtn").setAttribute("aria-label", graphMode ? "Voltar aos quadros" : "Modo gráfico"); };
   applyMode();
-  $("grBtn").addEventListener("click", (e) => { e.preventDefault(); graphMode = !graphMode; try { localStorage.setItem("driveGraph", graphMode ? "1" : "0"); } catch { } applyMode(); drawGraphs(); });
+  $("grBtn").addEventListener("click", (e) => { e.preventDefault(); graphMode = !graphMode; try { localStorage.setItem("driveGraph", graphMode ? "1" : "0"); } catch { } applyMode(); requestAnimationFrame(drawGraphs); });
+  window.addEventListener("resize", () => requestAnimationFrame(drawGraphs));
   function pushHist(d) {
     const v = d.values || {}; const t = d.ts;
-    for (const g of GR) for (const [k] of g.lines) { if (v[k] == null) continue; const h = (H[k] ??= []); const tk = d.value_ts?.[k] || t; if (!h.length || h.at(-1)[0] !== tk) h.push([tk, v[k]]); while (h.length && h[0][0] < t - 300e3) h.shift(); }
+    for (const g of GR) for (const [k] of g.lines) { if (v[k] == null) continue; const h = (H[k] ??= []); const tk = d.value_ts?.[k] || t;
+      if (!h.length || tk > h[h.length - 1][0]) h.push([tk, v[k]]); while (h.length && h[0][0] < t - 300e3) h.shift(); }
   }
   function drawGraphs() {
     if (!graphMode || !lastD) return;
-    const now = lastD.ts, x0 = now - grSpan;
+    const now = lastD.ts, x0 = now - grSpan, dpr = Math.min(window.devicePixelRatio || 1, 3);
     for (const g of GR) {
       const c = $("gc-" + g.id); if (!c) continue;
-      const W = c.clientWidth * devicePixelRatio, Hh = c.clientHeight * devicePixelRatio; if (c.width !== W) { c.width = W; c.height = Hh; }
+      const W = Math.round(c.clientWidth * dpr), Hh = Math.round(c.clientHeight * dpr); if (W < 10 || Hh < 10) continue;
+      if (c.width !== W || c.height !== Hh) { c.width = W; c.height = Hh; }
       const ctx = c.getContext("2d"); ctx.clearRect(0, 0, W, Hh);
-      const all = g.lines.flatMap(([k]) => (H[k] || []).filter((p) => p[0] >= x0).map((p) => p[1]));
-      if (!all.length) continue;
-      let lo = g.min ?? Math.min(...all), hi = Math.max(...all); if (hi - lo < 1e-6) { hi += 1; lo -= g.min != null ? 0 : 1; }
-      const pad = (hi - lo) * 0.1; lo = g.min != null ? lo : lo - pad; hi += pad;
-      ctx.strokeStyle = col("--line"); ctx.lineWidth = 1; ctx.beginPath(); for (let i = 1; i < 4; i++) { const y = Hh * i / 4; ctx.moveTo(0, y); ctx.lineTo(W, y); } ctx.stroke();
-      ctx.fillStyle = col("--muted"); ctx.font = `${10 * devicePixelRatio}px ui-monospace, monospace`; ctx.fillText(nf(hi, hi < 10 ? 1 : 0), 4, 11 * devicePixelRatio); ctx.fillText(nf(lo, hi < 10 ? 1 : 0), 4, Hh - 3);
-      g.lines.forEach(([k, cv], i) => { const h = (H[k] || []).filter((p) => p[0] >= x0); if (!h.length) return;
-        ctx.strokeStyle = col(cv); ctx.lineWidth = (i === 0 ? 2.4 : 1.6) * devicePixelRatio; ctx.beginPath();
-        h.forEach((p, j) => { const x = (p[0] - x0) / grSpan * W, y = Hh - (p[1] - lo) / (hi - lo) * Hh; j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); });
+      const clip = (v) => g.clip ? Math.max(g.clip[0], Math.min(g.clip[1], v)) : v;
+      const series = g.lines.map(([k, cv]) => [cv, (H[k] || []).filter((p) => p[0] >= x0).map((p) => [p[0], clip(p[1])])]);
+      const all = series.flatMap(([, h]) => h.map((p) => p[1]));
       const v0 = lastD.values?.[g.lines[0][0]];
-      $("gv-" + g.id).textContent = v0 == null ? "—" : `${nf(v0, Math.abs(v0) < 10 ? 2 : 0)} ${g.u}`;
+      $("gv-" + g.id).innerHTML = v0 == null ? "—" : `${g.sign && v0 > 0 ? "+" : ""}${nf(v0, g.dec)}<small>${g.u}</small>`;
       const st = g.k ? lastD.status?.[g.k]?.[0] : null; $("g-" + g.id).classList.toggle("bad", st === "warn" || st === "crit");
+      const padT = 4 * dpr, padB = 4 * dpr, ih = Hh - padT - padB;
+      if (!all.length) { ctx.fillStyle = col("--muted"); ctx.font = `${11 * dpr}px -apple-system, sans-serif`; ctx.fillText("aguardando leituras…", 6 * dpr, Hh / 2); continue; }
+      let lo = Math.min(...all, ...(g.band ? [g.band[0]] : []), ...(g.min != null ? [g.min] : [])), hi = Math.max(...all, ...(g.band ? [g.band[1]] : []));
+      if (hi - lo < 1e-6) { hi += 1; lo -= g.min != null ? 0 : 1; }
+      const pad = (hi - lo) * 0.08; if (g.min == null || lo < g.min) lo -= pad; hi += pad;
+      const X = (t) => (t - x0) / grSpan * W, Y = (v) => padT + ih - (v - lo) / (hi - lo) * ih;
+      if (g.band) { ctx.fillStyle = col("--ok") + "22"; ctx.fillRect(0, Y(g.band[1]), W, Y(g.band[0]) - Y(g.band[1])); }
+      ctx.strokeStyle = col("--line"); ctx.lineWidth = dpr; ctx.beginPath();
+      for (let i = 1; i < 4; i++) { const x = Math.round(W * i / 4); ctx.moveTo(x, 0); ctx.lineTo(x, Hh); }
+      if (g.ref != null) { ctx.moveTo(0, Y(g.ref)); ctx.lineTo(W, Y(g.ref)); }
+      ctx.stroke();
+      series.forEach(([cv, h], i) => { if (!h.length) return;
+        const color = col(cv);
+        if (i === 0 && series.length === 1 && g.ref == null) {            // área preenchida quando é uma série só
+          ctx.beginPath(); ctx.moveTo(X(h[0][0]), Hh); h.forEach((p) => ctx.lineTo(X(p[0]), Y(p[1]))); ctx.lineTo(X(h[h.length - 1][0]), Hh); ctx.closePath(); ctx.fillStyle = color + "26"; ctx.fill(); }
+        ctx.strokeStyle = color; ctx.lineWidth = (i === 0 ? 2.2 : 1.6) * dpr; ctx.lineJoin = "round"; ctx.beginPath();
+        h.forEach((p, j) => { j ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1])); }); ctx.stroke();
+        const lp = h[h.length - 1]; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(Math.min(X(lp[0]), W - 4 * dpr), Y(lp[1]), 3.5 * dpr, 0, 6.3); ctx.fill(); });
+      ctx.fillStyle = col("--muted"); ctx.font = `${10 * dpr}px ui-monospace, Menlo, monospace`; ctx.textBaseline = "top"; ctx.fillText(nf(hi, g.dec), 3 * dpr, 2 * dpr);
+      ctx.textBaseline = "bottom"; ctx.fillText(nf(lo, g.dec), 3 * dpr, Hh - 1 * dpr);
     }
+  }
+
+  // ---- demonstração (/dirigir?demo=1): gera leituras de mentira no próprio celular, para ver a tela sem o carro
+  function demo() {
+    let t = Date.now() - 150e3, spd = 0, rpm = 800, km = 0;
+    const frame = () => { const ph = (t / 1000) % 60, acc = ph < 18 ? 1 : ph < 34 ? 0 : ph < 44 ? -1 : 0;
+      spd = Math.max(0, Math.min(72, spd + acc * 2.2 + (Math.random() - .5))); const gear = spd < 2 ? 0 : spd < 18 ? 1 : spd < 32 ? 2 : spd < 48 ? 3 : spd < 62 ? 4 : 5;
+      rpm = gear ? spd / [0, 8.83, 14.84, 22.46, 29.26, 38.16][gear] * 1000 + Math.random() * 40 : 780 + Math.random() * 40;
+      const pedal = acc > 0 ? 28 + Math.random() * 8 : 0, lh = gear ? 1.2 + pedal * .16 + spd * .03 : 0.9; km += spd / 3600 * .5;
+      const v = { speed: Math.round(spd), rpm: Math.round(rpm), gear, pedal_d: 20 + pedal * .6, tps: 12.5 + pedal * .55, tps_cmd: 1.2 + pedal * .8, stft1: (gear ? 4 : 38) + Math.sin(t / 3000) * 5, o2c1_lambda: (gear ? 1 : 1.09) + Math.sin(t / 2100) * .02,
+        lambda_cmd: .99, fuel_lh: +lh.toFixed(2), kml_inst: spd > 3 ? +(spd / lh).toFixed(1) : null, timing: gear ? 22 + Math.sin(t / 4000) * 8 : 8, maf: gear ? 6 + pedal * .5 : 1.5, load: gear ? 35 + pedal : 24, map: gear ? 45 + pedal : 30, ect: 92, iat: 41, batt: 14.1 };
+      const d = { ts: t, state: "coletando", engine_on: true, values: v, value_ts: {}, status: { stft1: [gear ? "ok" : "crit", "", "±10"] }, alerts: [], dtc: {}, mil: false, trip: { km: +km.toFixed(2), elapsed_s: 600, moving_s: 420, fuel_l: .8, kml: 9.4, avg_moving: 31, max_speed: 72 } };
+      t += 500; return d; };
+    while (t < Date.now() - 500) { const d = frame(); lastD = d; pushHist(d); }
+    setInterval(() => render(frame()), 500);
   }
 
   // ---- teste 0–100
@@ -312,10 +382,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   const staleSSE = (d) => d.state !== "pi_offline" && wsTs && (d.ts || 0) <= wsTs;   // o WebSocket já mostrou algo mais novo
   let es;
   const connect = () => { try { es?.close(); } catch { } es = new EventSource("/api/stream"); es.onmessage = (e) => { try { const d = JSON.parse(e.data); if (!staleSSE(d)) { if (d.state === "pi_offline") wsTs = 0; render(d); } } catch (x) { console.error(x); } }; };
-  fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env?.cloud) { $("accBtn").hidden = true; liveSocket(render); } }).catch(() => { });
-  connect();
+  fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env?.cloud) { $("accBtn").hidden = true; if (!DEMO) liveSocket(render); } }).catch(() => { });
+  const DEMO = /[?&]demo=1/.test(location.search);
+  if (DEMO) demo(); else connect();
   if (location.hash === "#acc") { acc.hidden = false; post("arm"); }
-  document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else { connect(); lock(); } });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else { if (!DEMO) connect(); lock(); } });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { });
   // manter a tela acesa (quando o navegador permitir)
   let wl = null;
