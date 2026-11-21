@@ -269,3 +269,4 @@ Pedido: implementar todas, sem perguntar. Código novo em `src/obdpi/extras.py` 
 - **Testes guiados com voz** (`tests.js`): fala em pt-BR (Web Speech; liberada no 1º toque, exigência do iPhone), botão 🔊/🔇 no teste. Cada fase fala a instrução; resultado final falado.
   - Caça-vazamento refeito: "posicione o spray" → 3, 2, 1 → **"borrife agora"** (3 s) → **"pare de borrifar"** (9 s observando) → fala "reagiu"/"sem reação". Bipe tipo contador Geiger que acelera e fica mais agudo conforme o ajuste cai. Opção **Sequência por voz** passa por todos os pontos sem tocar na tela.
   - Novo teste **Reaprendizado da marcha lenta**: espera a ventoinha ligar e desligar, conta 10 min, avisa "faltam X minutos", pede para tirar o pé se a rotação subir e diz quando pode desligar.
+- Pi atualizado (deploy com proteção do cartão) e painel online publicado (wrangler, versão 2b600cb5). Conferido no ar: tests.js novo, quadro "Nesta partida", `session_alerts` chegando ao vivo.
