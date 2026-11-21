@@ -34,6 +34,28 @@
     } catch { }
   }
 
+  // ------------------------------------------------------------ voz (fala em português; o iPhone exige o 1º toque para liberar)
+  let voiceOn = true; try { voiceOn = localStorage.getItem("obdVoice") !== "0"; } catch { }
+  const plain = (t) => String(t ?? "").replace(/<[^>]+>/g, " ").replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF\uFE0F]/gu, "").replace(/\s+/g, " ").trim();
+  let ptVoice = null;
+  function pickVoice() { const vs = window.speechSynthesis?.getVoices() || []; ptVoice = vs.find((v) => /pt[-_]BR/i.test(v.lang)) || vs.find((v) => /^pt/i.test(v.lang)) || null; }
+  try { pickVoice(); window.speechSynthesis?.addEventListener?.("voiceschanged", pickVoice); } catch { }
+  function speak(text, interrupt = true) {
+    const t = plain(text); if (!voiceOn || !t || !window.speechSynthesis) return;
+    try { const u = new SpeechSynthesisUtterance(t.slice(0, 260)); u.lang = "pt-BR"; u.rate = 1.05; if (ptVoice) u.voice = ptVoice;
+      if (interrupt) speechSynthesis.cancel(); speechSynthesis.speak(u); } catch { }
+  }
+  let voiceUnlocked = false;
+  function unlockVoice() {                              // chamado dentro de um toque: libera o som e a fala no iPhone
+    try { actx ||= new (window.AudioContext || window.webkitAudioContext)(); actx.resume?.(); } catch { }
+    if (voiceUnlocked || !window.speechSynthesis) return; voiceUnlocked = true;
+    try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch { }
+  }
+  function paintVoice() { const b = $("#tstVoice"); if (b) { b.textContent = voiceOn ? "🔊" : "🔇"; b.title = voiceOn ? "Voz ligada (toque para silenciar)" : "Voz desligada"; } }
+  document.addEventListener("click", (e) => { if (!e.target.closest?.("#tstVoice")) return;
+    voiceOn = !voiceOn; try { localStorage.setItem("obdVoice", voiceOn ? "1" : "0"); } catch { } unlockVoice(); paintVoice();
+    if (voiceOn) speak("Voz ligada"); else speechSynthesis?.cancel(); });
+
   // ------------------------------------------------------------ janela do teste
   const SIG = { rpm: ["Rotação", "rpm", 0, "--rpm"], stft1: ["Ajuste curto", "%", 1, "--tps"], o2c1_lambda: ["Sonda (λ)", "", 2, "--speed"], tps: ["Borboleta", "%", 1, "--tps"],
     pedal_d: ["Pedal", "%", 1, "--pedal"], batt: ["Bateria", "V", 1, "--volt"], ecu_volt: ["Tensão", "V", 1, "--volt"], ect: ["Motor", "°C", 0, "--temp"], o2s2_v: ["Sonda pós-cat", "V", 2, "--temp"],
@@ -43,14 +65,14 @@
   function open(title, keys) {
     cancelled = false; buf = []; running = title; shown = keys; spark = keys.slice(0, 2);
     $("#tstTitle").textContent = title; $("#tstLog").innerHTML = ""; $("#tstBtns").innerHTML = ""; $("#tstChecks").innerHTML = ""; say("", "");
-    M().hidden = false; paintLive();
+    M().hidden = false; paintLive(); paintVoice(); unlockVoice();
     try { navigator.wakeLock?.request("screen").catch(() => { }); } catch { }
   }
-  function close() { running = null; cancelled = true; M().hidden = true; renderHistory(); }
+  function close() { running = null; cancelled = true; M().hidden = true; try { speechSynthesis?.cancel(); } catch { } renderHistory(); }
   function say(big, small, tone = "") { $("#tstBig").innerHTML = big; $("#tstBig").className = "tbig " + tone; $("#tstSmall").innerHTML = small; }
   function log(ok, text) { $("#tstLog").insertAdjacentHTML("beforeend", `<div class="alert" style="--s:${ok === true ? "var(--ok)" : ok === false ? "var(--bad)" : "var(--warn)"}"><span class="ic">${ok === true ? "✓" : ok === false ? "!" : "i"}</span><div><div class="t">${text}</div></div><span></span></div>`); }
   function buttons(list) { return new Promise((res) => { $("#tstBtns").innerHTML = list.map((b, i) => `<button class="btn${b.main ? " big" : ""}" type="button" data-i="${i}">${esc(b.t)}</button>`).join("");
-    $("#tstBtns").onclick = (e) => { const b = e.target.closest("[data-i]"); if (b) { $("#tstBtns").innerHTML = ""; $("#tstBtns").onclick = null; res(list[+b.dataset.i].v); } }; }); }
+    $("#tstBtns").onclick = (e) => { const b = e.target.closest("[data-i]"); if (b) { unlockVoice(); $("#tstBtns").innerHTML = ""; $("#tstBtns").onclick = null; res(list[+b.dataset.i].v); } }; }); }
   function paintLive() {
     const v = live?.values || {};
     $("#tstLive").innerHTML = shown.map((k) => { const [l, u, d] = SIG[k]; return `<div><span class="lbl">${l}</span><b>${k === "stft1" ? sg(v[k], d) : nf(v[k], d)}<small> ${u}</small></b></div>`; }).join("");
@@ -75,8 +97,9 @@
     });
   }
   // espera `sec` segundos mostrando contagem; `fn` (opcional) roda a cada passo e pode devolver {big, small, tone} ou "stop"
-  async function phase(sec, big, small, tone = "", fn = null) {
+  async function phase(sec, big, small, tone = "", fn = null, talk = big) {
     const t0 = Date.now();
+    if (talk) speak(talk);
     while (Date.now() - t0 < sec * 1000) {
       if (cancelled) throw new Cancel();
       const left = `<b>${Math.ceil(sec - (Date.now() - t0) / 1000)} s</b>`;
@@ -109,6 +132,7 @@
     const verdict = incomplete ? "incompleto" : bad ? `${bad} ponto(s) de atenção` : "tudo certo";
     say(incomplete ? "Teste incompleto" : bad ? "⚠️ Encontrei algo" : "✅ Tudo certo", incomplete || bad ? badMsg : okMsg, incomplete || bad ? "bad" : "go");
     beep(bad ? 440 : 990, 200, bad ? 2 : 1);
+    speak(incomplete ? "Teste incompleto." : bad ? "Atenção, encontrei algo. " + plain(badMsg) : "Tudo certo. " + plain(okMsg));
     const rec = { id, title, ts: Date.now(), verdict, lines };
     try { const all = JSON.parse(localStorage.getItem("obdTests") || "[]"); all.unshift(rec); localStorage.setItem("obdTests", JSON.stringify(all.slice(0, 40))); } catch { }
     // no painel do Pi o resultado também vai para o diário de manutenção (entra no contexto da IA)
@@ -124,41 +148,106 @@
   // ------------------------------------------------------------ 1. caça-vazamento (entrada falsa de ar)
   const POINTS = ["Junta do corpo de borboleta (em volta toda)", "Duto entre o filtro/MAF e a borboleta (emendas e abraçadeiras)", "Mangueira do servofreio", "Mangueira da PCV / respiro do motor",
     "Base do coletor de admissão (junto ao cabeçote)", "Em volta dos bicos injetores", "Outro ponto"];
+  const spoken = (p) => p.replace(/\s*\(.*?\)/g, "").replace(/\//g, " e ");
   async function leakTest() {
     open("Caça-vazamento de ar", ["rpm", "stft1", "o2c1_lambda"]);
-    await ready(`Você borrifa <b>limpa-carburador</b> (jatos curtos de 1–2 s) em um ponto por vez. Se houver vazamento ali, o motor suga o produto e as leituras mudam: o celular apita e vibra.<br><br>
+    await ready(`O celular <b>fala</b> cada passo: "prepare", "borrife agora", "pare de borrifar". Você borrifa <b>limpa-carburador</b> num ponto por vez, só quando ouvir. Se houver vazamento ali, o motor suga o produto e as leituras mudam: ele avisa "reagiu".<br><br>
+      Use <b>Sequência por voz</b> para passar por todos os pontos sem tocar na tela. Volume do celular alto; 🔊 no topo liga e desliga a voz.<br><br>
       ⚠️ Produto inflamável: longe do escapamento quente e do alternador, sem cigarro nem faísca por perto.`, [C.on, C.hot, C.stopped, C.calm]);
     const hits = [], clean = [], count = {};
+    const AUTO = POINTS.filter((p) => p !== "Outro ponto");
+    let queue = null;
     for (;;) {
-      const base = await phase(8, "Não borrife ainda", "Medindo o motor em repouso");
+      const base = await phase(8, "Não borrife ainda", "Medindo o motor em repouso", "", null, queue ? "Não borrife. Medindo o repouso." : "Não borrife ainda. Medindo o motor em repouso.");
       const b = { stft: mean(col(base, "stft1")), sst: sd(col(base, "stft1")), rpm: mean(col(base, "rpm")), srpm: sd(col(base, "rpm")), lam: mean(lam(base)) };
-      if (b.rpm == null) { say("Sem leitura", "Não recebi dados do motor. Confira se o painel está ao vivo.", "bad"); break; }
-      say("Onde você vai borrifar?", `Repouso: ${nf(b.rpm)} rpm · ajuste ${sg(b.stft, 1)} %${b.lam ? " · λ " + nf(b.lam, 2) : ""}`);
-      const p = await buttons(POINTS.map((t) => ({ t: (count[t] ? "↻ " : "") + t, v: t })).concat([{ t: "✅ Terminar o teste", v: null, main: true }]));
-      if (!p) break;
-      count[p] = (count[p] || 0) + 1; beep(660, 120);
-      let hit = null;
-      await phase(12, "Borrife agora", "", "go", (w) => {
+      if (b.rpm == null) { say("Sem leitura", "Não recebi dados do motor. Confira se o painel está ao vivo.", "bad"); speak("Sem leitura do motor"); break; }
+      let p;
+      if (queue && queue.length) p = queue.shift();
+      else {
+        if (queue) { queue = null; speak("Sequência terminada. Escolha um ponto para repetir, ou termine o teste."); }
+        else speak("Escolha onde vai borrifar", false);
+        say("Onde você vai borrifar?", `Repouso: ${nf(b.rpm)} rpm · ajuste ${sg(b.stft, 1)} %${b.lam ? " · λ " + nf(b.lam, 2) : ""}`);
+        p = await buttons([{ t: "▶ Sequência por voz (todos os pontos)", v: "*", main: true }].concat(POINTS.map((t) => ({ t: (count[t] ? "↻ " : "") + t, v: t })), [{ t: "✅ Terminar o teste", v: null }]));
+        if (!p) break;
+        if (p === "*") { queue = AUTO.slice(); p = queue.shift(); }
+      }
+      count[p] = (count[p] || 0) + 1;
+      // 1) posicionar: fala o ponto e conta 3, 2, 1
+      speak(`Próximo ponto: ${spoken(p)}. Posicione o spray.`);
+      await phase(6, "Posicione o spray", `${esc(p)}<br>Ainda não borrife`, "", null, "");
+      for (const n of [3, 2, 1]) { beep(660, 90); speak(String(n)); await phase(1, String(n), esc(p), "", null, ""); }
+      // 2) borrifar 3 s, 3) parar e observar 9 s — a reação é medida desde o início do jato
+      let hit = null, lastTick = 0; const tSpray = Date.now();
+      const watch = (stage) => () => {
+        const w = buf.filter((x) => x.t >= tSpray);
         const st = col(w, "stft1"), rp = col(w, "rpm"), la = lam(w);
         const dS = b.stft != null && st.length ? b.stft - Math.min(...st) : 0;                // ajuste cai: o motor recebeu "combustível" extra
         const dR = rp.length ? Math.max(...rp.map((x) => Math.abs(x - b.rpm))) : 0;           // rotação sobe ou engasga
         const dL = b.lam != null && la.length ? b.lam - Math.min(...la) : 0;                  // sonda vê mistura mais rica
         const strong = [dS > Math.max(6, 4 * b.sst), dR > Math.max(70, 4 * b.srpm), dL > 0.06].filter(Boolean).length;
-        if (strong >= 1 && !hit) { hit = { dS, dR, dL, strong }; beep(1200, 220, 2); }
+        // "contador Geiger": quanto mais o ajuste cai (ou a rotação/sonda mexe), mais rápido e mais agudo o bipe
+        const lvl = Math.max(dS / 6, dR / 70, dL / 0.06);
+        if (lvl >= 0.4 && Date.now() - lastTick > Math.max(110, 700 - lvl * 220)) { lastTick = Date.now(); beep(Math.min(1800, 600 + lvl * 300), 60); }
+        if (strong >= 1 && !hit) { hit = { dS, dR, dL, strong }; beep(1200, 220, 2); speak("Reagiu!", false); }
         if (hit) hit = { dS: Math.max(hit.dS, dS), dR: Math.max(hit.dR, dR), dL: Math.max(hit.dL, dL), strong: Math.max(hit.strong, strong) };
         const meter = `<span class="tmeter">ajuste ${sg(-dS, 1)} · rotação ±${nf(dR)} · λ ${sg(-dL, 2)}</span>`;
-        return { big: hit ? "🎯 REAGIU!" : "Borrife agora", small: `${esc(p)}<br>${meter}<br>${hit ? "O motor sentiu o produto neste ponto" : "Jatos curtos, 2–3 s"}`, tone: hit ? "bad" : "go" };
-      });
+        const big = hit ? "🎯 REAGIU!" : stage === "spray" ? "💨 BORRIFE AGORA" : "✋ PARE de borrifar";
+        return { big, small: `${esc(p)}<br>${meter}<br>${stage === "spray" ? "Jatos curtos" : hit ? "O motor sentiu o produto neste ponto" : "Observando a reação"}`, tone: hit ? "bad" : stage === "spray" ? "go" : "" };
+      };
+      beep(1000, 250);
+      await phase(3, "💨 BORRIFE AGORA", esc(p), "go", watch("spray"), "Borrife agora!");
+      beep(500, 300);
+      await phase(9, "✋ PARE de borrifar", esc(p), "", watch("stop"), "Pare de borrifar.");
       if (hit) { const why = [hit.dS > 6 ? `ajuste caiu ${nf(hit.dS, 0)} pontos` : "", hit.dR > 70 ? `rotação variou ${nf(hit.dR)} rpm` : "", hit.dL > 0.06 ? `sonda enriqueceu ${nf(hit.dL, 2)}` : ""].filter(Boolean).join(", ");
         if (!hits.some((h) => h.startsWith(p))) hits.push(`${p} (${why})`);
+        speak(`${spoken(p)}: reagiu. ${why}.${hit.strong < 2 && count[p] < 2 ? " Repita este ponto depois para confirmar." : ""}`);
         log(false, `<b>${esc(p)}</b>: reagiu (${why})${hit.strong < 2 && count[p] < 2 ? ". Repita neste ponto para confirmar." : count[p] > 1 ? ". Confirmado na repetição." : ""}`); }
-      else { if (!clean.includes(p)) clean.push(p); log(true, `${esc(p)}: sem reação`); }
-      await phase(6, "Espere", "Deixando o motor voltar ao normal");
+      else { if (!clean.includes(p)) clean.push(p); speak(`${spoken(p)}: sem reação.`); log(true, `${esc(p)}: sem reação`); }
+      await phase(8, "Espere", "Deixando o motor voltar ao normal", "", null, "");
     }
     if (!hits.length && !clean.length) return close();
     await finish("leak", "Caça-vazamento", hits.length, hits.length ? hits : clean.map((c) => c + ": sem reação"),
       `Testados ${clean.length} ponto(s), nenhum reagiu. Se a mistura continua pobre parado, peça um <b>teste de fumaça</b> na oficina: ele acha vazamentos pequenos que o spray não alcança.`,
       `O ar falso entra por: <b>${hits.map(esc).join("; ")}</b>.<br>Corrija a vedação desse ponto, faça o reaprendizado da marcha lenta e rode 30–50 km.`);
+  }
+
+  // ------------------------------------------------------------ reaprendizado da marcha lenta (depois de bateria desligada / corpo de borboleta)
+  async function relearnTest() {
+    open("Reaprendizado da marcha lenta", ["ect", "rpm", "stft1"]);
+    await ready(`Use depois de desligar a bateria ou mexer no corpo de borboleta. O celular acompanha e <b>fala</b> cada etapa:<br>
+      1. marcha lenta com tudo desligado, <b>sem tocar no pedal</b>;<br>2. espera a <b>ventoinha ligar e desligar</b>;<br>3. conta mais <b>10 minutos</b>;<br>4. avisa "pode desligar".<br><br>
+      Se o motor ainda estiver frio, tudo bem: ele espera aquecer. Deixe o celular apoiado com a tela ligada.`, [C.on, C.stopped, C.calm, C.alloff]);
+    let peak = 0, onAt = null, low = null, fanDone = false, warnPedal = 0, lastTalk = 0; const t0 = Date.now(); const lines = [];
+    speak("Reaprendizado começou. Não toque no pedal e deixe tudo desligado.");
+    await phase(1800, "Aguardando a ventoinha", "", "", () => {
+      const v = live?.values || {}, e = v.ect; if (e == null) return {};
+      if ((v.rpm ?? 0) > 1400 && Date.now() - warnPedal > 15000 && e >= 70) { warnPedal = Date.now(); speak("Tire o pé do acelerador"); }
+      if (e > peak) peak = e;
+      if (onAt == null && peak >= 94 && e <= peak - 2) { onAt = peak; beep(990, 160, 2); speak(`A ventoinha ligou, em ${nf(peak)} graus. Agora espere ela desligar.`); }
+      if (onAt != null) { low = low == null ? e : Math.min(low, e); if (e >= low + 1 && low <= onAt - 2) { fanDone = true; return "stop"; } }
+      if (onAt == null && Date.now() - lastTalk > 180000) { lastTalk = Date.now(); if (Date.now() - t0 > 60000) speak(`Motor em ${nf(e)} graus. Ainda esperando a ventoinha.`, false); }
+      if (peak >= 106) return "stop";
+      return { big: `${nf(e)} °C`, small: onAt == null ? (e < 90 ? "Aquecendo. A ventoinha costuma ligar perto de 95–100 °C" : "Quase lá: esperando a ventoinha ligar") : `Ventoinha ligou em ${nf(onAt)} °C · esperando desligar (temperatura parar de cair)`, tone: onAt == null ? "" : "go" };
+    }, "");
+    if (peak >= 106) { lines.push(`temperatura chegou a ${nf(peak)} °C sem a ventoinha baixar`); return finish("relearn", "Reaprendizado da marcha lenta", 1, lines, "", `A temperatura passou de 105 °C. <b>Desligue o motor</b> e confira a ventoinha e o nível do líquido com o motor frio.`); }
+    if (!fanDone) { lines.push("ventoinha não completou o ciclo em 30 min"); return finish("relearn", "Reaprendizado da marcha lenta", 0, lines, "", "A ventoinha não completou o ciclo em 30 min. Rode o teste Ventoinha do radiador.", true); }
+    lines.push(`ventoinha ligou em ${nf(onAt)} °C e desligou em ${nf(low)} °C`);
+    beep(990, 200, 2); speak("A ventoinha desligou. Agora mais dez minutos em marcha lenta, sem tocar no pedal.");
+    const rp = []; let said = 10;
+    await phase(600, "Mais 10 minutos", "", "go", (w, el) => {
+      const left = Math.ceil((600 - el) / 60); const v = live?.values || {};
+      if (v.rpm != null) rp.push(v.rpm);
+      if (left < said && left % 2 === 0 && left > 0) { said = left; speak(`Faltam ${left} minutos.`, false); }
+      if ((v.rpm ?? 0) > 1400 && Date.now() - warnPedal > 15000) { warnPedal = Date.now(); speak("Tire o pé do acelerador"); }
+      return { big: `${left} min`, small: `Marcha lenta ${nf(v.rpm)} rpm · motor ${nf(v.ect)} °C · não toque no pedal` };
+    }, "");
+    const m = mean(rp), dev = sd(rp); lines.push(`marcha lenta no fim ${nf(m)} rpm (±${nf(dev)})`);
+    const st = mean(col(buf.filter((x) => x.t > Date.now() - 120000), "stft1")); if (st != null) lines.push(`ajuste curto ${sg(st, 0)} %`);
+    const bad = (m && (m < 650 || m > 900) ? 1 : 0) + (st != null && st > 25 ? 1 : 0);
+    speak("Pronto! Reaprendizado concluído. Pode desligar o motor, ou seguir direto para o caça-vazamento, que precisa do motor quente.");
+    await finish("relearn", "Reaprendizado da marcha lenta", bad, lines,
+      `Concluído. Marcha lenta em ${nf(m)} rpm. <b>Pode desligar o motor</b>, ou seguir direto para o <b>Caça-vazamento</b> (motor quente é o ideal).`,
+      `Concluído, mas: marcha lenta ${nf(m)} rpm${st != null && st > 25 ? ` e ajuste curto em ${sg(st, 0)} % (mistura pobre: ainda entra ar falso)` : ""}. <b>Pode desligar</b>, ou faça agora o <b>Caça-vazamento</b>.`);
   }
 
   // ------------------------------------------------------------ 2. raio-X da mistura (parado, 3 rotações)
@@ -167,9 +256,9 @@
     await ready("Em 1 minuto, parado, o painel mede a correção de combustível em <b>marcha lenta, 1.500 e 2.500 rpm</b>. O jeito que ela muda com a rotação mostra a causa: entrada de ar, MAF sujo ou falta de combustível.", [C.on, C.hot, C.stopped]);
     const a = await phase(15, "Marcha lenta", "Pé fora do pedal");
     beep(880);
-    const b = steady(await phase(18, "", "", "", hold(1500, 250)), 1500, 350).slice(3);
+    const b = steady(await phase(18, "", "", "", hold(1500, 250), "Acelere e segure em mil e quinhentos rotações"), 1500, 350).slice(3);
     beep(880);
-    const c = steady(await phase(18, "", "", "", hold(2500, 300)), 2500, 450).slice(3);
+    const c = steady(await phase(18, "", "", "", hold(2500, 300), "Agora segure em dois mil e quinhentos"), 2500, 450).slice(3);
     beep(660);
     await phase(4, "Pode soltar", "Terminando");
     const s = [a, b, c].map((x) => mean(col(x, "stft1"))), l = [a, b, c].map((x) => mean(lam(x)));
@@ -307,7 +396,7 @@
     await phase(720, "Aguardando a ventoinha", "", "", () => {
       const e = live?.values?.ect; if (e == null) return {};
       if (e > peak) { peak = e; tPeak = Date.now(); }
-      if (onAt == null && peak >= 94 && e <= peak - 2) { onAt = peak; beep(990, 160, 2); }           // começou a cair: a ventoinha ligou
+      if (onAt == null && peak >= 94 && e <= peak - 2) { onAt = peak; beep(990, 160, 2); speak("A ventoinha ligou"); }           // começou a cair: a ventoinha ligou
       if (onAt != null) { low = low == null ? e : Math.min(low, e); if (e >= low + 1 && low <= onAt - 3) { done = true; return "stop"; } }
       if (peak >= 106) return "stop";
       return { big: `${nf(e)} °C`, small: onAt == null ? `Subindo… pico até agora ${nf(peak)} °C` : `Ventoinha ligou em ${nf(onAt)} °C · baixando (mínimo ${nf(low)} °C)`, tone: onAt != null ? "go" : e >= 103 ? "bad" : "" };
@@ -325,7 +414,7 @@
   async function catTest() {
     open("Sondas e catalisador", ["rpm", "o2s2_v", "o2c1_lambda", "stft1"]);
     await ready("Você segura <b>2.500 rpm por 45 segundos</b>. Um catalisador bom deixa a sonda de trás quase parada; se ela oscila junto com a da frente, o catalisador está fraco. O painel também confere se a sonda da frente responde.", [C.on, C.hot, C.stopped]);
-    const w = steady(await phase(45, "", "", "", hold(2500, 300)), 2500, 500).slice(4);
+    const w = steady(await phase(45, "", "", "", hold(2500, 300), "Acelere e segure em dois mil e quinhentos rotações por quarenta e cinco segundos"), 2500, 500).slice(4);
     beep(660); await phase(3, "Pode soltar", "");
     const post = col(w, "o2s2_v"), la = lam(w), lines = []; let bad = 0;
     if (w.length < 20 || post.length < 5) { log(null, `Leituras estáveis insuficientes (${post.length} da sonda de trás).`); return finish("cat", "Sondas e catalisador", 0, [], "", "Repita segurando a rotação parada em 2.500 rpm até o bipe.", true); }
@@ -343,6 +432,7 @@
 
   // ------------------------------------------------------------ lista e histórico
   const TESTS = [
+    { id: "relearn", f: relearnTest, ic: "🔁", t: "Reaprendizado da marcha lenta", d: "Depois de desligar a bateria ou mexer na borboleta: acompanha a ventoinha, conta 10 min e avisa por voz quando pode desligar.", need: "Motor ligado, parado", min: "15–30 min", g: "Mistura e admissão" },
     { id: "leak", f: leakTest, ic: "🎯", t: "Caça-vazamento de ar", d: "Borrife limpa-carburador em cada ponto: o celular apita quando o motor reage. Acha entrada falsa de ar.", need: "Motor quente, parado", min: "5 min", g: "Mistura e admissão" },
     { id: "mix", f: mixTest, ic: "🔬", t: "Raio-X da mistura", d: "Mede a correção de combustível em 3 rotações e diz a causa: entrada de ar, MAF ou falta de combustível.", need: "Motor quente, parado", min: "1 min", g: "Mistura e admissão" },
     { id: "cat", f: catTest, ic: "🧪", t: "Sondas e catalisador", d: "Segurando 2.500 rpm: confere a sonda da frente e se o catalisador ainda trabalha.", need: "Motor quente, parado", min: "1 min", g: "Mistura e admissão" },
