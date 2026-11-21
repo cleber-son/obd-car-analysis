@@ -260,3 +260,9 @@ Pedido: implementar todas, sem perguntar. Código novo em `src/obdpi/extras.py` 
 - Não há partição `/data` separada (a raiz se expandiu no 1º boot), por isso o cartão fica montado gravável por baixo; só `/data` e o obd-doctor (`overlay.sh persist`, depois de uma correção aprovada) escrevem nele.
 - Ligar/desligar: `scripts/protect.sh <host> on|off|status` (reinicia o Pi). Com a marca `/etc/obd/protegido`, o `scripts/deploy.sh` destrava, reinicia, atualiza, religa e reinicia de novo.
 - Não resolve a reinicialização na partida por subtensão (isso é elétrico: no-break/conversor).
+
+## 2026-11-21 — Alertas zerados a cada partida
+- Pedido: o painel recomeça zerado a cada partida, para saber se **esta** sessão tem alerta.
+- Coletor (`collector/main.py`): `recent_alerts` passa a ser só da viagem atual (viagem nova → vazio; viagem retomada após queda do Pi → recarrega do banco). Novo campo ao vivo `session_alerts` {trip_id, start, n, crit, warn}.
+- Painel: o número vermelho do Diagnóstico/Alertas conta só os alertas da partida (amarelo se só avisos); novo quadro "🚦 Nesta partida" em Diagnóstico → Alertas; o histórico de 90 dias fica abaixo. Modo direção mostra "✓ nenhum alerta nesta partida" no rodapé.
+- Análise do dia após trocar a junta da borboleta (bateria desligada): ECU zerada (0 km / 0 aquecimentos desde a limpeza). Na mesma temperatura (60–80 °C, lenta) os números são iguais aos de antes: ajuste curto +46,9 % cravado, λ 1,17, pós-cat 0,01 V, MAF ÷ esperado 0,55 × 0,56. A junta não resolveu a entrada de ar.

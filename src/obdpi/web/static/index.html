@@ -147,8 +147,10 @@
   <section class="view" id="v-alertas" hidden>
     <div class="card"><h2>🔧 O que fazer</h2><div class="lbl" style="margin:4px 0 10px">Resumo dos problemas dos últimos 30 dias, do mais grave para o menos grave. Toque para ver causas e passo a passo</div>
       <div class="list" id="alertRecs"></div></div>
+    <div class="card"><div class="row-head"><h2>🚦 Nesta partida</h2><span class="lbl" id="sessSub"></span></div>
+      <div class="list" id="sessAlerts" style="margin-top:10px"><div class="empty">Aguardando dados ao vivo…</div></div></div>
     <div class="grid2">
-      <div class="card"><div class="row-head"><h2>Alertas</h2>
+      <div class="card"><div class="row-head"><h2>Histórico de alertas (90 dias)</h2>
         <button class="btn" type="button" id="alertClear">🧹 Limpar alertas</button>
         <select id="alertFilter" aria-label="Filtrar alertas"><option value="">Todos</option><option value="crit">Críticos</option><option value="warn">Avisos</option><option value="info">Informativos</option></select></div>
         <div class="list" id="alertList" style="margin-top:10px"></div></div>

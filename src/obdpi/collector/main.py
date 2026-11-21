@@ -123,7 +123,8 @@ class Collector:
         self.notified: dict[str, int] = {}
         self.dtc_active: dict[str, set] = {"confirmed": set(), "pending": set()}
         self.mil = False
-        self.recent_alerts: list[dict] = []
+        self.recent_alerts: list[dict] = []          # só os da partida atual (zera a cada viagem nova)
+        self.session_alerts = {"trip_id": None, "n": 0, "crit": 0, "warn": 0}
         self.fast_times: list[float] = []
         self.last_commit = time.monotonic()
         self.last_full = 0.0
@@ -390,7 +391,22 @@ class Collector:
         self.pending_crank = {"ts": ts, "rest": statistics.median(before) if before else None}
         self.trip_alerts = []
         self.notified = {}
+        self.load_session_alerts()
         self.con.commit()
+
+    def load_session_alerts(self) -> None:
+        """Painel zerado a cada partida: a tela e o contador mostram só os alertas desta viagem.
+        Viagem nova → vazio; viagem retomada (o Pi caiu com o motor ligado) → recarrega o que ela já tinha."""
+        rows = self.con.execute("SELECT ts, ts_end, severity, title, detail, rule, source, count FROM alert"
+                                " WHERE trip_id=? ORDER BY COALESCE(ts_end, ts) DESC LIMIT 20", (self.trip_id,)).fetchall()
+        self.recent_alerts = [{"ts": r["ts"], "ts_end": r["ts_end"], "sev": r["severity"], "title": r["title"], "detail": r["detail"],
+                               "rule": r["rule"], "source": r["source"], "count": r["count"] or 1} for r in rows]
+        self.count_session_alerts()
+
+    def count_session_alerts(self) -> None:
+        n = dict(self.con.execute("SELECT severity, COUNT(*) FROM alert WHERE trip_id=? GROUP BY severity", (self.trip_id,)).fetchall())
+        self.session_alerts = {"trip_id": self.trip_id, "start": self.trip_start or None, "crit": n.get("crit", 0),
+                               "warn": n.get("warn", 0), "n": n.get("crit", 0) + n.get("warn", 0)}
 
     def snapshot(self, ts: int) -> dict:
         """Retrato de tudo que o carro informa neste instante (para análises futuras)."""
@@ -561,6 +577,8 @@ class Collector:
                 for r in self.recent_alerts:
                     if r["rule"] == al.rule:
                         r.update(count=n, ts_end=al.ts, detail=al.detail, sev=sev)
+                if escalated and self.trip_id:
+                    self.count_session_alerts()
                 if n == 3 and SEV_ORDER[sev] >= SEV_ORDER[self.cfg["notify"]["min_severity"]]:
                     self.queue_push(f"{al.title} (continua)", f"Repetiu 3× nos últimos minutos. {al.detail}", sev)
                 continue
@@ -571,6 +589,8 @@ class Collector:
                 self.trip_alerts.append(al)
             self.recent_alerts = ([{"ts": al.ts, "sev": al.severity, "title": al.title, "detail": al.detail,
                                     "rule": al.rule, "source": al.source, "count": 1}] + self.recent_alerts)[:20]
+            if self.trip_id:
+                self.count_session_alerts()
             # 1 push por regra por viagem; crítico pode repetir a cada 15 min
             minsev = SEV_ORDER[self.cfg["notify"]["min_severity"]]
             if SEV_ORDER[al.severity] < minsev:
@@ -660,6 +680,7 @@ class Collector:
             "status": self.limits.status(dict(self.values, pedal_d_norm=self.throttle.pedal_norm(self.values.get("pedal_d")) or 0), self.engine_on),
             "dtc": {k: sorted(v) for k, v in self.dtc_active.items()}, "mil": self.mil,
             "alerts": self.recent_alerts[:10],
+            "session_alerts": self.session_alerts,
             "rates": {"fast_hz": round(len(self.fast_times) / 10, 2), "req": self.elm.n_requests if self.elm else 0},
             "adapter": {"label": self.elm.t.label if self.elm else None, "elm": self.elm.version if self.elm else None,
                         "protocol": self.elm.protocol_desc if self.elm else None,

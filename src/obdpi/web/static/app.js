@@ -146,8 +146,10 @@
     const crit = d.state === "pi_offline" ? [] : (d.alerts || []).filter((a) => Date.now() - (a.ts_end || a.ts) < 10 * 60e3 && a.sev !== "info")
       .sort((x, y) => (x.sev === "crit" ? 0 : 1) - (y.sev === "crit" ? 0 : 1));
     $("#banners").innerHTML = crit.slice(0, 1).map((a) => `<div class="banner" onclick="location.hash='alertas'" style="cursor:pointer;--s:${SEV[a.sev][0]}"><span class="ic">!</span><b>${esc(a.title)}${(a.count || 1) > 1 ? ` · continua (${a.count}×)` : ""}</b><span class="muted">${esc(a.detail)} · ${(a.count || 1) > 1 ? "desde " + tm(a.ts) + ", último " + tm(a.ts_end) : tm(a.ts)}</span><span class="more" style="grid-column:2">${crit.length > 1 ? `+ ${crit.length - 1} outro(s) alerta(s) agora · ` : ""}O que fazer ›</span></div>`).join("");
-    const nb = (d.alerts || []).filter((a) => d.ts - (a.ts_end || a.ts) < 24 * 3600e3 && a.sev === "crit").length;
-    for (const id of ["#badge", "#badge2"]) { $(id).hidden = !nb; $(id).textContent = nb; }
+    // contador zera a cada partida: só os alertas da viagem atual (ou da última, com o motor desligado)
+    const sa = d.session_alerts, nb = sa ? sa.n : (d.alerts || []).filter((a) => a.sev !== "info").length;
+    for (const id of ["#badge", "#badge2"]) { $(id).hidden = !nb; $(id).textContent = nb; $(id).style.background = sa && !sa.crit ? "var(--warn)" : ""; }
+    renderSession(d);
   }
 
   function renderTrimTiming(d) {
@@ -382,6 +384,15 @@
   });
 
   // ------------------------------------------------------------ alertas / DTC
+  function renderSession(d) {                           // "Nesta partida": zera a cada vez que o motor é ligado
+    const el = $("#sessAlerts"); if (!el) return;
+    const sa = d.session_alerts, list = (d.alerts || []).filter((a) => a.sev !== "info");
+    const since = sa?.start ? `desde a partida das ${tm(sa.start)}${d.engine_on ? "" : " (motor desligado)"}` : "aguardando a partida";
+    $("#sessSub").textContent = since;
+    el.innerHTML = !sa?.n && !list.length
+      ? `<div class="alert" style="--s:var(--ok)"><span class="ic">✓</span><div><div class="t">Nenhum alerta nesta partida</div><div class="d">${esc(since)}</div></div><span class="pill">OK</span></div>`
+      : `<div class="muted" style="font-size:13px">${sa ? `${sa.n} alerta(s): ${sa.crit} crítico(s), ${sa.warn} aviso(s)` : ""}</div>` + list.map(alertItem).join("");
+  }
   async function loadAlerts() {
     const sev = $("#alertFilter").value;
     const [al, d] = await Promise.all([api(`/api/alerts?days=90${sev ? "&severity=" + sev : ""}`), api("/api/dtc")]);
