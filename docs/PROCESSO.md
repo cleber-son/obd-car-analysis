@@ -271,3 +271,4 @@ Pedido: implementar todas, sem perguntar. Código novo em `src/obdpi/extras.py` 
   - Novo teste **Reaprendizado da marcha lenta**: espera a ventoinha ligar e desligar, conta 10 min, avisa "faltam X minutos", pede para tirar o pé se a rotação subir e diz quando pode desligar.
 - Pi atualizado (deploy com proteção do cartão) e painel online publicado (wrangler, versão 2b600cb5). Conferido no ar: tests.js novo, quadro "Nesta partida", `session_alerts` chegando ao vivo.
 - Caça-vazamento: pontos "Base do bico 1…4" (a sequência por voz passa bico por bico). Publicado no painel online; o Pi recebe no próximo deploy (estava desligado).
+- Voz não tocou no iPhone: o Safari descarta speak() logo depois de cancel() e pode descartar a fala se o objeto for coletado. Agora cancela e fala 150 ms depois, guarda as falas, chama resume(); botão "🔊 Testar o som" antes de começar (com dica do modo silencioso).

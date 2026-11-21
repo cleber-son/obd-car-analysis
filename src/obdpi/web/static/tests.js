@@ -40,16 +40,25 @@
   let ptVoice = null;
   function pickVoice() { const vs = window.speechSynthesis?.getVoices() || []; ptVoice = vs.find((v) => /pt[-_]BR/i.test(v.lang)) || vs.find((v) => /^pt/i.test(v.lang)) || null; }
   try { pickVoice(); window.speechSynthesis?.addEventListener?.("voiceschanged", pickVoice); } catch { }
+  const talking = [];                                   // guarda as falas: o Safari descarta a fala se o objeto for coletado
   function speak(text, interrupt = true) {
-    const t = plain(text); if (!voiceOn || !t || !window.speechSynthesis) return;
-    try { const u = new SpeechSynthesisUtterance(t.slice(0, 260)); u.lang = "pt-BR"; u.rate = 1.05; if (ptVoice) u.voice = ptVoice;
-      if (interrupt) speechSynthesis.cancel(); speechSynthesis.speak(u); } catch { }
+    const t = plain(text), ss = window.speechSynthesis; if (!voiceOn || !t || !ss) return;
+    try {
+      if (!ptVoice) pickVoice();
+      const u = new SpeechSynthesisUtterance(t.slice(0, 260)); u.lang = "pt-BR"; u.rate = 1.05; u.volume = 1; if (ptVoice) u.voice = ptVoice;
+      talking.push(u); if (talking.length > 12) talking.shift();
+      u.onend = u.onerror = () => { const i = talking.indexOf(u); if (i >= 0) talking.splice(i, 1); };
+      ss.resume?.();
+      // iPhone: speak() logo depois de cancel() é descartado em silêncio — cancela e fala um instante depois
+      if (interrupt && (ss.speaking || ss.pending)) { ss.cancel(); setTimeout(() => { ss.resume?.(); ss.speak(u); }, 150); }
+      else ss.speak(u);
+    } catch { }
   }
   let voiceUnlocked = false;
   function unlockVoice() {                              // chamado dentro de um toque: libera o som e a fala no iPhone
     try { actx ||= new (window.AudioContext || window.webkitAudioContext)(); actx.resume?.(); } catch { }
     if (voiceUnlocked || !window.speechSynthesis) return; voiceUnlocked = true;
-    try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch { }
+    try { const u = new SpeechSynthesisUtterance("ok"); u.lang = "pt-BR"; u.volume = 0.01; talking.push(u); speechSynthesis.speak(u); } catch { }
   }
   function paintVoice() { const b = $("#tstVoice"); if (b) { b.textContent = voiceOn ? "🔊" : "🔇"; b.title = voiceOn ? "Voz ligada (toque para silenciar)" : "Voz desligada"; } }
   document.addEventListener("click", (e) => { if (!e.target.closest?.("#tstVoice")) return;
@@ -116,7 +125,15 @@
     const paint = () => { $("#tstChecks").innerHTML = conds.map((c) => { const ok = !!c.ok(); return `<div class="tchk ${ok ? "ok" : ""}"><span>${ok ? "✓" : "○"}</span>${c.t}</div>`; }).join(""); return conds.every((c) => c.ok()); };
     let go = null; const iv = setInterval(() => { if (!running) return clearInterval(iv); const all = paint(); const b = $("#tstBtns [data-i='0']"); if (b) b.textContent = all ? "Começar" : "Começar assim mesmo"; }, 300);
     paint();
-    go = await buttons([{ t: "Começar", v: 1, main: true }, { t: "Cancelar", v: 0 }]);
+    for (;;) {
+      go = await buttons([{ t: "Começar", v: 1, main: true }, { t: "🔊 Testar o som", v: 2 }, { t: "Cancelar", v: 0 }]);
+      if (go !== 2) break;
+      voiceOn = true; try { localStorage.setItem("obdVoice", "1"); } catch { } paintVoice();
+      beep(880, 150, 2);
+      if (!window.speechSynthesis) { say("Antes de começar", "Este navegador não tem voz. Só os bipes vão tocar."); continue; }
+      speak("Teste de som. Se você está ouvindo, a voz está funcionando.");
+      say("Antes de começar", `Tocou dois bipes e falou "teste de som"?<br>Se <b>não ouviu nada</b>: tire o iPhone do <b>modo silencioso</b> (chave na lateral), suba o volume e toque de novo. Se ouviu os bipes mas não a voz, me avise.`);
+    }
     clearInterval(iv); $("#tstChecks").innerHTML = "";
     if (!go) { close(); throw new Cancel(); }
   }
