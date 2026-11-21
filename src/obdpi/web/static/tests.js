@@ -148,7 +148,7 @@
   // ------------------------------------------------------------ 1. caça-vazamento (entrada falsa de ar)
   const POINTS = ["Junta do corpo de borboleta (em volta toda)", "Duto entre o filtro/MAF e a borboleta (emendas e abraçadeiras)", "Mangueira do servofreio", "Mangueira da PCV / respiro do motor",
     "Base do coletor de admissão (junto ao cabeçote)", "Em volta dos bicos injetores",
-    "Base do bico 1 (lado da correia)", "Base do bico 2", "Base do bico 3", "Base do bico 4 (lado do câmbio)", "Outro ponto"];
+    "Bico 1 (lado da correia)", "Bico 2", "Bico 3", "Bico 4 (lado do câmbio)", "Outro ponto"];
   const spoken = (p) => p.replace(/\s*\(.*?\)/g, "").replace(/\//g, " e ");
   async function leakTest() {
     open("Caça-vazamento de ar", ["rpm", "stft1", "o2c1_lambda"]);
@@ -174,7 +174,7 @@
       }
       count[p] = (count[p] || 0) + 1;
       // 1) posicionar: fala o ponto e conta 3, 2, 1
-      speak(`Próximo ponto: ${spoken(p)}. Posicione o spray.`);
+      speak(`${/^Bico/.test(p) ? "" : "Próximo ponto: "}${spoken(p)}. Posicione o spray na base.`);
       await phase(6, "Posicione o spray", `${esc(p)}<br>Ainda não borrife`, "", null, "");
       for (const n of [3, 2, 1]) { beep(660, 90); speak(String(n)); await phase(1, String(n), esc(p), "", null, ""); }
       // 2) borrifar 3 s, 3) parar e observar 9 s — a reação é medida desde o início do jato
