@@ -147,7 +147,8 @@
 
   // ------------------------------------------------------------ 1. caça-vazamento (entrada falsa de ar)
   const POINTS = ["Junta do corpo de borboleta (em volta toda)", "Duto entre o filtro/MAF e a borboleta (emendas e abraçadeiras)", "Mangueira do servofreio", "Mangueira da PCV / respiro do motor",
-    "Base do coletor de admissão (junto ao cabeçote)", "Em volta dos bicos injetores", "Outro ponto"];
+    "Base do coletor de admissão (junto ao cabeçote)", "Em volta dos bicos injetores",
+    "Base do bico 1 (lado da correia)", "Base do bico 2", "Base do bico 3", "Base do bico 4 (lado do câmbio)", "Outro ponto"];
   const spoken = (p) => p.replace(/\s*\(.*?\)/g, "").replace(/\//g, " e ");
   async function leakTest() {
     open("Caça-vazamento de ar", ["rpm", "stft1", "o2c1_lambda"]);
@@ -155,7 +156,7 @@
       Use <b>Sequência por voz</b> para passar por todos os pontos sem tocar na tela. Volume do celular alto; 🔊 no topo liga e desliga a voz.<br><br>
       ⚠️ Produto inflamável: longe do escapamento quente e do alternador, sem cigarro nem faísca por perto.`, [C.on, C.hot, C.stopped, C.calm]);
     const hits = [], clean = [], count = {};
-    const AUTO = POINTS.filter((p) => p !== "Outro ponto");
+    const AUTO = POINTS.filter((p) => p !== "Outro ponto" && p !== "Em volta dos bicos injetores");   // na sequência, bico por bico
     let queue = null;
     for (;;) {
       const base = await phase(8, "Não borrife ainda", "Medindo o motor em repouso", "", null, queue ? "Não borrife. Medindo o repouso." : "Não borrife ainda. Medindo o motor em repouso.");
