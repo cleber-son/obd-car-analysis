@@ -476,7 +476,8 @@ def test_fix_timestamps_keep_gps_spacing():
     assert all(150 <= x <= 250 for x in d)
     expect = clock.now() - (time.monotonic() - fx[-1].mono) * 1000 - 120
     assert abs(fx[-1].ts - expect) < 150                             # e ancorado no relógio do coletor, descontada a latência
-    assert con.execute("SELECT COUNT(*) FROM gps_fix").fetchone()[0] == 40     # store_hz 5: todas
+    buckets = len({f.ts // 200 for f in fx})                         # store_hz 5: uma por janela de 200 ms (o início com atraso pode juntar duas)
+    assert con.execute("SELECT COUNT(*) FROM gps_fix").fetchone()[0] == buckets >= 37
 
 
 def test_api_gps_status_and_live():
