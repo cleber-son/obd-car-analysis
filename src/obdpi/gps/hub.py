@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from .. import config
 from . import FLAG_BURST, FLAG_STOPPED, Fix, good
-from . import places, store, trip
+from . import places, routes, segments, store, trip
 from .reader import GpsReader
 
 log = logging.getLogger("gps")
@@ -141,6 +141,9 @@ class NoObdKm:
 # ---- F2: diário de bordo, lugares e estacionamento
 FINALIZERS += [trip.finalize]
 LIVE_ENGINES += [places.ParkEngine, places.GeofenceEngine, NoObdKm]
+
+# ---- F4: rotas e trechos de referência
+FINALIZERS += [routes.assign_trip, segments.scan_trip]
 
 
 def make_ctx(con, cfg: dict, **kw) -> SimpleNamespace:

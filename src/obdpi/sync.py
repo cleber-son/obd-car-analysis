@@ -240,6 +240,11 @@ class Sync:
             self.gather(f"/api/gps/trips/{t['id']}", docs)
             if t.get("has_track"):
                 self.gather(f"/api/gps/trips/{t['id']}/track", docs)
+        # F4: rotas e trechos de referência (levam nomes de lugares e posições dos portões)
+        for x in (self.gather("/api/gps/routes", docs) or {}).get("routes") or []:
+            self.gather(f"/api/gps/routes/{x['id']}", docs)
+        for x in (self.gather("/api/gps/segments", docs) or {}).get("segments") or []:
+            self.gather(f"/api/gps/segments/{x['id']}", docs)
 
     def live_raw(self) -> bytes | None:
         try:

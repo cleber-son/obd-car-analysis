@@ -1,6 +1,6 @@
-/* window.obdGps — aba Mapa (Diário, Mapa, Lugares), trajeto no detalhe da viagem e replay sincronizado.
+/* window.obdGps — aba Mapa (Diário, Mapa, Lugares, Rotas, Trechos), trajeto no detalhe da viagem e replay sincronizado.
    Usa os utilitários do app.js (window.OBD) e o window.obdMap (gpsmap.js). docs/GPS-ARQUITETURA.md, seções 8.1, 9.4,
-   9.15, 9.22 e 9.24. Cada fase acrescenta o seu bloco (// ---- F4: …). Sem GPS: "GPS não conectado" e telas vazias. */
+   9.15, 9.22, 9.24, 9.3 e 9.5. Cada fase acrescenta o seu bloco (// ---- F4: …). Sem GPS: "GPS não conectado" e telas vazias. */
 (() => {
   "use strict";
   const $ = (s, r = document) => r.querySelector(s);
@@ -76,6 +76,7 @@
 
   // ------------------------------------------------------------ aba Mapa
   let sub = "diario", maps = [], liveTimer = null, status = null;
+  const EXTRA = {};          // telas das fases seguintes (data-g → função), registradas nos blocos de cada fase
   const killMaps = () => { for (const m of maps) { try { m.remove(); } catch { } } maps = []; clearInterval(liveTimer); liveTimer = null; };
   async function render() {
     const root = $("#v-mapa"); if (!root) return;
@@ -93,7 +94,8 @@
       const c = cloud(); if (c) c.loc = "trancada"; lbCache = null; trkCache.clear(); render();
     });
     try {
-      if (sub === "mapa") await viewMap(body);
+      if (EXTRA[sub]) await EXTRA[sub](body);
+      else if (sub === "mapa") await viewMap(body);
       else if (sub === "lugares") await viewPlaces(body);
       else await viewLog(body);
     } catch (e) {
@@ -425,6 +427,208 @@
     render().catch(console.error);
   });
   try { sub = localStorage.getItem("gpsSub") || "diario"; } catch { }
+
+  // ---- F4: rotas e trechos de referência (seções 9.3 e 9.5)
+  const tabs = $("#v-mapa .gtabs");
+  if (tabs && !$('[data-g="rotas"]', tabs)) tabs.insertAdjacentHTML("beforeend", `<button type="button" class="rbtn" data-g="rotas">🛣️ Rotas</button><button type="button" class="rbtn" data-g="trechos">📏 Trechos</button>`);
+  if (!["diario", "mapa", "lugares", "rotas", "trechos"].includes(sub)) sub = "diario";
+  const money = (v, d = 2) => v == null ? "—" : "R$ " + nf(v, d);
+  const FUEL = { gasolina: "Gasolina", etanol: "Etanol", mistura: "Mistura" };
+  let routeSel = null, segSel = null;          // detalhe aberto (null = lista; segSel "novo" = criar)
+  // trocar de botão interno volta para a lista (fase de captura: antes do render do bloco principal)
+  document.addEventListener("click", (e) => { if (e.target.closest("#v-mapa [data-g]")) { routeSel = null; segSel = null; } }, true);
+  const back = (id) => `<button class="rbtn" type="button" id="${id}">← Voltar</button>`;
+  const msgOf = (j, done) => j.queued ? "Pedido enviado; o Pi aplica na próxima conexão." : done;
+
+  // ---- Rotas: lista e detalhe
+  EXTRA.rotas = async (body) => {
+    if (routeSel) return viewRoute(body, routeSel);
+    const list = (await get("/api/gps/routes")).routes || [];
+    body.innerHTML = `<div class="card"><h2>🛣️ Rotas</h2><div class="lbl" style="margin-top:4px">Cada caminho que se repete vira uma rota: quanto gasta e quanto custa, viagem a viagem</div>
+      ${list.length ? `<div class="tbl" style="margin-top:10px"><table class="cards"><thead><tr><th>Rota</th><th>Viagens</th><th>Km</th><th>Tempo</th><th>km/L</th><th>L/100 km</th><th>R$/km</th></tr></thead>
+        <tbody id="gRt">${list.map((x) => `<tr class="click" data-id="${x.id}"><td class="head"><b>${esc(x.name)}</b>${x.last_ts ? `<br>última ${dt(x.last_ts)}` : ""}</td>
+          <td class="num" data-l="Viagens">${x.n}</td><td class="num" data-l="Km">${nf(x.km, 1)}</td><td class="num" data-l="Tempo">${x.dur_s != null ? dur(x.dur_s) : "—"}</td>
+          <td class="num" data-l="km/L">${nf(x.km_l, 1)}</td><td class="num" data-l="L/100 km">${nf(x.l100, 1)}</td><td class="num" data-l="R$/km">${money(x.cost_km)}</td></tr>`).join("")}</tbody></table></div>
+        <div class="muted" style="font-size:12px;margin-top:6px">Medianas das viagens normais (viagens com parada de mais de 10 min no meio ficam de fora). Toque numa rota para ver o detalhe.</div>`
+      : `<div class="empty" style="margin-top:10px">Nenhuma rota ainda. Cada caminho feito com o GPS ligado em quase toda a viagem (a partir de 1 km) vira uma rota sozinho; ida e volta contam separado.</div>`}</div>`;
+    $("#gRt")?.addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) { routeSel = +tr.dataset.id; render(); } });
+  };
+
+  async function viewRoute(body, id) {
+    const r = await get(`/api/gps/routes/${id}`), st = r.stats || {};
+    const grp = (rows, first) => rows.length ? `<div class="tbl" style="margin-top:8px"><table><thead><tr><th>${first}</th><th>Viagens</th><th>Tempo</th><th>km/L</th><th>L/100 km</th><th>R$/km</th></tr></thead><tbody>
+      ${rows.map(([k, x]) => `<tr><td>${esc(k)}</td><td class="num">${x.n}</td><td class="num">${x.dur_s != null ? dur(x.dur_s) : "—"}</td><td class="num">${nf(x.km_l, 1)}</td><td class="num">${nf(x.l100, 1)}</td><td class="num">${money(x.cost_km)}</td></tr>`).join("")}</tbody></table></div>` : "";
+    const bw = (lbl, x) => x ? `<div><span class="lbl">${lbl}</span><b>${nf(x.km_l, 1)} km/L</b><span class="muted" style="font-size:12px">${dt(x.start_ts)}</span></div>` : "";
+    body.innerHTML = `<div class="card"><div class="row-head"><div><h2>🛣️ ${esc(r.name)}</h2><div class="lbl" style="margin-top:4px">${st.n || 0} viagem(ns)${st.n_atipicas ? ` · ${st.n_atipicas} atípica(s), fora das medianas` : ""}</div></div>
+        <span style="display:flex;gap:6px">${back("gRBack")}<button class="rbtn" type="button" id="gRName">Renomear</button></span></div>
+      <div class="stats" style="margin-top:10px"><div><span class="lbl">Distância</span><b>${nf(st.km, 1)} km</b></div><div><span class="lbl">Tempo</span><b>${st.dur_s != null ? dur(st.dur_s) : "—"}</b></div>
+        <div><span class="lbl">Consumo</span><b>${nf(st.km_l, 1)} km/L</b><span class="muted" style="font-size:12px">${nf(st.l100, 1)} L/100 km</span></div><div><span class="lbl">Custo</span><b>${money(st.cost)}</b><span class="muted" style="font-size:12px">${money(st.cost_km)}/km</span></div>
+        ${bw("Melhor viagem", st.best)}${bw("Pior viagem", st.worst)}</div>
+      <div class="muted" id="gRMsg" style="font-size:13px" role="status"></div>
+      <div class="gmap sm" id="gRMap" style="margin-top:10px"></div>
+      ${grp(Object.entries(st.by_fuel || {}).map(([k, x]) => [FUEL[k] || k, x]), "Combustível")}
+      ${grp((st.by_hour || []).map((x) => [x.faixa, x]), "Saída")}
+      <h3 class="lbl" style="margin-top:14px">Viagens desta rota</h3>
+      <div class="tbl" style="margin-top:8px"><table class="cards"><thead><tr><th>Quando</th><th>Km</th><th>Tempo</th><th>km/L</th><th>R$/km</th><th>Combustível</th></tr></thead><tbody id="gRTrips">
+        ${(r.trips || []).map((x) => `<tr class="click" data-id="${x.id}"><td class="head">${dt(x.start_ts)}${x.atipica ? ' <span class="pill" title="Parada longa no meio: fora das medianas">atípica</span>' : ""}</td><td class="num" data-l="Km">${nf(x.km, 1)}</td>
+          <td class="num" data-l="Tempo">${x.dur_s != null ? dur(x.dur_s) : "—"}</td><td class="num" data-l="km/L">${nf(x.km_l, 1)}</td><td class="num" data-l="R$/km">${money(x.cost_km)}</td><td data-l="Combustível">${esc(FUEL[x.combustivel] || "—")}</td></tr>`).join("")}</tbody></table></div></div>`;
+    $("#gRBack").addEventListener("click", () => { routeSel = null; render(); });
+    $("#gRTrips").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) openTrip(+tr.dataset.id); });
+    $("#gRName").addEventListener("click", async () => {
+      const name = prompt("Nome da rota", r.name); if (!name || !name.trim()) return;
+      try { const j = await post(`/api/gps/routes/${id}`, { name: name.trim() }); $("#gRMsg").textContent = msgOf(j, "Renomeada."); if (!j.queued) render(); }
+      catch (err) { $("#gRMsg").textContent = "Erro: " + err.message; }
+    });
+    if (!r.ref_trip_id) return;
+    const map = M().create($("#gRMap")); if (!map) return;
+    maps.push(map);
+    const trk = await trackOf(r.ref_trip_id).catch(() => null);
+    if (!trk || map._gone) return;
+    M().track(map, trk, "speed");
+    const b = trk.bbox; if (b) M().fit(map, window.L.latLngBounds([[b[0], b[1]], [b[2], b[3]]]));
+  }
+
+  // ---- Trechos: lista, criar (tocando no traçado), histórico com os serviços
+  const SEG_SIG = [["stft", "Ajuste curto", "%", 1], ["residuo_pct", "Consumo × esperado", "%", 0], ["air", "Ar medido ÷ esperado", "%", 0],
+    ["lam_err", "Erro da sonda λ", "", 3], ["dur_s", "Duração", "s", 0], ["avg_speed", "Velocidade média", "km/h", 0], ["l100", "L/100 km", "", 1]];
+  const segVal = (p, k) => k === "air" ? (p.air_ratio != null ? p.air_ratio * 100 : null) : p[k];
+  const VERD = { melhorou: ["var(--ok)", "▲ melhorou"], piorou: ["var(--bad)", "▼ piorou"], igual: ["var(--muted)", "= igual"], misto: ["var(--warn)", "± misto"], "sem dados": ["var(--muted)", "? sem dados"] };
+
+  EXTRA.trechos = async (body) => {
+    if (segSel === "novo") return segNew(body);
+    if (segSel) return segView(body, segSel);
+    const list = (await get("/api/gps/segments")).segments || [];
+    body.innerHTML = `<div class="card"><div class="row-head"><div><h2>📏 Trechos de referência</h2><div class="lbl" style="margin-top:4px">O mesmo pedaço de rua medido a cada passagem: a prova mais firme do antes e depois de um conserto</div></div>
+        <button class="btn" type="button" id="gSNew">➕ Novo trecho</button></div>
+      ${list.length ? `<div class="list" id="gSList" style="margin-top:12px">${list.map((s) => `<div class="alert click" data-id="${s.id}" style="--s:${s.active ? "var(--volt)" : "var(--muted)"};cursor:pointer"><span class="ic">📏</span>
+          <div><div class="t">${esc(s.name)} <span class="muted" style="font-weight:500">(${esc(s.label)})</span>${s.active ? "" : ' <span class="pill">desativado</span>'}</div>
+          <div class="d">${nf((s.length_m || 0) / 1000, 2)} km · ${s.n_valid} de ${s.n} passagem(ns) válida(s)${s.dur_med != null ? ` · ${dur(s.dur_med)} típico` : ""}${s.last_ts ? ` · última ${dt(s.last_ts)}` : ""}</div></div><span class="more">›</span></div>`).join("")}</div>`
+      : `<div class="empty" style="margin-top:10px">Nenhum trecho ainda. Escolha um pedaço de rua que você faz sempre do mesmo jeito (uma reta ou subida sem semáforo, de 0,5 a 3 km): toque em "Novo trecho", escolha uma viagem e marque o início e o fim no traçado. Toda passagem por ali, antes e depois, passa a ser medida.</div>`}</div>`;
+    $("#gSNew").addEventListener("click", () => { segSel = "novo"; render(); });
+    $("#gSList")?.addEventListener("click", (e) => { const it = e.target.closest("[data-id]"); if (it) { segSel = +it.dataset.id; render(); } });
+  };
+
+  async function segNew(body) {
+    const lb = await logbook();
+    const trips = (lb.items || []).filter((x) => x.has_track).slice(0, 150);
+    body.innerHTML = `<div class="card"><div class="row-head"><h2>➕ Novo trecho</h2>${back("gSBack")}</div>
+      ${trips.length ? `<div class="gctl" style="margin-top:10px"><label class="lbl" for="gSTrip">Viagem</label><select id="gSTrip" style="flex:1 1 220px;min-width:0">${trips.map((x) => `<option value="${x.id}">${esc(dt(x.start_ts))} · ${esc(x.route || "Viagem")} · ${nf(x.distance_km, 1)} km</option>`).join("")}</select></div>
+      <div class="muted" id="gSStep" style="margin-top:8px;font-weight:600" role="status">Toque no traçado no ponto de INÍCIO do trecho.</div>
+      <div class="gmap" id="gSMap" style="margin-top:8px"></div>
+      <form id="gSForm" class="gpform" style="margin-top:10px"><input type="text" id="gSName" placeholder="Nome (ex.: Subida da avenida)" aria-label="Nome do trecho" maxlength="60" required>
+        <span class="muted num" id="gSInfo" style="font-size:12px"></span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" id="gSReset">Recomeçar</button><button class="btn" type="submit">Salvar trecho</button></div>
+        <div class="muted" id="gSMsg" style="font-size:13px" role="status"></div></form>
+      <div class="muted" style="font-size:12px;margin-top:6px">Dica: o trecho vale no sentido em que foi marcado. Evite semáforos e cruzamentos: parar no meio invalida a passagem (a não ser que a referência também pare).</div>`
+      : `<div class="empty" style="margin-top:10px">Nenhuma viagem com trajeto ainda. O trecho é marcado sobre o traçado de uma viagem gravada com o GPS.</div>`}</div>`;
+    $("#gSBack").addEventListener("click", () => { segSel = null; render(); });
+    if (!trips.length) return;
+    const map = M().create($("#gSMap")); if (!map) return;
+    maps.push(map);
+    const L_ = window.L, marks = L_.layerGroup().addTo(map);
+    let trk = null, layer = null, ia = -1, ib = -1;
+    const lenM = (i, j) => { let d = 0; for (let k = i; k < j; k++) d += map.distance([trk.lat[k], trk.lon[k]], [trk.lat[k + 1], trk.lon[k + 1]]); return d; };
+    const show = () => {
+      const pins = [];
+      if (ia >= 0) pins.push({ lat: trk.lat[ia], lon: trk.lon[ia], label: "🅰️", html: `Início · ${tm(trk.t0 + trk.t[ia] * 1000)}` });
+      if (ib >= 0) pins.push({ lat: trk.lat[ib], lon: trk.lon[ib], label: "🅱️", html: `Fim · ${tm(trk.t0 + trk.t[ib] * 1000)}` });
+      M().pins(map, pins, marks);
+      $("#gSStep").textContent = ia < 0 ? "Toque no traçado no ponto de INÍCIO do trecho." : ib < 0 ? "Agora toque no ponto de FIM (mais adiante no caminho)." : "Trecho marcado. Dê um nome e salve.";
+      $("#gSInfo").textContent = ia >= 0 && ib >= 0 ? `${nf(lenM(ia, ib) / 1000, 2)} km · ${dur(trk.t[ib] - trk.t[ia])} nesta viagem` : "";
+    };
+    const load = async () => {
+      ia = ib = -1; show();
+      trk = await trackOf(+$("#gSTrip").value).catch(() => null);
+      if (!trk || map._gone) return;
+      const r = M().track(map, trk, "speed", layer); layer = r.layer;
+      r.layer._hit?.on("click", (e) => {
+        const i = M().nearest(trk, e.latlng.lat, e.latlng.lng); if (i < 0) return;
+        if (ia < 0 || ib >= 0) { ia = i; ib = -1; }
+        else if (i <= ia) { $("#gSStep").textContent = "O fim tem de vir depois do início, no sentido da viagem. Toque mais adiante."; return; }
+        else ib = i;
+        show();
+      });
+      const b = trk.bbox; if (b) M().fit(map, L_.latLngBounds([[b[0], b[1]], [b[2], b[3]]]));
+      show();
+    };
+    $("#gSTrip").addEventListener("change", () => load().catch(console.error));
+    $("#gSReset").addEventListener("click", () => { ia = ib = -1; show(); });
+    $("#gSForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (ia < 0 || ib < 0) { $("#gSMsg").textContent = "Marque o início e o fim no traçado."; return; }
+      $("#gSMsg").textContent = "Procurando as passagens no histórico…";
+      try {
+        const j = await post("/api/gps/segments", { name: $("#gSName").value.trim(), trip_id: +$("#gSTrip").value, t_a: Math.round(trk.t0 + trk.t[ia] * 1000), t_b: Math.round(trk.t0 + trk.t[ib] * 1000) });
+        if (j.queued) { $("#gSMsg").textContent = msgOf(j, ""); return; }
+        segSel = j.id; render();
+      } catch (err) { $("#gSMsg").textContent = err instanceof Locked ? "Localização protegida: desbloqueie primeiro." : "Erro: " + err.message; }
+    });
+    await load();
+  }
+
+  async function segView(body, id) {
+    const h = await get(`/api/gps/segments/${id}`), s = h.segment, ps = h.passes || [];
+    let sig = (() => { try { return localStorage.getItem("gpsSegSig") || "stft"; } catch { return "stft"; } })();
+    if (!SEG_SIG.some(([k]) => k === sig)) sig = "stft";
+    body.innerHTML = `<div class="card"><div class="row-head"><div><h2>📏 ${esc(s.name)}</h2><div class="lbl" style="margin-top:4px">${esc(s.label)} · ${nf((s.length_m || 0) / 1000, 2)} km · referência ${dur(s.ref_dur_s || 0)} · ${h.n_valid} de ${h.n} passagem(ns) válida(s)${s.active ? "" : " · desativado"}</div></div>
+        <span style="display:flex;gap:6px;flex-wrap:wrap">${back("gSBack")}<button class="rbtn" type="button" data-a="name">Renomear</button><button class="rbtn" type="button" data-a="rescan">Reprocessar</button>
+          <button class="rbtn" type="button" data-a="active">${s.active ? "Desativar" : "Ativar"}</button><button class="rbtn" type="button" data-a="delete">Apagar</button></span></div>
+      <div class="muted" id="gSMsg" style="font-size:13px" role="status"></div>
+      <div class="gctl" style="margin-top:10px"><label class="lbl" for="gSSig">Mostrar</label><select id="gSSig">${SEG_SIG.map(([k, l]) => `<option value="${k}"${k === sig ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+      <svg class="chart" id="gSChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:8px"></svg>
+      <div class="gm-legend"><span><i style="background:var(--ok)"></i>válida</span><span><i style="background:var(--muted)"></i>inválida (cinza)</span><span><i style="background:var(--warn)"></i>combustível bem diferente</span><span><i style="background:var(--bad)"></i>serviço anotado</span></div>
+      <div class="muted" id="gSNote" style="font-size:12px;margin-top:4px"></div>
+      <div id="gSSvc" class="list" style="margin-top:12px"></div>
+      <div class="gmap sm" id="gSMap" style="margin-top:12px"></div>
+      <h3 class="lbl" style="margin-top:14px">Passagens</h3>
+      ${ps.length ? `<div class="tbl" style="margin-top:8px"><table class="cards"><thead><tr><th>Quando</th><th>Tempo</th><th>Média</th><th>Ajuste curto</th><th>L/100 km</th><th>Ar ÷ esperado</th><th>Situação</th></tr></thead><tbody id="gSPass">
+        ${ps.slice().reverse().map((p) => `<tr class="click" data-id="${p.trip_id ?? ""}" style="${p.valid ? "" : "opacity:.55"}"><td class="head">${dt(p.ts_start)}${p.mistura_diferente ? ' <span class="pill" title="Mistura no tanque bem diferente das outras passagens">⛽ outra mistura</span>' : ""}</td>
+          <td class="num" data-l="Tempo">${dur(p.dur_s)}</td><td class="num" data-l="Média">${nf(p.avg_speed)} km/h</td><td class="num" data-l="Ajuste curto">${p.stft != null ? nf(p.stft, 1) + " %" : "—"}</td>
+          <td class="num" data-l="L/100 km">${nf(p.l100, 1)}${p.residuo_pct != null ? ` <span class="muted">(${p.residuo_pct > 0 ? "+" : ""}${nf(p.residuo_pct)} %)</span>` : ""}</td>
+          <td class="num" data-l="Ar ÷ esperado">${p.air_ratio != null ? nf(p.air_ratio * 100) + " %" : "—"}</td><td data-l="Situação">${p.valid ? "✓ válida" : esc((p.motivos || []).join(", "))}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty" style="margin-top:8px">Nenhuma passagem encontrada ainda. Cada viagem que passar pelo trecho, no mesmo sentido, aparece aqui.</div>`}</div>`;
+    $("#gSBack").addEventListener("click", () => { segSel = null; render(); });
+    $("#gSPass")?.addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr && tr.dataset.id) openTrip(+tr.dataset.id); });
+    body.querySelectorAll("[data-a]").forEach((b) => b.addEventListener("click", async () => {
+      const a = b.dataset.a; let req = null;
+      if (a === "name") { const n = prompt("Nome do trecho", s.name); if (!n || !n.trim()) return; req = { name: n.trim() }; }
+      else if (a === "rescan") req = { rescan: true };
+      else if (a === "active") req = { active: !s.active };
+      else if (a === "delete") { if (!confirm("Apagar este trecho e todas as passagens medidas?")) return; req = { delete: true }; }
+      $("#gSMsg").textContent = a === "rescan" ? "Procurando no histórico…" : "";
+      try { const j = await post(`/api/gps/segments/${id}`, req); $("#gSMsg").textContent = msgOf(j, "Feito.");
+        if (!j.queued) { if (a === "delete") segSel = null; render(); } }
+      catch (err) { $("#gSMsg").textContent = "Erro: " + err.message; }
+    }));
+    // gráfico: passagens válidas (verde), inválidas (cinza), mistura diferente (âmbar) e uma linha por serviço
+    const chart = () => {
+      const meta = SEG_SIG.find((x) => x[0] === sig);
+      const pts = ps.map((p) => [p.ts_start, segVal(p, sig), p]).filter((x) => x[1] != null);
+      const ys = pts.map((x) => x[1]), lo = ys.length ? Math.min(...ys) : 0, hi = ys.length ? Math.max(...ys) : 1;
+      const series = [{ pts: pts.filter((x) => !x[2].valid).map((x) => [x[0], x[1]]), c: "--muted", dots: true, r: 4 },
+        { pts: pts.filter((x) => x[2].valid && !x[2].mistura_diferente).map((x) => [x[0], x[1]]), c: "--ok", dots: true, r: 5 },
+        { pts: pts.filter((x) => x[2].valid && x[2].mistura_diferente).map((x) => [x[0], x[1]]), c: "--warn", dots: true, r: 5 }];
+      for (const v of h.services || []) series.push({ pts: [[v.ts, lo], [v.ts, hi]], c: "--bad", w: 1.5, end: false });
+      if (pts.length) U().lineChart($("#gSChart"), series, pts.length === 1 ? { x0: pts[0][0] - 86400e3, x1: pts[0][0] + 86400e3 } : {});
+      else $("#gSChart").innerHTML = `<text x="300" y="95" text-anchor="middle">Sem dados deste sinal ainda</text>`;
+      $("#gSNote").textContent = sig === "residuo_pct" ? `Consumo de cada passagem comparado com o esperado para a velocidade dela${h.regression ? ` (reta de ${h.regression.n} passagens válidas)` : " (mediana do trecho)"}: negativo = gastou menos.`
+        : sig === "stft" ? "Perto de zero é o ideal. Positivo = a central está pondo combustível a mais (ar falso, falta de combustível)." : `${meta[1]}${meta[2] ? " (" + meta[2] + ")" : ""} em cada passagem.`;
+    };
+    $("#gSSig").addEventListener("change", (e) => { sig = e.target.value; try { localStorage.setItem("gpsSegSig", sig); } catch { } chart(); });
+    chart();
+    $("#gSSvc").innerHTML = (h.services || []).map((v) => { const [c, l] = VERD[v.veredito] || VERD["sem dados"];
+      return `<div class="alert" style="--s:${c};align-items:start"><span class="ic">🔧</span><div style="min-width:0"><div class="t">${esc(v.text)} <span class="muted" style="font-weight:500">· ${dt(v.ts)}</span></div><div class="d">${esc(v.texto)}</div>
+        ${v.indicadores.length ? `<div class="tbl" style="margin-top:6px"><table><thead><tr><th></th><th>Antes (${v.antes.n})</th><th>Depois (${v.depois.n})</th><th></th></tr></thead><tbody>${v.indicadores.map((i) => `<tr><td>${esc(i.nome)}</td><td class="num">${nf(i.antes, Number.isInteger(i.antes) ? 0 : 1)} ${esc(i.unidade)}</td><td class="num">${nf(i.depois, Number.isInteger(i.depois) ? 0 : 1)} ${esc(i.unidade)}</td><td style="color:${(VERD[i.veredito] || VERD.igual)[0]};font-weight:600;white-space:nowrap">${(VERD[i.veredito] || VERD.igual)[1]}</td></tr>`).join("")}</tbody></table></div>` : ""}</div><span class="pill">${l}</span></div>`; }).join("");
+    // mapa: traçado da viagem de referência e os dois portões
+    const map = M().create($("#gSMap")); if (!map) return;
+    maps.push(map);
+    const L_ = window.L;
+    for (const [la, lo, c, t] of [[s.a_lat, s.a_lon, "#36d67a", "Início"], [s.b_lat, s.b_lon, "#ff4d5e", "Fim"]])
+      L_.circle([la, lo], { radius: s.radius_m || 35, color: c, weight: 2, fillOpacity: 0.15 }).bindTooltip(t).addTo(map);
+    M().fit(map, L_.latLngBounds([[s.a_lat, s.a_lon], [s.b_lat, s.b_lon]]).pad(0.3), 17);
+    const trk = s.ref_trip_id ? await trackOf(s.ref_trip_id).catch(() => null) : null;
+    if (trk && !map._gone) { const lay = M().track(map, trk, "speed").layer; lay.eachLayer((l) => l !== lay._hit && l.setStyle && l.setStyle({ opacity: 0.5 })); }
+  }
 
   window.obdGps = { render, trip, openTrip };
 })();

@@ -1494,6 +1494,21 @@ Regras para quem executa:
 | **Pronto quando** | aceites de 9.3 (rotas) e 9.5 |
 | **[HW]** | definir o trecho real (item 10 da lista) |
 
+**Notas da implementação da F4 (2026-11-22)** — ajustes ao plano, para as fases seguintes seguirem o código:
+
+- **Pontas das rotas:** a chave `c<célula de 0,003°>` casa também com as 8 células vizinhas (o ruído do GPS na borda da célula partia a mesma rota). Variante: nome "Casa → Trabalho · via 2". Rota que fica sem viagens (reanálise) é apagada. O nome nunca é trocado sozinho depois de criado (só pelo dono, `POST /api/gps/routes/{id} {name}`).
+- **Lugar automático (F2) no 3º dia** muda a ponta de `c…` para `p…`: as duas primeiras viagens ficam numa rota com a ponta em célula até um `obdctl gps reanalyze`, que junta tudo (o teste cobre).
+- **Atípica:** parada > 10 min em `stops_json` marca `atipica` em `trip_gps.flags` (escrito pelo `assign_trip`, depois do `trip.finalize`); a viagem entra na rota e fica fora das medianas, do melhor/pior e do perfil. `stats_json`: `n, n_tipicas, n_atipicas, km, dur_s, km_l, l100, cost_km, cost, best, worst, by_fuel{gasolina|etanol|mistura}, by_hour[{faixa,…}], last_ts`; faixas de saída em `routes.HOURS` (hora local). `profile_json = {step_m: 250, t_s: [...], n}` (mediana enquanto ao menos metade das viagens chega à marca).
+- **Trecho — criação:** `POST /api/gps/segments {name, trip_id, t_a, t_b}` com `t_a`/`t_b` em ms absolutos (`t0 + t[i]·1000` do trajeto); invertidos são trocados; mínimo 200 m e 10 s. Portões = posições gravadas mais próximas dos instantes; rumo de entrada = do portão A até a primeira posição 25 m adiante.
+- **Portões:** a maior aproximação é calculada por pedaço entre duas posições (projeção), não só pelas posições dentro do raio — a 100 km/h pode não haver posição dentro de 35 m. Pedaços com mais de 5 s entre as posições não contam.
+- **Validade (`why` com códigos):** `frio` (ECT < 75 °C na última leitura até a entrada), `sem_temp`, `parou` (parada ≥ 5 s, a menos que a passagem da viagem de referência pare), `gps` (buraco > 5 s com o carro andando), `vel` (fora de ±20 % da mediana das passagens sem os outros motivos, só com 3+). `revalidate` refaz `vel` no trecho inteiro a cada busca. A API traduz em `motivos`. A coluna `ect` guarda a temperatura da entrada.
+- **Medidas:** sinais lentos com janela de ±10 s em volta do trecho (no Pi o grupo lento é lido a cada ~20 s). `alt_gain` = altitude média (±3 s) em B − em A. `fuel_mix` = `mix_after` do último abastecimento.
+- **Antes e depois:** `compare` usa ajuste curto (`IMPACT["stft_run"]`, 4 pontos), ar medido ÷ esperado (`IMPACT["air_idle"]`, 6 pontos) e km/L (`IMPACT["kml"]`, 0,7); exige 2+ passagens válidas de cada lado ("sem dados" senão). `impact_for` só devolve trechos com passagem válida dos dois lados do serviço (janela de 30 dias) e `extras.impact()` só acrescenta a chave `trechos` quando há algo (sem GPS a resposta é idêntica à de antes). Item: `{trecho, antes{n,de,ate}, depois{…}, veredito (melhorou|piorou|misto|igual|sem dados), texto, indicadores}`.
+- **Regressão:** só com 3+ passagens válidas; sem ela o resíduo é contra a mediana de L/100 km do trecho.
+- **`rescan`:** acha as viagens por `gps_fix` numa caixa de ~500 m em volta do portão A (varre a tabela; só sob demanda). A viagem de referência é processada primeiro.
+- **Tela:** os botões "Rotas" e "Trechos" são acrescentados pelo `gps.js` (o `index.html` não estava na lista da F4); telas novas se registram em `EXTRA[data-g]`. Criar trecho fica em Mapa → Trechos → Novo trecho (não há atalho no detalhe da viagem). Gráfico com o `lineChart` do `app.js` (válidas verdes, inválidas cinza, mistura diferente âmbar, linha vermelha por serviço).
+- **Nuvem:** `sync.gather_gps` envia `/api/gps/routes`, `/api/gps/routes/{id}`, `/api/gps/segments`, `/api/gps/segments/{id}` (todos `isLoc`, só com a senha). O Worker não mudou (`LOC_QUEUE` já tinha `segments` e `routes/{id}`).
+
 ### F5 — Marchas, embreagem, velocímetro e nota de condução (funcionalidades 6, 11, 10)
 
 | | |

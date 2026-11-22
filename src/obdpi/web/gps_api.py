@@ -411,4 +411,99 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
             trips.append(d)
         return _download(exportmod.gpx(trips, lambda x: _fixes(con, x)), "viagens.gpx", "application/gpx+xml")
 
+    # ---- F4: rotas e trechos
+    from ..gps import routes as routesmod
+    from ..gps import segments as segmod
+
+    @r.get("/api/gps/routes")
+    def gps_routes():
+        """Rotas com as medianas de km, tempo, km/L, L/100 km e R$/km (só viagens típicas)."""
+        return {"routes": routesmod.list_routes(ro())}
+
+    @r.get("/api/gps/routes/{rid}")
+    def gps_route(rid: int):
+        d = routesmod.detail(ro(), rid)
+        if not d:
+            raise HTTPException(404, "rota não encontrada")
+        return d
+
+    @r.post("/api/gps/routes/{rid}")
+    def gps_route_edit(rid: int, body: dict, x_token: str | None = Header(None)):
+        """Renomeia: {name}."""
+        check_admin(x_token)
+        name = str((body or {}).get("name") or "").strip()[:80]
+        if not name:
+            raise HTTPException(400, "Dê um nome à rota.")
+        con = rw()
+        try:
+            if not con.execute("SELECT 1 FROM route WHERE id=?", (rid,)).fetchone():
+                raise HTTPException(404, "rota não encontrada")
+            con.execute("UPDATE route SET name=? WHERE id=?", (name, rid))
+            con.commit()
+        finally:
+            con.close()
+        return {"ok": True}
+
+    @r.get("/api/gps/segments")
+    def gps_segments():
+        return {"segments": segmod.list_segments(ro())}
+
+    @r.post("/api/gps/segments")
+    def gps_segment_create(body: dict, x_token: str | None = Header(None)):
+        """Cria um trecho de referência: {name, trip_id, t_a, t_b} (instantes em ms, tocados no traçado) e busca as
+        passagens no histórico."""
+        check_admin(x_token)
+        try:
+            f = segmod.validate(body or {})
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        con = rw()
+        try:
+            if not con.execute("SELECT 1 FROM trip WHERE id=?", (f["trip_id"],)).fetchone():
+                raise HTTPException(404, "viagem não encontrada")
+            try:
+                sid = segmod.create(con, f["name"], f["trip_id"], f["t_a"], f["t_b"])
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
+            n = con.execute("SELECT COUNT(*) FROM segment_pass WHERE segment_id=?", (sid,)).fetchone()[0]
+            con.commit()
+        finally:
+            con.close()
+        return {"ok": True, "id": sid, "passes": n}
+
+    @r.get("/api/gps/segments/{sid}")
+    def gps_segment(sid: int):
+        """Passagens, regressão do consumo, anotações de manutenção e o antes/depois de cada serviço."""
+        h = segmod.history(ro(), sid)
+        if not h:
+            raise HTTPException(404, "trecho não encontrado")
+        return h
+
+    @r.post("/api/gps/segments/{sid}")
+    def gps_segment_edit(sid: int, body: dict, x_token: str | None = Header(None)):
+        """{name?, active?} edita; {rescan: true} refaz a busca no histórico; {delete: true} apaga o trecho e as passagens."""
+        check_admin(x_token)
+        body = body or {}
+        con = rw()
+        try:
+            if not segmod.get(con, sid):
+                raise HTTPException(404, "trecho não encontrado")
+            out = {"ok": True}
+            if body.get("delete"):
+                segmod.delete(con, sid)
+            else:
+                if "name" in body:
+                    name = str(body.get("name") or "").strip()[:60]
+                    if not name:
+                        raise HTTPException(400, "Dê um nome ao trecho.")
+                    con.execute("UPDATE segment SET name=? WHERE id=?", (name, sid))
+                if "active" in body:
+                    con.execute("UPDATE segment SET active=? WHERE id=?", (1 if body["active"] else 0, sid))
+                if body.get("rescan"):
+                    out["passes"] = segmod.rescan(con, sid)
+            con.commit()
+        finally:
+            con.close()
+        return out
+
     return r

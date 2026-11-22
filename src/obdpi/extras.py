@@ -200,8 +200,16 @@ def impact(con: sqlite3.Connection, days: int = 180, window_days: int = 4) -> li
             verdict, level = f"Resultado misto: {better} melhor(es), {worse} pior(es).", "warn"
         else:
             verdict, level = "Sem mudança mensurável nos indicadores.", "warn"
-        out.append({"id": an["id"], "ts": ts, "texto": an["text"], "veredito": verdict, "nivel": level, "indicadores": rows,
-                    "antes_h": bef["horas"], "depois_h": aft["horas"], "janela_dias": window_days})
+        item = {"id": an["id"], "ts": ts, "texto": an["text"], "veredito": verdict, "nivel": level, "indicadores": rows,
+                "antes_h": bef["horas"], "depois_h": aft["horas"], "janela_dias": window_days}
+        try:                                   # trecho de referência do GPS (seção 9.5): mesmo lugar, mesma velocidade
+            from .gps import segments
+            tr = segments.impact_for(con, ts)
+        except Exception:
+            tr = []
+        if tr:                                 # sem trechos (ou sem GPS) a resposta é a mesma de antes
+            item["trechos"] = tr
+        out.append(item)
     return out
 
 

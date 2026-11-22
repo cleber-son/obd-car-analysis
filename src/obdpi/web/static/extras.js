@@ -30,13 +30,18 @@
 
   // ------------------------------------------------------------ antes e depois dos consertos
   const VER = { melhorou: ["var(--ok)", "▲ melhorou"], piorou: ["var(--bad)", "▼ piorou"], igual: ["var(--muted)", "= igual"] };
+  // trecho de referência do GPS (F4): mesmo lugar, mesma velocidade, até 5 passagens de cada lado
+  const VERT = { ...VER, misto: ["var(--warn)", "± misto"], "sem dados": ["var(--muted)", "? sem dados"] };
+  const trechos = (list) => (list || []).map((s) => `<div style="margin-top:12px"><div class="t" style="font-weight:600">📏 ${esc(s.trecho)}: <span style="color:${(VERT[s.veredito] || VERT["sem dados"])[0]}">${(VERT[s.veredito] || VERT["sem dados"])[1]}</span></div>
+    <div class="muted" style="font-size:12px">${esc(s.texto)} ${s.antes.n} passagem(ns) antes e ${s.depois.n} depois.</div>
+    ${s.indicadores.length ? `<div class="tbl" style="margin-top:6px"><table><tbody>${s.indicadores.map((i) => `<tr><td>${esc(s.trecho)} · ${esc(i.nome)}</td><td class="num">${nf(i.antes, Number.isInteger(i.antes) ? 0 : 1)} ${esc(i.unidade)}</td><td class="num">${nf(i.depois, Number.isInteger(i.depois) ? 0 : 1)} ${esc(i.unidade)}</td><td style="color:${(VERT[i.veredito] || VERT.igual)[0]};font-weight:600;white-space:nowrap">${(VERT[i.veredito] || VERT.igual)[1]}</td></tr>`).join("")}</tbody></table></div>` : ""}</div>`).join("");
   async function loadImpact() {
     const list = await api("/api/impact").catch(() => null), box = $("#impBox");
     if (!list) { box.innerHTML = `<div class="empty">Disponível depois que o Pi atualizar e sincronizar.</div>`; return; }
     box.innerHTML = list.length ? list.map((x, k) => { const [c, , ic] = ST[x.nivel === "ok" ? "ok" : x.nivel === "bad" ? "bad" : x.nivel === "warn" ? "warn" : "unk"];
       return `<details class="alert ins" style="--s:${c}"${k === 0 ? " open" : ""}><summary><span class="ic">${x.nivel === "ok" ? "✓" : ic}</span><div><div class="t">${esc(x.texto)}</div><div class="d">${dt(x.ts)} · ${esc(x.veredito)}</div></div><span></span></summary>
         <div class="adv">${x.indicadores.length ? `<div class="tbl"><table><thead><tr><th>Indicador</th><th>Antes</th><th>Depois</th><th></th></tr></thead><tbody>${x.indicadores.map((i) => `<tr><td>${esc(i.nome)}</td><td class="num">${nf(i.antes, Number.isInteger(i.antes) ? 0 : 1)} ${esc(i.unidade)}</td><td class="num">${nf(i.depois, Number.isInteger(i.depois) ? 0 : 1)} ${esc(i.unidade)}</td><td style="color:${VER[i.veredito][0]};font-weight:600;white-space:nowrap">${VER[i.veredito][1]}</td></tr>`).join("")}</tbody></table></div>` : ""}
-        <div class="muted" style="font-size:12px">Compara ${x.janela_dias} dias antes (${nf(x.antes_h, 1)} h de motor) com ${x.janela_dias} dias depois (${nf(x.depois_h, 1)} h).</div></div></details>`; }).join("")
+        <div class="muted" style="font-size:12px">Compara ${x.janela_dias} dias antes (${nf(x.antes_h, 1)} h de motor) com ${x.janela_dias} dias depois (${nf(x.depois_h, 1)} h).</div>${trechos(x.trechos)}</div></details>`; }).join("")
       : `<div class="empty">Nenhum serviço anotado ainda. Anote acima o próximo conserto (por exemplo, a troca da junta) e volte aqui depois de rodar.</div>`;
   }
   $("#svcForm")?.addEventListener("submit", async (e) => {
