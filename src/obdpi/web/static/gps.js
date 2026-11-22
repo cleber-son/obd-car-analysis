@@ -77,6 +77,7 @@
   // ------------------------------------------------------------ aba Mapa
   let sub = "diario", maps = [], liveTimer = null, status = null;
   const EXTRA = {};          // telas das fases seguintes (data-g → função), registradas nos blocos de cada fase
+  const TRIP_EXTRA = [];     // acréscimos ao detalhe da viagem ({card, map, det, trk, t}), registrados nos blocos de cada fase
   const killMaps = () => { for (const m of maps) { try { m.remove(); } catch { } } maps = []; clearInterval(liveTimer); liveTimer = null; };
   async function render() {
     const root = $("#v-mapa"); if (!root) return;
@@ -115,7 +116,7 @@
       const r = x.route || (x.has_track ? "Trajeto sem nome" : "Sem trajeto (antes do GPS)");
       return `<tr class="click" data-id="${x.id}"><td class="head"><b>${esc(r)}</b><br>${dt(x.start_ts)}${x.clock_synced === 0 ? ' <span class="pill" title="Hora aproximada (relógio do Pi sem sincronizar)">≈</span>' : ""}${x.note ? ` <span title="${esc(x.note)}">📝</span>` : ""}</td>
         <td class="num" data-l="Km">${nf(x.distance_km, 1)}<span class="only-m"> km</span></td><td class="num" data-l="Duração">${dur(x.duration_s)}</td>
-        <td class="num" data-l="Média">${nf(x.avg_moving ?? x.avg_speed)} km/h</td><td class="num" data-l="Consumo">${nf(x.km_l, 1)}<span class="only-m"> km/L</span></td>
+        <td class="num" data-l="Média">${nf(x.avg_moving ?? x.avg_speed)} km/h</td><td class="num" data-l="Consumo">${nf(x.km_l, 1)}<span class="only-m"> km/L</span>${x.drive_score != null ? `<br><span class="pill" title="Nota de condução (freadas, arrancadas e curvas fortes, excesso de velocidade)">nota ${x.drive_score}</span>` : ""}</td>
         <td class="num" data-l="Custo">${x.cost != null ? "R$ " + nf(x.cost, 2) : "—"}</td><td class="num" data-l="Paradas">${x.n_stops ?? "—"}</td><td class="num" data-l="Alertas">${x.n_alerts ?? 0}</td></tr>`;
     };
     const paint = () => {
@@ -386,6 +387,7 @@
     for (const a of det?.alerts || []) pins.push({ lat: a.lat, lon: a.lon, color: (SEV[a.severity] || SEV.info)[0], r: 7,
       html: `<b>${esc(a.title)}</b><br>${tm(a.ts)}${a.speed != null ? ` · ${nf(a.speed)} km/h` : ""}<br><a href="#" data-rp="${a.ts}">Replay 8 s antes</a>` });
     M().pins(map, pins, pinLayer);
+    for (const fn of TRIP_EXTRA) { try { fn({ card, map, det, trk, t }); } catch (e) { console.error(e); } }
     map.getContainer().addEventListener("click", (e) => { const a = e.target.closest("a[data-rp]"); if (a) { e.preventDefault(); const sl = $("#rpSlider"); if (sl) { sl.value = Math.max(+sl.min, +a.dataset.rp - 8000); sl.dispatchEvent(new Event("input")); } } });
     const b = trk.bbox; if (b) M().fit(map, L_.latLngBounds([[b[0], b[1]], [b[2], b[3]]]), 17);
     $("#gColor", card).addEventListener("change", (e) => { st.colorBy = e.target.value; try { localStorage.setItem("gpsColorBy", st.colorBy); } catch { } paint(); });
@@ -629,6 +631,94 @@
     const trk = s.ref_trip_id ? await trackOf(s.ref_trip_id).catch(() => null) : null;
     if (trk && !map._gone) { const lay = M().track(map, trk, "speed").layer; lay.eachLayer((l) => l !== lay._hit && l.setStyle && l.setStyle({ opacity: 0.5 })); }
   }
+
+  // ---- F5: marchas, embreagem, velocímetro e nota de condução (seções 9.6, 9.10 e 9.11)
+  if (tabs && !$('[data-g="desempenho"]', tabs)) tabs.insertAdjacentHTML("beforeend", `<button type="button" class="rbtn" data-g="desempenho">🏁 Desempenho</button>`);
+  try { sub = localStorage.getItem("gpsSub") || sub; } catch { }
+  if (!["diario", "mapa", "lugares", "rotas", "trechos", "desempenho"].includes(sub)) sub = "diario";
+  const EV = { freada: ["#ff4d5e", "🛑", "Freada forte", (v) => `${nf(v, 1)} km/h por segundo`],
+    arrancada: ["#ffb020", "🚀", "Arrancada forte", (v) => `+${nf(v, 1)} km/h por segundo`],
+    curva: ["#8b7bff", "↪️", "Curva forte", (v) => `${nf(v, 1)} m/s² de força lateral`],
+    patinacao: ["#ff6b3d", "⚙️", "Embreagem patinando", (v) => `rotação ${nf(v * 100)} % acima do esperado`] };
+  const PEN = { freada: "Freadas fortes", arrancada: "Arrancadas fortes", curva: "Curvas fortes", velocidade: "Excesso de velocidade", motor_frio: "Motor frio forçado", giro_limite: "Giro no limite" };
+  const scoreColor = (n) => n == null ? "var(--muted)" : n >= 85 ? "var(--ok)" : n >= 70 ? "var(--warn)" : "var(--bad)";
+  const pct = (v, d = 1) => v == null ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + nf(Math.abs(v), d) + " %";
+
+  EXTRA.desempenho = async (body) => {
+    const [ge, sp, sc] = await Promise.all(["/api/gps/gears", "/api/gps/speedo", "/api/gps/score?days=90"].map((p) => get(p).catch((e) => { if (e instanceof Locked) throw e; return null; })));
+    const pi = !cloud();
+    const gearsHtml = !ge ? `<div class="empty">Ainda não sincronizado.</div>` : `
+      <div class="muted" style="margin-top:4px">${esc(ge.texto)}</div>
+      <div class="tbl" style="margin-top:10px"><table><thead><tr><th>Marcha</th><th>Fábrica</th><th>Aprendida (GPS)</th><th>Diferença</th><th>Leituras</th></tr></thead><tbody>
+        ${ge.gears.map((g) => `<tr><td>${g.gear}ª</td><td class="num">${nf(g.factory, 2)}</td><td class="num">${g.learned != null ? "<b>" + nf(g.learned, 2) + "</b>" : "—"}</td><td class="num">${pct(g.diff_pct)}</td><td class="num">${g.count}</td></tr>`).join("")}</tbody></table></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">km/h a cada 1.000 rpm. A diferença para a fábrica vem do tamanho real do pneu (gasto, pressão, medida).${(ge.rejected || []).length ? ` ${ge.rejected.length} relação(ões) fora do esperado foram descartadas.` : ""}</div>
+      <h3 class="lbl" style="margin-top:14px">Embreagem (${ge.days} dias)</h3>
+      ${ge.slips.length ? `<div class="list" style="margin-top:8px">${ge.slips.slice(0, 20).map((x) => `<div class="alert click" data-trip="${x.trip_id ?? ""}" style="--s:var(--bad);cursor:pointer"><span class="ic">⚙️</span><div><div class="t">Patinou em ${x.gear ?? "?"}ª · ${dt(x.ts)}</div>
+          <div class="d">rotação ${nf(x.pct)} % acima do que a velocidade explica, por ${nf(x.dur_s, 1)} s a ${nf(x.kmh)} km/h</div></div><span class="more">›</span></div>`).join("")}</div>
+          ${ge.slips_7d >= 3 ? `<div class="banner" style="--s:var(--bad);margin-top:8px"><span class="ic">⚠️</span><div>${ge.slips_7d} patinações em 7 dias: leve o carro para avaliar a embreagem.</div></div>` : ""}`
+        : `<div class="muted" style="margin-top:6px">✓ Nenhuma patinação de embreagem percebida. O aviso aparece se, acelerando forte em 3ª, 4ª ou 5ª, a rotação subir mais do que a velocidade explica.</div>`}
+      ${pi ? `<div style="margin-top:10px"><button class="rbtn" type="button" id="gGReset">Esquecer as relações aprendidas</button> <span class="muted" style="font-size:12px">(depois de trocar pneus ou câmbio)</span></div>` : ""}`;
+    const spHtml = !sp ? `<div class="empty">Ainda não sincronizado.</div>` : `
+      <div style="margin-top:6px;font-weight:600">${esc(sp.texto)}</div>
+      ${sp.bins.length ? `<div class="tbl" style="margin-top:10px"><table><thead><tr><th>Faixa (central)</th><th>Leituras</th><th>Central</th><th>Verdadeira (GPS)</th><th>Diferença</th></tr></thead><tbody>
+        ${sp.bins.map((b) => `<tr style="${b.n >= sp.min_pairs ? "" : "opacity:.55"}"><td>${b.lo}–${b.lo + 9} km/h</td><td class="num">${b.n}</td><td class="num">${nf(b.obd, 1)}</td><td class="num">${nf(b.gps, 1)}</td><td class="num">${pct(b.err_pct)}</td></tr>`).join("")}</tbody></table></div>
+        <div class="muted" style="font-size:12px;margin-top:6px">${sp.n_bins} de ${sp.min_bins} faixas com ${sp.min_pairs}+ leituras em velocidade constante. "Diferença" = quanto a central marca a mais que a velocidade verdadeira.</div>` : ""}
+      <div class="muted" style="font-size:12px;margin-top:6px">A central é o que o OBD lê. O <b>ponteiro do painel</b> costuma marcar ainda mais que a central (por lei ele nunca pode marcar menos que a velocidade real).</div>
+      ${sp.pneus && sp.pneus.texto ? `<div class="banner" style="--s:var(--warn);margin-top:8px"><span class="ic">🛞</span><div>${esc(sp.pneus.texto)}</div></div>` : ""}
+      ${sp.ponteiro ? `<div class="muted" style="margin-top:6px">Ponteiro anotado: ${nf(sp.ponteiro.needle)} km/h com o carro a ${nf(sp.ponteiro.real)} (${pct(sp.ponteiro.vs_real_pct)}) · ${dt(sp.ponteiro.ts)}</div>` : ""}
+      ${pi ? `<form id="gNForm" class="gpform" style="margin-top:8px"><span class="muted" style="font-size:13px">Em velocidade constante, anote o ponteiro e o GPS (modo direção) no mesmo instante:</span>
+        <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:13px">Ponteiro <input type="number" id="gNNd" min="10" max="250" step="1" style="width:80px" aria-label="Ponteiro do painel em km/h" required> km/h</label>
+        <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:13px">GPS <input type="number" id="gNRl" min="10" max="250" step="0.5" style="width:80px" aria-label="Velocidade do GPS em km/h" required> km/h</label>
+        <button class="btn" type="submit">Salvar</button><span class="muted" id="gNMsg" style="font-size:13px" role="status"></span></form>` : ""}`;
+    const items = sc?.items || [];
+    const scHtml = !sc ? `<div class="empty">Ainda não sincronizado.</div>` : !items.length
+      ? `<div class="muted" style="margin-top:6px">Nenhuma viagem com nota ainda. A nota sai para viagens com GPS de 2 km e 3 min ou mais.</div>` : `
+      <div class="stats" style="margin-top:10px"><div><span class="lbl">Média (${sc.days} dias)</span><b style="color:${scoreColor(sc.media)}">${nf(sc.media)}</b></div>
+        <div><span class="lbl">Viagens</span><b>${sc.n}</b></div>${sc.tendencia ? `<div><span class="lbl">Tendência</span><b>${esc(sc.tendencia.texto)}</b><span class="muted" style="font-size:12px">${sc.tendencia.delta > 0 ? "+" : ""}${nf(sc.tendencia.delta, 1)} ponto(s)</span></div>` : ""}
+        ${sc.por_100km ? `<div><span class="lbl">A cada 100 km</span><b>${nf(sc.por_100km.freadas, 1)}</b><span class="muted" style="font-size:12px">freadas · ${nf(sc.por_100km.curvas, 1)} curvas · ${nf(sc.por_100km.arrancadas, 1)} arrancadas</span></div>` : ""}</div>
+      <svg class="chart" id="gScChart" viewBox="0 0 600 160" preserveAspectRatio="none" style="margin-top:8px"></svg>
+      <div class="tbl" style="margin-top:8px"><table class="cards"><thead><tr><th>Viagem</th><th>Nota</th><th>Freadas</th><th>Arrancadas</th><th>Curvas</th><th>Km</th></tr></thead><tbody id="gScRows">
+        ${items.slice().reverse().slice(0, 30).map((x) => `<tr class="click" data-id="${x.trip_id}"><td class="head">${dt(x.start_ts)}</td><td class="num" data-l="Nota"><b style="color:${scoreColor(x.score)}">${x.score}</b></td>
+          <td class="num" data-l="Freadas">${x.freadas}</td><td class="num" data-l="Arrancadas">${x.arrancadas}</td><td class="num" data-l="Curvas">${x.curvas}</td><td class="num" data-l="Km">${nf(x.km, 1)}</td></tr>`).join("")}</tbody></table></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">Mede segurança e suavidade pelo GPS (a nota econômica, pelo motor, continua na aba Viagens). Os limites de velocidade de cada rua entram depois; por enquanto conta o tempo acima de 115 km/h.</div>`;
+    body.innerHTML = `<div class="card"><h2>⚙️ Marchas e embreagem</h2>${gearsHtml}</div>
+      <div class="card"><h2>🧭 Velocímetro e pneus</h2>${spHtml}</div>
+      <div class="card"><h2>🏁 Nota de condução</h2>${scHtml}</div>`;
+    if (items.length && U().lineChart) U().lineChart($("#gScChart"), [{ pts: items.map((x) => [x.start_ts, x.score]), c: "--ok", dots: true, r: 4 }],
+      items.length === 1 ? { x0: items[0].start_ts - 86400e3, x1: items[0].start_ts + 86400e3 } : {});
+    $("#gScRows")?.addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) openTrip(+tr.dataset.id); });
+    body.querySelectorAll("[data-trip]").forEach((el) => el.addEventListener("click", () => { if (el.dataset.trip) openTrip(+el.dataset.trip); }));
+    $("#gGReset")?.addEventListener("click", async () => {
+      if (!confirm("Esquecer as relações aprendidas? O aprendizado recomeça do zero (use depois de trocar pneus).")) return;
+      try { await post("/api/gps/gears/reset", {}); render(); } catch (err) { alert("Erro: " + err.message); }
+    });
+    $("#gNForm")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try { const j = await post("/api/gps/speedo", { needle: +$("#gNNd").value, real: +$("#gNRl").value }); $("#gNMsg").textContent = `Salvo: o ponteiro marca ${pct(j.vs_real_pct)}.`; }
+      catch (err) { $("#gNMsg").textContent = "Erro: " + err.message; }
+    });
+  };
+
+  // detalhe da viagem: nota de condução e alfinetes de freadas, arrancadas, curvas e patinações
+  TRIP_EXTRA.push(({ card, map, det }) => {
+    const g = det?.gps || {};
+    const evs = (det?.events || []).filter((e) => EV[e.kind] && e.lat != null);
+    let d = null; try { d = g.drive_json ? JSON.parse(g.drive_json) : null; } catch { }
+    if (evs.length) M().pins(map, evs.map((e) => ({ lat: e.lat, lon: e.lon, color: EV[e.kind][0], r: 7, ring: "#fff",
+      html: `<b>${EV[e.kind][1]} ${EV[e.kind][2]}</b><br>${tm(e.ts)} · ${esc(EV[e.kind][3](e.value))}<br><a href="#" data-rp="${e.ts}">Replay 8 s antes</a>` })));
+    if (!d) return;
+    const box = document.createElement("div");
+    box.style.marginTop = "10px";
+    if (g.drive_score == null) box.innerHTML = `<div class="muted" style="font-size:13px">Nota de condução: sem nota (${esc(d.motivo || "—")}).</div>`;
+    else {
+      const pen = Object.entries(d.penalidades || {}).filter(([, v]) => v > 0);
+      box.innerHTML = `<div class="row-head"><div><span class="lbl">Nota de condução</span> <b style="font-size:20px;color:${scoreColor(g.drive_score)}">${g.drive_score}</b></div>
+        <div class="gm-legend">${Object.keys(EV).filter((k) => k !== "patinacao").map((k) => `<span><i style="background:${EV[k][0]}"></i>${EV[k][2]}: ${d[k === "freada" ? "freadas" : k === "arrancada" ? "arrancadas" : "curvas"] || 0}</span>`).join("")}</div></div>
+        ${pen.length ? `<div class="muted" style="font-size:12px;margin-top:4px">Descontos: ${pen.map(([k, v]) => `${esc(PEN[k] || k)} −${nf(v, 1)}`).join(" · ")}</div>` : ""}
+        ${(d.dicas || []).map((x) => `<div class="muted" style="font-size:13px;margin-top:4px">💡 ${esc(x)}</div>`).join("")}`;
+    }
+    const leg = $("#gTLeg", card); if (leg) leg.insertAdjacentElement("afterend", box); else card.appendChild(box);
+  });
 
   window.obdGps = { render, trip, openTrip };
 })();

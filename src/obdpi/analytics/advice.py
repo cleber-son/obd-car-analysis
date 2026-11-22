@@ -222,6 +222,33 @@ A.update({
         "urgencia": "logo", "rodar": "Risco de não pegar na próxima partida, principalmente em dia frio.",
     },
     "thermostat": {"alias": "P0128"},
+    # ------------------------------------------------------------------ GPS (docs/GPS-ARQUITETURA.md, seções 9.6 e 9.7)
+    "gps:clutch_slip": {
+        "o_que": "Com o pé no acelerador numa marcha alta, a rotação subiu mais do que a velocidade real (medida pelo GPS) explica, "
+                 "e voltou ao normal na mesma marcha. O motor girou mais que as rodas: a embreagem escorregou.",
+        "causas": ["Disco de embreagem gasto (o mais comum depois de muitos quilômetros)",
+                   "Platô (mola da embreagem) fraco", "Óleo ou graxa no disco (retentor do virabrequim ou do câmbio vazando)",
+                   "Embreagem sem folga no pedal ou cabo/hidráulico prendendo (o pedal não volta todo)",
+                   "Hábito de dirigir com o pé apoiado no pedal da embreagem"],
+        "verificar": ["Se o pedal da embreagem volta inteiro e tem folga no começo do curso",
+                      "Se o carro 'perde força' em subida em 4ª ou 5ª com o giro subindo sem o carro acelerar",
+                      "Teste parado (com cuidado e freio de mão puxado): 3ª engatada, soltar a embreagem devagar com o motor a ~1.500 rpm — o motor deveria morrer",
+                      "Mancha de óleo embaixo, entre o motor e o câmbio", "Quantas vezes o aviso apareceu (aba Mapa → Desempenho)"],
+        "fazer": ["Levar a uma oficina de confiança para avaliar o conjunto de embreagem (disco, platô e rolamento)",
+                  "Evitar arrancadas fortes e subidas pesadas em marcha alta até o conserto",
+                  "Se houver vazamento de óleo, corrigir o retentor junto com a troca, ou o disco novo também patina"],
+        "urgencia": "logo", "rodar": "Pode rodar com calma, evitando acelerar fundo em marcha alta; a patinação piora rápido e pode deixar o carro sem tração numa subida.",
+    },
+    "gps:moved_off": {
+        "o_que": "Na partida, o GPS mostrou o carro longe de onde ele ficou estacionado, e o que o carro andou com o motor ligado não explica a diferença.",
+        "causas": ["Guincho (estacionamento proibido, pátio)", "Manobra por terceiros (manobrista, oficina, lava-rápido, família)",
+                   "Furto ou tentativa de furto", "GPS sem posição boa no último estacionamento (raro: o aviso exige posição válida)"],
+        "verificar": ["No mapa do painel, onde o carro foi deixado (Mapa → Estacionado) e onde ele está agora",
+                      "Se alguém da família ou uma oficina usou o carro", "Sinais de arrombamento (fechaduras, vidros, ignição)"],
+        "fazer": ["Se ninguém conhecido usou o carro: registrar boletim de ocorrência e guardar o horário e as posições do painel",
+                  "Se foi guincho: procurar o pátio do órgão de trânsito da cidade"],
+        "urgencia": "logo", "rodar": "Confira o carro antes de rodar.",
+    },
 })
 
 DTC: dict[str, dict] = {

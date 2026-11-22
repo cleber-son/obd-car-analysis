@@ -221,9 +221,16 @@ class Sync:
         rules |= {"z", "missing", "R9"}                   # orientações gerais das famílias de alerta (plano B do painel)
         for r in sorted(rules):
             self.gather(f"/api/advice?rule={urllib.parse.quote(r)}", docs)
+        self.gather_gps_open(docs)
         self.gather_gps(docs)
         n = self.push(docs)
         return n
+
+    def gather_gps_open(self, docs: list) -> None:
+        """F5: documentos do GPS só com números (marchas, velocímetro, nota de condução). Abertos na nuvem (LOC_OPEN):
+        sobem sempre, como o /api/gps/status."""
+        for p in ("/api/gps/gears", "/api/gps/speedo", "/api/gps/score?days=90"):
+            self.gather(p, docs)
 
     def gather_gps(self, docs: list) -> None:
         """Documentos do GPS (seção 4.6). Sem posição: sempre. Com posição: só com a senha de localização na nuvem

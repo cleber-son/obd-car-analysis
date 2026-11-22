@@ -46,6 +46,7 @@ class Leg:
     grade: float = 0.0             # inclinação em %
     pedal: float | None = None     # None = segue a velocidade; 1.0 = pé no fundo (arrancada/puxada)
     hold_gear: int | None = None   # mantém a marcha (retomada, dinamômetro)
+    brake: float | None = None     # m/s² da freada no fim do trecho (None = 2,0; freada forte ≈ 3,9)
 
 
 @dataclass
@@ -81,10 +82,12 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
              speedo: float = 1.0, mass: float = 1350, cda: float = 0.63, crr: float = 0.011, alt0: float = 760,
              leak: bool = False, slip: tuple[float, float, float] | None = None,
              dropouts: tuple[tuple[float, float], ...] = (), noise: tuple[float, float, float] = (2.5, 0.15, 4.0),
-             mix: float = 0.0, ect0: float = 30) -> SimTrip:
+             mix: float = 0.0, ect0: float = 30, tyre: float = 1.0) -> SimTrip:
+    """tyre: circunferência real do pneu ÷ a nominal (relações verdadeiras = GEAR_KMH_PER_KRPM × tyre)."""
     from ..analytics import fuel as fuelmod
     from ..analytics.tripdiag import expected_air_gs
     rnd = random.Random(seed)
+    ratios = {g: k * tyre for g, k in GEAR_KMH_PER_KRPM.items()}
     lat, lon = start
     alt, v, t = float(alt0), 0.0, 0.0
     gear, target, shift_left, rpm = 1, 1, 0.0, float(IDLE_RPM)
@@ -108,7 +111,7 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
         elif kmh < 3:
             gear = 1
         else:
-            rg = kmh / GEAR_KMH_PER_KRPM[gear] * 1000
+            rg = kmh / ratios[gear] * 1000
             up = 6300 if leg.pedal else 2800
             if rg > up and gear < 5:
                 target, shift_left = gear + 1, 0.6
@@ -117,11 +120,11 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
         if kmh < 3:
             want = IDLE_RPM if a <= 0.05 else 1200 + (1500 if leg.pedal else 0)
         elif shift_left > 0:
-            want = kmh / GEAR_KMH_PER_KRPM[target] * 1000
+            want = kmh / ratios[target] * 1000
             rpm += (want - rpm) * min(1.0, DT / 0.3)        # razão solta: rotação vai para a da marcha nova
             return
         else:
-            want = kmh / GEAR_KMH_PER_KRPM[gear] * 1000
+            want = kmh / ratios[gear] * 1000
             if gear == 1 and kmh < 10 and a > 0:            # embreagem saindo
                 want = max(want, 1200 + (1500 if leg.pedal else 0))
         rpm = max(float(IDLE_RPM) if kmh < 3 else 650.0, want)
@@ -138,14 +141,15 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
             hdg = bearing_deg(lat, lon, *leg.to)
             vt = leg.speed / 3.6
             if leg.pedal:
-                k = GEAR_KMH_PER_KRPM[gear]
+                k = ratios[gear]
                 force = torque_nm(rpm) * leg.pedal * EFF * (2 * math.pi / 60 * 3600) / k
                 res = mass * G * (crr + leg.grade / 100) + 0.5 * RHO * cda * v * v
                 amax = max(0.0, (force - res) / mass) if shift_left <= 0 else 0.0
             else:
                 amax = ACC
-            vn = min(v + amax * DT, vt) if v <= vt else max(v - BRAKE * DT, vt)
-            vb = math.sqrt(v_end * v_end + 2 * BRAKE * max(0.0, rem - 1.0))
+            br = leg.brake or BRAKE
+            vn = min(v + amax * DT, vt) if v <= vt else max(v - br * DT, vt)
+            vb = math.sqrt(v_end * v_end + 2 * br * max(0.0, rem - 1.0))
             vn = min(vn, vb)
             if vn < 1.0:
                 vn = 1.0 if rem > 1.0 else 0.5               # chega devagar até a faixa (nunca fica parado no meio)
@@ -543,7 +547,25 @@ def add_places(con) -> None:
     con.commit()
 
 
-SCENARIOS = {"commute": commute, "tunnel": tunnel, "towed": towed, "straight": straight}
+def slip(seed: int = 1, t0: int = T0, frac: float = 0.08, dur_s: float = 3.0, **kw) -> SimTrip:
+    """Embreagem patinando (9.6): sai, chega a 70 km/h (4ª), pé embaixo em 4ª até ~110 km/h; a rotação fica 'frac'
+    acima da esperada por 'dur_s' segundos perto de 3.000 rpm, alivia e segue. frac=0: a mesma viagem sem patinar."""
+    legs = _legs(HOME, [(0, 0, 10, 15), (0, 1200, 70, 0)])
+    p = legs[-1].to
+    legs += [Leg(to=offset(p[0], p[1], 0, 900), speed=115, pedal=0.9, hold_gear=4)]
+    p = legs[-1].to
+    legs += _legs(p, [(0, 1500, 100, 0), (0, 800, 50, 20)])
+    base = simulate(legs, start=HOME, t0=t0, seed=seed, **kw)
+    if not frac:
+        return base
+    # instante em que a rotação passa de 2.900 em 4ª com o pé embaixo (a verdade da viagem sem patinação)
+    t_on = next(s["t"] for s in base.truth if s.get("pedal") and s["gear"] == 4 and s["rpm"] >= 2900)
+    trip = simulate(legs, start=HOME, t0=t0, seed=seed, slip=(t_on, dur_s, frac), **kw)
+    trip.meta["slip"] = (t_on, dur_s, frac)
+    return trip
+
+
+SCENARIOS = {"commute": commute, "tunnel": tunnel, "towed": towed, "straight": straight, "slip": slip}
 
 
 def _scenario(name: str, seed: int, t0: int) -> list[SimTrip]:

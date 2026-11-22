@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from .. import config
 from . import FLAG_BURST, FLAG_STOPPED, Fix, good
-from . import places, routes, segments, store, trip
+from . import gears, places, routes, score, segments, speedo, store, trip
 from .reader import GpsReader
 
 log = logging.getLogger("gps")
@@ -145,6 +145,10 @@ LIVE_ENGINES += [places.ParkEngine, places.GeofenceEngine, NoObdKm]
 # ---- F4: rotas e trechos de referência
 FINALIZERS += [routes.assign_trip, segments.scan_trip]
 
+# ---- F5: marchas, embreagem, velocímetro e nota de condução
+LIVE_ENGINES += [gears.GearEngine, speedo.SpeedoEngine]
+FINALIZERS[1:1] = [score.finalize]          # logo depois de trip.finalize (que cria a linha de trip_gps); a ordem das F4 fica no fim
+
 
 def make_ctx(con, cfg: dict, **kw) -> SimpleNamespace:
     """ctx fora do coletor (sim.to_db, obdctl gps reanalyze): mesmos campos de GpsHub.ctx()."""
@@ -255,7 +259,7 @@ class GpsHub:
                 for e in self.engines:
                     if hasattr(e, "reload"):
                         e.reload()
-            else:
+            elif not any(getattr(e, "command", lambda _c: False)(c) for e in self.engines):    # F5: {"cmd": "gears_reset"}
                 log.debug("gps: comando ignorado nesta versão: %s", c)
 
     def start_burst(self, seconds: float) -> None:
@@ -395,14 +399,40 @@ class GpsHub:
         """Campo "gps" do live.json (público, sem posição)."""
         return dict(self._live)
 
+    def _engine(self, cls):
+        return next((e for e in self.engines if isinstance(e, cls)), None)
+
+    def speedo_k(self) -> float:
+        """Fator do velocímetro aprendido (velocidade verdadeira ÷ a da central); 1,0 até aprender ou sem GPS."""
+        e = self._engine(speedo.SpeedoEngine) if self.enabled else None
+        return e.k if e else 1.0
+
+    def true_speed(self, obd_speed: float | None) -> float | None:
+        """Velocidade da central corrigida pelo fator do velocímetro (com k = 1, a mesma)."""
+        try:
+            k = self.speedo_k()
+        except Exception as e:
+            self._warn("speedo_k", e)
+            k = 1.0
+        return obd_speed * k if obd_speed and k != 1.0 else obd_speed
+
+    def gear_table(self) -> dict | None:
+        """Relações aprendidas pelo GPS (F5); None até aprender (o coletor usa a tabela de fábrica, como antes)."""
+        if not self.enabled:
+            return None
+        e = self._engine(gears.GearEngine)
+        return e.table() if e else None
+
     def best_speed(self, obd_speed: float | None) -> float | None:
-        """Velocidade do GPS se a posição é recente (< 1,5 s) e boa; senão a do OBD (× fator do velocímetro, F5)."""
-        if not self.enabled or self.reader is None:
+        """Velocidade do GPS se a posição é recente (< 1,5 s) e boa; senão a do OBD × fator do velocímetro (F5)."""
+        if not self.enabled:
             return obd_speed
+        if self.reader is None:
+            return self.true_speed(obd_speed)
         try:
             f = self.reader.latest()
             if f is None or f.speed is None or time.monotonic() - f.mono > SPEED_FRESH_S or not good(f, self.max_hdop, self.min_sats):
-                return obd_speed
+                return self.true_speed(obd_speed)
             if obd_speed == 0:                      # OBD diz parado: é parado (o ruído do GPS não inventa km)
                 return obd_speed
             return 0.0 if f.speed < STOPPED_KMH else f.speed
@@ -461,7 +491,12 @@ class GpsHub:
         if not self.enabled:
             return None
         try:
-            return trip.trip_distance(self.con, a, b, obd_km, self.cfg)
+            g = trip.trip_distance(self.con, a, b, obd_km, self.cfg)
+            if g is None:                              # sem posição: a do OBD × fator do velocímetro aprendido (F5)
+                k = trip.speedo_k(self.con)
+                if k != 1.0 and obd_km:
+                    g = {"km": round(obd_km * k, 2), "gps_km": None, "obd_km": round(obd_km, 3), "coverage": 0.0, "k": k}
+            return g
         except Exception as e:
             self._warn("trip_distance", e)
             return None
@@ -473,7 +508,11 @@ class GpsHub:
         """Complemento do resumo da viagem no celular: {"route": "Casa → Trabalho" | None, "parts": [...]}.
         Os nomes dos lugares vão no título se gps.summary_names (padrão: sim; decisão do dono)."""
         try:
-            return trip.summary(self.con, tid, bool(self.cfg.get("summary_names", True)))
+            out = trip.summary(self.con, tid, bool(self.cfg.get("summary_names", True)))
+            nota = score.summary_part(self.con, tid)          # F5: "nota 87"
+            if nota:
+                out["parts"] = [*out["parts"], nota]
+            return out
         except Exception as e:
             self._warn("summary", e)
             return {"route": None, "parts": []}

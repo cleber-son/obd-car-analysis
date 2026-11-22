@@ -506,4 +506,79 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
             con.close()
         return out
 
+    # ---- F5: marchas, embreagem, velocímetro e nota de condução (rotas abertas na nuvem: só números, sem posição)
+    from ..gps import gears as gearsmod
+    from ..gps import score as scoremod
+    from ..gps import speedo as speedomod
+
+    def gps_cmd(cmd: dict):
+        try:
+            with open(run_dir / "gps_cmd", "a") as fh:
+                fh.write(json.dumps(cmd) + "\n")
+        except OSError:
+            pass
+
+    @r.get("/api/gps/gears")
+    def gps_gears(days: int = 90):
+        """Relações das marchas (fábrica × aprendidas pelo GPS) e as patinações de embreagem do período."""
+        return gearsmod.report(ro(), int(time.time() * 1000), max(1, min(int(days), 400)))
+
+    @r.post("/api/gps/gears/reset")
+    def gps_gears_reset(x_token: str | None = Header(None)):
+        """Esquece as relações aprendidas (depois de trocar pneu ou câmbio). O coletor recomeça do zero."""
+        check_admin(x_token)
+        con = rw()
+        try:
+            con.execute("DELETE FROM gps_model WHERE key='gears'")
+            con.commit()
+        finally:
+            con.close()
+        gps_cmd({"cmd": "gears_reset"})
+        return {"ok": True}
+
+    @r.get("/api/gps/speedo")
+    def gps_speedo():
+        """Aferição do velocímetro da central (fator k, tabela por faixa), pneus (k da 5ª mês a mês) e o ponteiro do painel."""
+        con = ro()
+        m = gstore.model_get(con, "speedo") or {}
+        res = speedomod.fit(speedomod._load(m))
+        for b in res["bins"]:
+            b["err_pct"] = round((b["obd"] / b["gps"] - 1) * 100, 1) if b["gps"] else None
+        hist = gstore.model_get(con, "speedo_hist") or {}
+        needle = gstore.model_get(con, "speedo_needle") or []
+        pt = None
+        if isinstance(needle, list) and needle:
+            x = needle[-1]
+            pt = {**x, "vs_real_pct": round((x["needle"] / x["real"] - 1) * 100, 1) if x.get("real") else None}
+        return {**res, "texto": speedomod.text(res), "min_bins": speedomod.MIN_BINS, "min_pairs": speedomod.MIN_PAIRS,
+                "n_total": m.get("n_total") if isinstance(m, dict) else None, "updated_ts": m.get("updated_ts") if isinstance(m, dict) else None,
+                "pneus": speedomod.tyres(hist), "hist": hist if isinstance(hist, dict) else {}, "ponteiro": pt}
+
+    @r.post("/api/gps/speedo")
+    def gps_speedo_needle(body: dict, x_token: str | None = Header(None)):
+        """O dono anota o que o ponteiro do painel marcava e a velocidade verdadeira (GPS) no mesmo instante:
+        {needle, real}. Guarda as 10 últimas."""
+        check_admin(x_token)
+        try:
+            nd, rl = float((body or {}).get("needle")), float((body or {}).get("real"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Informe o que o ponteiro marcava e a velocidade do GPS (km/h).") from None
+        if not (10 <= nd <= 250 and 10 <= rl <= 250):
+            raise HTTPException(400, "Velocidades entre 10 e 250 km/h.")
+        con = rw()
+        try:
+            lst = gstore.model_get(con, "speedo_needle") or []
+            lst = (lst if isinstance(lst, list) else []) + [{"needle": nd, "real": rl, "ts": int(time.time() * 1000)}]
+            gstore.model_set(con, "speedo_needle", lst[-10:], int(time.time() * 1000))
+            con.commit()
+        finally:
+            con.close()
+        return {"ok": True, "vs_real_pct": round((nd / rl - 1) * 100, 1)}
+
+    @r.get("/api/gps/score")
+    def gps_score(days: int = 90):
+        """Nota de condução de cada viagem do período e a tendência (sem posição: os eventos com lugar ficam no detalhe da viagem)."""
+        days = max(1, min(int(days), 400))
+        return {**scoremod.trend(ro(), int(time.time() * 1000) - days * 86400_000), "days": days}
+
     return r

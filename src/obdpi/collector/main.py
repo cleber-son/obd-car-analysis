@@ -383,8 +383,12 @@ class Collector:
     def gear(self, speed, rpm) -> int | None:
         if not speed or not rpm or speed < 5 or rpm < 700:
             return None
+        # F5: relações aprendidas pelo GPS (senão as de fábrica) e a velocidade da central × fator do velocímetro (lida
+        # junto com a rotação; a do GPS chega atrasada). Sem GPS: tabela de fábrica e fator 1, a mesma conta de antes.
+        table = self._gps("gear_table", default=None) or self.GEAR_KMH_PER_KRPM
+        speed = self._gps("true_speed", speed, default=speed) or speed
         r = speed / (rpm / 1000)
-        g, ref = min(self.GEAR_KMH_PER_KRPM.items(), key=lambda kv: abs(kv[1] - r))
+        g, ref = min(table.items(), key=lambda kv: abs(kv[1] - r))
         return g if abs(r - ref) / ref < 0.08 else 0     # 0 = embreagem pressionada / ponto morto
 
     def trip_live_update(self, vals: dict, ts: int) -> None:
