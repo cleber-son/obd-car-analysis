@@ -44,6 +44,8 @@ KEEP = {
 }
 GPS_FILE = Path("/run/obd/gps.json")
 SYNC_CMD = Path("/run/obd/sync_cmd")     # F8: ação "sincronizar" de um lugar (chegou em casa): sincronização completa já
+SHARE_FILE = Path("/data/obd/share.json")        # F9: links criados no painel do Pi (só hashes), até serem enviados
+SHARE_CLOUD = Path("/run/obd/share_cloud.json")  # F9: links ativos na nuvem (resposta do ping), para o painel do Pi listar
 # Localização (seção 7.2): todo /api/gps/* leva posição ou nome de lugar, menos estas rotas só com números.
 # Mesma regra do Worker (cloud/src/index.js isLoc). Documentos de localização só sobem se a nuvem confirmar, no ping,
 # que tem a senha de localização (LOC_PASSWORD) — e o Worker ainda descarta se não tiver.
@@ -94,6 +96,12 @@ class Sync:
         self.last_live_engine = False
         self.loc = False             # a nuvem tem senha de localização? (resposta do ping; até lá, não)
         self.last_gps_hash = None
+        # F9: compartilhar a viagem ao vivo
+        self.share_on = False        # a nuvem disse (na resposta do canal ao vivo) que há link ativo
+        self.share_links: list = []  # links ativos na nuvem (ping): modo, se mostra o destino…
+        self.share_track_trip = None # viagem cujo trajeto já foi mandado para o link
+        self.share_last_trip = None  # última viagem vista no live.json (o fim dela encerra os links "até o fim da viagem")
+        self.guard_alarm = False     # F9: vigia do estacionamento disparou (posição sobe a cada 5 s)
 
     # -------------------------------------------------------------- HTTP
     def local(self, path: str, method: str = "GET", body: bytes | None = None) -> tuple[int, bytes]:
@@ -125,7 +133,22 @@ class Sync:
         if loc != self.loc:
             log.info("localização na nuvem: %s", "liberada (senha configurada)" if loc else "desativada (sem LOC_PASSWORD): posição não sobe")
         self.loc = loc
+        sh = r.get("share") if loc else None
+        self.share_links = [x for x in (sh or {}).get("links") or [] if isinstance(x, dict)]
+        if not loc:
+            self.share_on = False
+        self.write_share_cache(loc)
         return bool(r.get("ok"))
+
+    def write_share_cache(self, loc: bool) -> None:
+        """Para o painel do Pi listar os links ativos (criados aqui ou no painel online) e saber se a nuvem aceita."""
+        try:
+            SHARE_CLOUD.parent.mkdir(parents=True, exist_ok=True)
+            tmp = SHARE_CLOUD.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"ts": int(time.time() * 1000), "loc": loc, "links": self.share_links}, ensure_ascii=False))
+            tmp.replace(SHARE_CLOUD)
+        except OSError as e:
+            log.debug("share_cloud.json: %s", e)
 
     def loc_ok(self) -> bool:
         """Enviar documentos com posição? Só se a nuvem confirmou a senha de localização e gps.cloud = "auto"."""
@@ -276,7 +299,7 @@ class Sync:
             st, raw = self.local("/api/live")
             return raw if st == 200 else None
 
-    def cloud_post(self, path: str, body: bytes, gz: bool = False) -> None:
+    def cloud_post(self, path: str, body: bytes, gz: bool = False) -> dict:
         """POST numa conexão HTTPS mantida aberta (vários envios por segundo sem refazer o TLS a cada vez)."""
         import http.client
         u = urllib.parse.urlsplit(self.url)
@@ -292,10 +315,14 @@ class Sync:
                     self._conn = cls(u.netloc, timeout=15)
                 self._conn.request("POST", path, body=body, headers=headers)
                 r = self._conn.getresponse()
-                r.read()
+                data = r.read()
                 if r.status >= 400:
                     raise OSError(f"nuvem respondeu {r.status}")
-                return
+                try:
+                    out = json.loads(data or b"{}")
+                except ValueError:
+                    out = {}
+                return out if isinstance(out, dict) else {}
             except (OSError, http.client.HTTPException):
                 try:
                     self._conn and self._conn.close()
@@ -312,6 +339,7 @@ class Sync:
             return None
         g.pop("status", None)
         g["age_s"] = round(time.time() - g["ts"] / 1000, 1) if g.get("ts") else None
+        self.guard_alarm = (g.get("guard") or {}).get("state") == "alarme"
         return json.dumps(g, ensure_ascii=False).encode()
 
     def live(self, raw: bytes) -> None:
@@ -356,7 +384,7 @@ class Sync:
                     m = None
                 now = time.monotonic()
                 fresh = m is not None and m != last_m
-                due = now - last_doc >= (LIVE_DRIVING if active else LIVE_EVERY)
+                due = now - last_doc >= (LIVE_DRIVING if active or self.guard_alarm else LIVE_EVERY)   # F9: vigia = 5 s
                 if fresh or due:
                     raw = self.live_raw()
                     if raw:
@@ -366,9 +394,16 @@ class Sync:
                             active = d.get("state") == "coletando"       # ignição ligada (motor ligado ou não)
                         except ValueError:
                             raw = None
+                    if raw:
+                        self.share_trip_watch(d)
                     if raw and fresh and active:
                         last_m = m
-                        self.cloud_post("/api/sync/live", raw, gz=True)
+                        resp = self.cloud_post("/api/sync/live", self.live_body(raw, d), gz=True)
+                        self.share_on = bool(resp.get("share")) and self.loc_ok()
+                        if self.share_on:
+                            self.share_track(d)
+                        else:
+                            self.share_track_trip = None      # link novo mais tarde na mesma viagem: manda o trajeto de novo
                     if raw and due:
                         last_doc = now
                         self.live(raw)
@@ -376,6 +411,77 @@ class Sync:
             except Exception as e:
                 log.debug("ao vivo falhou: %s", e)
                 time.sleep(5)
+
+    # -------------------------------------------------------------- F9: compartilhar a viagem ao vivo (seção 9.21)
+    def live_body(self, raw: bytes, d: dict | None) -> bytes:
+        """Leitura ao vivo para o canal da nuvem. Com link ativo (e só com a senha de localização confirmada), leva junto
+        o quadro do link em "_share" (posição e números da viagem atual); o Worker tira antes de mandar ao painel."""
+        if not (self.share_on and self.loc_ok() and isinstance(d, dict)):
+            return raw
+        from .gps import share as sharemod
+        try:
+            g = json.loads(GPS_FILE.read_text())
+        except (OSError, ValueError):
+            g = None
+        fr = sharemod.frame(d, g, want_dest=any(x.get("dest") for x in self.share_links))
+        return json.dumps({**d, "_share": fr}, ensure_ascii=False).encode()
+
+    def share_track(self, d: dict) -> None:
+        """Link ativo e viagem nova para ele: manda o trajeto desta viagem desde a saída (uma vez por viagem)."""
+        tid = (d or {}).get("trip_id")
+        if not tid or tid == self.share_track_trip:
+            return
+        self.share_track_trip = tid
+        st, raw = self.local(f"/api/gps/share/track?trip={int(tid)}")
+        if st != 200:
+            return
+        try:
+            trk = json.loads(raw)
+            self.cloud("/api/sync/share", {"track": {"trip": int(tid), "pts": trk.get("pts") or []}}, timeout=20)
+        except Exception as e:
+            log.debug("trajeto do link: %s", e)
+
+    def share_trip_watch(self, d: dict | None) -> None:
+        """A viagem acabou (o live.json trocou de viagem ou ficou sem): avisa a nuvem, que encerra os links "até o fim
+        da viagem" e apaga a posição do link. Com o Pi desligando junto com o carro, a nuvem encerra sozinha (15 min)."""
+        tid = (d or {}).get("trip_id") if isinstance(d, dict) else None
+        prev, self.share_last_trip = self.share_last_trip, tid
+        if prev and prev != tid and self.loc_ok() and (self.share_on or self.share_links):
+            try:
+                self.cloud("/api/sync/share", {"trip_end": int(prev)}, timeout=15)
+                log.info("fim da viagem %s avisado ao link de compartilhamento", prev)
+            except Exception as e:
+                log.debug("fim da viagem para o link: %s", e)
+            self.share_track_trip = None
+
+    def share_sync(self) -> int:
+        """Envia os links criados no painel do Pi e os pedidos de encerrar. Só com a senha de localização na nuvem."""
+        from .gps import share as sharemod
+        store = sharemod.LinkStore(SHARE_FILE)
+        data = store.read()
+        now = int(time.time() * 1000)
+        creates = [x for x in data["links"] if x.get("state") == "pendente" and not x.get("revoke") and x.get("expires_ts", 0) > now]
+        revokes = [x["id"] for x in data["links"] if x.get("revoke") and x.get("state") not in ("encerrado",)]
+        if not creates and not revokes:
+            return 0
+        if not self.loc_ok():
+            return 0                                 # espera a senha de localização (o painel do Pi avisa)
+        r = self.cloud("/api/sync/share", {"create": [{k: x.get(k) for k in ("hash", "created_ts", "expires_ts", "mode", "label", "dest", "trip")}
+                                                      for x in creates], "revoke": revokes}, timeout=20)
+        made, refused = set(r.get("created") or []), set(r.get("refused") or [])
+        with store.edit() as d:
+            for x in d["links"]:
+                if x.get("id") in made and x.get("state") == "pendente":
+                    x["state"] = "enviado"
+                elif x.get("id") in refused and x.get("state") == "pendente":
+                    x.update(state="recusado", error=r.get("error") or "recusado pela nuvem")
+                if x.get("id") in revokes:
+                    x["state"] = "encerrado"
+        if isinstance(r.get("links"), list):
+            self.share_links = [x for x in r["links"] if isinstance(x, dict) and x.get("state") in ("ativo", "aguardando a viagem")]
+            self.write_share_cache(True)
+        log.info("links de compartilhamento: %d enviado(s), %d encerrado(s)", len(made), len(revokes))
+        return len(made) + len(revokes)
 
     # -------------------------------------------------------------- ações do painel online
     def commands(self) -> int:
@@ -446,6 +552,10 @@ class Sync:
                 self.purge_after_reset()
                 if not self.loc_ok():
                     self.purge_loc()
+                try:
+                    self.share_sync()                    # F9: links criados no painel do Pi e pedidos de encerrar
+                except Exception as e:
+                    log.warning("links de compartilhamento: %s", e)
                 if self.sync_requested():                # lugar com a ação "sincronizar" (ex.: chegou em casa, no WiFi)
                     self.last_cmd = self.last_full = 0
                 now = time.monotonic()

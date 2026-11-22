@@ -783,4 +783,91 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
         out["days"] = days
         return out
 
+    # ---- F9: compartilhar a viagem ao vivo (seção 9.21). O link é servido pela nuvem (/s/<token>); o Pi cria, lista e
+    # encerra, e o obd-sync envia. Só hashes ficam guardados (o token sai uma vez, na resposta de quem criou).
+    from ..gps import share as sharemod
+
+    share_store = sharemod.LinkStore(Path(db_path).parent / "share.json" if db_path else Path("/data/obd/share.json"))
+
+    def _cloud_cache() -> dict:
+        """O que o obd-sync soube da nuvem no último ping: {ts, loc, links} (links ativos, sem token nem hash inteiro)."""
+        return _read_json(run_dir / "share_cloud.json") or {}
+
+    @r.get("/api/gps/share")
+    def gps_share_list():
+        now = int(time.time() * 1000)
+        c = cfg.get("cloud") or {}
+        cc = _cloud_cache()
+        fresh = cc.get("ts") and now - int(cc["ts"]) < 10 * 60_000
+        cloud_links = {x.get("id"): x for x in (cc.get("links") or []) if isinstance(x, dict)} if fresh else {}
+        out = []
+        for x in share_store.read()["links"]:
+            if x.get("expires_ts", 0) < now - 86400_000:
+                continue
+            cl = cloud_links.pop(x["id"], None)
+            st = x.get("state")
+            if x.get("revoke") or st == "encerrado":
+                st = "encerrado" if st == "encerrado" else "encerrando"
+            elif x["expires_ts"] <= now:
+                st = "vencido"
+            elif cl:
+                st = cl.get("state") or "ativo"
+            out.append({k: x.get(k) for k in ("id", "created_ts", "expires_ts", "mode", "label", "dest")} |
+                       {"state": st, "src": "pi", "views": (cl or {}).get("views", 0)})
+            if x.get("mode") == "sempre":
+                out[-1]["expires_ts"] = None                 # sem prazo: até o dono cancelar
+        for cl in cloud_links.values():          # criados no painel online
+            out.append({k: cl.get(k) for k in ("id", "created_ts", "expires_ts", "mode", "label", "dest", "state", "views")} | {"src": "nuvem"})
+        out.sort(key=lambda x: -(x.get("created_ts") or 0))
+        return {"links": out, "cloud": bool(c.get("url") and c.get("token")), "loc": cc.get("loc"), "max": sharemod.MAX_ACTIVE,
+                "modes": list(sharemod.UI_MODES)}
+
+    @r.post("/api/gps/share")
+    def gps_share_create(body: dict, x_token: str | None = Header(None)):
+        """{mode: "24h" | "sempre", label?, dest?} → {url, id, expires_ts (None = sem prazo)}. O link passa a valer quando
+        o obd-sync o envia (≤ 10 s). Sem nuvem configurada: 400."""
+        check_admin(x_token)
+        c = cfg.get("cloud") or {}
+        base = (c.get("url") or "").rstrip("/")
+        if not base or not c.get("token"):
+            raise HTTPException(400, "Compartilhar precisa do painel online configurado ([cloud] url e token em /etc/obd/secrets.toml).")
+        if _cloud_cache().get("loc") is False:
+            raise HTTPException(400, "O painel online está sem a senha de localização (LOC_PASSWORD): sem ela nenhuma posição sai do Pi.")
+        try:
+            req = sharemod.parse_request(body)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        live = _read_json(run_dir / "live.json") or {}
+        try:
+            tok, rec = sharemod.create_local(share_store, req, int(time.time() * 1000), live.get("trip_id"))
+        except ValueError as e:
+            raise HTTPException(429, str(e)) from None
+        return {"ok": True, "url": f"{base}/s/{tok}", "id": rec["id"],
+                "expires_ts": None if rec["mode"] == "sempre" else rec["expires_ts"], "mode": rec["mode"],
+                "pending": True}
+
+    @r.post("/api/gps/share/{sid}")
+    def gps_share_revoke(sid: str, body: dict, x_token: str | None = Header(None)):
+        """{revoke: true}: encerra o link (o obd-sync avisa a nuvem no ciclo seguinte; o link criado aqui e ainda não
+        enviado nunca chega a valer)."""
+        check_admin(x_token)
+        if not sharemod.ID_RE.match(sid or "") or not (body or {}).get("revoke"):
+            raise HTTPException(400, "pedido inválido")
+        with share_store.edit() as d:
+            x = next((x for x in d["links"] if x.get("id") == sid), None)
+            if x is None:
+                d["links"].append({"id": sid, "revoke": True, "state": "encerrando", "created_ts": int(time.time() * 1000),
+                                   "expires_ts": int(time.time() * 1000) + 86400_000, "src": "nuvem"})
+            elif x.get("state") == "pendente":
+                x.update(state="encerrado", revoke=True)     # nunca foi para a nuvem
+            else:
+                x["revoke"] = True
+        return {"ok": True}
+
+    @r.get("/api/gps/share/track")
+    def gps_share_track(trip: int):
+        """Trajeto da viagem aberta (para o link que nasce no meio dela). Usado só pelo obd-sync, no próprio Pi:
+        não é sincronizado como documento e, na nuvem, fica atrás da senha de localização como todo /api/gps/*."""
+        return sharemod.track_points(ro(), int(trip))
+
     return r

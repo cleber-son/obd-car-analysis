@@ -8,6 +8,11 @@
 //
 // Segredos (wrangler secret put): SYNC_TOKEN (obrigatório); DASH_PASSWORD e SESSION_SECRET (opcionais);
 // LOC_PASSWORD (opcional): senha de localização. Sem ela, nada com posição ou nome de lugar é servido nem guardado.
+//
+// F9: link para compartilhar a viagem ao vivo (/s/<token>): ver src/share.js. Público e sem senha, mas só mostra a
+// viagem em andamento enquanto o link vale; exige LOC_PASSWORD (sem ela o Pi nem envia posição).
+
+import { ShareRoom, ownerShare, syncShare, pingShare, sharePage, shareApi } from "./share.js";
 
 const KEEP = {
   "/api/series": ["signals", "span"], "/api/alerts": ["days", "severity"], "/api/report": ["days"],
@@ -17,6 +22,7 @@ const KEEP = {
   "/api/gps/logbook": ["limit"], "/api/gps/alerts": ["days"], "/api/gps/events": ["days"], "/api/gps/heat": ["signal", "days"],
   "/api/gps/traffic": ["days"], "/api/gps/terrain": ["days"], "/api/gps/roadmix": ["days"], "/api/gps/score": ["days"],
 };
+const SHARE_STATIC = new Set(["/static/leaflet.js", "/static/leaflet.css"]);
 const QUEUEABLE = [/^\/api\/fuel\/fill$/, /^\/api\/annotations$/, /^\/api\/trips\/\d+$/, /^\/api\/ai\/analyze$/];
 const SESSION_DAYS = 30;
 const enc = new TextEncoder();
@@ -336,20 +342,31 @@ async function syncCommands(req, env) {
 // ---------------------------------------------------------------- roteamento
 // Canal ao vivo: o Pi envia cada leitura (POST /api/sync/live) e este objeto repassa na hora, por WebSocket,
 // para quem está com o painel aberto. Sem banco no caminho: o atraso fica em frações de segundo.
+// F9: o mesmo objeto atende o link de compartilhamento (ShareRoom, em share.js) com conexões marcadas "share",
+// separadas das do painel ("live"): quem tem o link nunca recebe o estado ao vivo do painel, e o painel nunca recebe posição.
 export class LiveHub {
-  constructor(ctx) { this.ctx = ctx; this.last = null; this.lastAt = 0; }
+  constructor(ctx, env) { this.ctx = ctx; this.env = env; this.last = null; this.lastAt = 0; this.room = new ShareRoom(ctx, env); }
+  static respond101(client) { return new Response(null, { status: 101, webSocket: client }); }    // os testes trocam (Node não aceita 101)
+  upgrade(setup) { const pair = new WebSocketPair(); setup(pair[1]); return LiveHub.respond101(pair[0]); }
   async fetch(req) {
     const url = new URL(req.url);
     if (url.pathname === "/push") {
-      this.last = await req.text(); this.lastAt = Date.now();
-      for (const ws of this.ctx.getWebSockets()) { try { ws.send(this.last); } catch { } }
-      return new Response("ok");
+      let live = await req.text(), share;
+      if (req.headers.get("x-share") === "1") {               // {live: "<estado ao vivo>", share: {quadro do link}}
+        try { const o = JSON.parse(live); live = typeof o.live === "string" ? o.live : ""; share = o.share; } catch { return new Response("dados inválidos", { status: 400 }); }
+      }
+      this.last = live; this.lastAt = Date.now();
+      for (const ws of this.ctx.getWebSockets("live")) { try { ws.send(this.last); } catch { } }
+      let on = false;
+      try { on = share !== undefined ? await this.room.ingest(share) : (await this.room.load(), await this.room.refresh(), await this.room.checkSilent(), this.room.hasActive()); } catch { on = false; }
+      return Response.json({ ok: true, share: on });
     }
+    if (url.pathname.startsWith("/share-")) return this.room.handle(req, url, (setup) => this.upgrade(setup));
     if (req.headers.get("Upgrade") !== "websocket") return new Response("websocket esperado", { status: 426 });
-    const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1]);                       // hibernável: não cobra tempo parado
-    if (this.last && Date.now() - this.lastAt < 15_000) pair[1].send(this.last);
-    return new Response(null, { status: 101, webSocket: pair[0] });
+    return this.upgrade((server) => {
+      this.ctx.acceptWebSocket(server, ["live"]);            // hibernável: não cobra tempo parado
+      if (this.last && Date.now() - this.lastAt < 15_000) server.send(this.last);
+    });
   }
   webSocketMessage() { }
   webSocketClose(ws, code) { try { ws.close(code === 1005 ? 1000 : code, "fim"); } catch { } }
@@ -361,12 +378,21 @@ async function syncLive(req, env) {
   const body = req.headers.get("content-encoding") === "gzip" ? req.body.pipeThrough(new DecompressionStream("gzip")) : req.body;
   const text = await new Response(body).text();
   if (text.length > 60_000) return json({ error: "grande demais" }, 413);
-  let out = text;
-  if (/"(lat|lon|latitude|longitude|parked|dest)"\s*:/.test(text)) {        // raro: só reescreve se aparecer algo suspeito
-    try { out = JSON.stringify(scrubLive(JSON.parse(text))); } catch { return json({ error: "dados inválidos" }, 400); }
+  let out = text, share;
+  if (/"(lat|lon|latitude|longitude|parked|dest|_share)"\s*:/.test(text)) {   // raro: só reescreve se aparecer algo suspeito
+    try {
+      const d = JSON.parse(text);
+      // F9: o quadro do link de compartilhamento vem junto, em "_share"; sai daqui antes de o estado ir para o painel
+      if (d && typeof d === "object" && "_share" in d) { share = d._share; delete d._share; }
+      out = JSON.stringify(scrubLive(d));
+    } catch { return json({ error: "dados inválidos" }, 400); }
   }
-  await hub(env).fetch("https://hub/push", { method: "POST", body: out });
-  return json({ ok: true });
+  const loc = locConfigured(env);
+  if (!loc) share = undefined;                         // sem senha de localização: posição não entra nem no link
+  const r = await hub(env).fetch("https://hub/push", share !== undefined
+    ? { method: "POST", body: JSON.stringify({ live: out, share }), headers: { "x-share": "1" } } : { method: "POST", body: out });
+  let on = false; try { on = !!(await r.json()).share; } catch { }
+  return json({ ok: true, share: loc && on });         // share: há link ativo (o Pi manda a posição junto só então)
 }
 
 export default {
@@ -380,8 +406,9 @@ export default {
       if (p === "/api/sync/docs" && req.method === "POST") return syncDocs(req, env);
       if (p === "/api/sync/live" && req.method === "POST") return syncLive(req, env);
       if (p === "/api/sync/commands") return syncCommands(req, env);
-      // loc: a nuvem tem senha de localização; o Pi só envia posição se vier true
-      if (p === "/api/sync/ping") return json({ ok: true, ts: Date.now(), loc: locConfigured(env) });
+      if (p === "/api/sync/share" && req.method === "POST") return syncShare(req, env, hub(env), locConfigured(env));
+      // loc: a nuvem tem senha de localização; o Pi só envia posição se vier true. share: links ativos (F9)
+      if (p === "/api/sync/ping") return json({ ok: true, ts: Date.now(), loc: locConfigured(env), ...(locConfigured(env) ? { share: await pingShare(env) } : {}) });
       return json({ error: "rota desconhecida" }, 404);
     }
 
@@ -402,6 +429,11 @@ export default {
       return new Response(null, { status: 303, headers: { location: "/login", "set-cookie": "obd_s=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax" } });
     if (p === "/manifest.webmanifest" || p === "/favicon.ico") return env.ASSETS.fetch(req);
 
+    // F9: link de compartilhamento — público, sem senha (nem a do painel); só a viagem atual enquanto o link vale
+    if (p.startsWith("/s/")) return sharePage(req, env, url);
+    if (p.startsWith("/api/share/")) return shareApi(req, env, hub(env), p.slice("/api/share/".length), locConfigured(env));
+    if (SHARE_STATIC.has(p)) return env.ASSETS.fetch(req);             // o mapa da página do link (arquivos sem dados)
+
     if (env.DASH_PASSWORD && !(await validSession(req, env))) {
       if (p.startsWith("/api/")) return json({ error: "faça login" }, 401);
       return new Response(null, { status: 303, headers: { location: "/login" } });
@@ -416,6 +448,8 @@ export default {
     if (isLoc(p)) {
       if (!(await locAuthorized(req, env))) return locLocked(env);
       if (/\/export\.(gpx|kml)$/.test(normPath(p))) return json({ error: "Exportação GPX/KML disponível no painel do Pi (rede local)." }, 404);
+      const np = normPath(p);
+      if (np === "/api/gps/share" || /^\/api\/gps\/share\/[0-9a-f]{8}$/.test(np)) return ownerShare(req, env, hub(env), np, url.origin);   // F9
       if (req.method === "POST") {
         if (LOC_QUEUE.some((re) => re.test(p))) return locQueue(req, env, p);
         return json({ error: "Faça isso no painel do Pi (rede local)." }, 409);

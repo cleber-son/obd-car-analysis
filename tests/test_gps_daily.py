@@ -593,6 +593,362 @@ def test_sync_f8_docs_and_sync_now():
         syncmod.STATE, syncmod.SYNC_CMD = old
 
 
+# ---------------------------------------------------------------- F9: compartilhar a viagem ao vivo (9.21) e modo sempre ligado (9.7)
+from obdpi.gps import share as sharemod
+import hashlib, random
+
+
+def test_share_token_and_frame():
+    toks = set()
+    for _ in range(50):
+        tok, h = sharemod.new_token()
+        assert sharemod.TOKEN_RE.match(tok) and len(tok) == 22 and h == hashlib.sha256(tok.encode()).hexdigest()
+        toks.add(tok)
+    assert len(toks) == 50
+    assert sharemod.parse_request({"mode": "1h"})["minutes"] == 60 and sharemod.parse_request({"mode": "4h"})["minutes"] == 240
+    assert sharemod.parse_request({"mode": "24h"}) == {"mode": "tempo", "minutes": 1440, "label": "", "dest": False}
+    assert sharemod.parse_request({"mode": "sempre"})["mode"] == "sempre" and sharemod.parse_request({"mode": "sempre"})["minutes"] is None
+    v = sharemod.parse_request({"mode": "viagem", "label": "<b>Para a Ana</b>\n" + "x" * 80, "dest": "sim"})
+    assert v["mode"] == "viagem" and v["minutes"] == 1440 and "<" not in v["label"] and len(v["label"]) == 40 and v["dest"] is False
+    for bad in ({}, {"minutes": 2}, {"minutes": 2000}, {"minutes": "x"}, {"mode": "nunca"}):
+        try:
+            sharemod.parse_request(bad)
+            assert False, bad
+        except ValueError:
+            pass
+    ts = 1_800_000_000_000
+    live = {"ts": ts, "trip_id": 31, "engine_on": True, "values": {"speed": 62, "rpm": 2400, "ect": 91, "kml_inst": 13.4, "fuel_lh": 4.6, "batt": 14},
+            "value_ts": {"speed": ts - 500, "rpm": ts - 500, "ect": ts - 10_000, "kml_inst": ts - 500, "fuel_lh": ts - 60_000},
+            "status": {"ect": ["ok", 91]}, "trip": {"elapsed_s": 900, "km": 7.42, "kml": 11.8},
+            "alerts": [{"ts": ts - 60_000, "sev": "warn", "title": "Temperatura subindo", "detail": "detalhe técnico"}, {"ts": ts, "sev": "info", "title": "x"}],
+            "gps": {"state": "ok", "sats": 9}}
+    gps = {"state": "ok", "lat": -23.550123, "lon": -46.633111, "speed": 61.0, "heading": 181, "fix_ts": ts - 300, "trip_id": 31,
+           "place": {"id": 1, "name": "Casa"}, "parked": {"lat": 1, "lon": 2}, "say": {"text": "Chegando em Casa."},
+           "dest": {"name": "Trabalho", "route": "Casa → Trabalho", "eta_ts": ts + 600_000, "left_km": 7.4, "conf": 0.8}}
+    f = sharemod.frame(live, gps)
+    assert f["lat"] == -23.55012 and f["lon"] == -46.63311 and f["hdg"] == 181 and f["spd"] == 62 and f["rpm"] == 2400 and f["ect"] == 91
+    assert f["kml"] == 13.4 and f["lh"] is None and f["trip_s"] == 900 and f["trip_km"] == 7.4 and f["alert"] == "Temperatura subindo"
+    assert f["eta"] == ts + 600_000 and f["left_km"] == 7.4 and "dest" not in f and f["ect_st"] == "ok"
+    txt = json.dumps(f, ensure_ascii=False)
+    for bad in ("Casa", "Trabalho", "place", "parked", "say", "route", "detalhe", "batt"):
+        assert bad not in txt, bad
+    assert sharemod.frame(live, gps, want_dest=True)["dest"] == "Trabalho"                 # só se o dono marcou
+    assert sharemod.frame({**live, "trip_id": None}, gps) == {"ts": ts, "trip": None}        # sem viagem: nenhuma posição
+    old = sharemod.frame(live, {**gps, "fix_ts": ts - 30_000})
+    assert "lat" not in old and old["spd"] == 62                                             # posição velha não vai
+    assert "lat" not in sharemod.frame(live, {**gps, "trip_id": 30})                         # posição de outra viagem não vai
+
+
+def _share_app(base, cloud=True):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from obdpi.web import gps_api
+    p = str(base / "obd.db")
+    con = new_db(p)
+    cfg = copy.deepcopy(config.DEFAULTS)
+    cfg["storage"] = {"db_path": p}
+    cfg["gps"]["geo_db"] = str(base / "nada.db")
+    if cloud:
+        cfg["cloud"] = {"url": "https://obd.exemplo/", "token": "t"}
+    app = FastAPI()
+    app.include_router(gps_api.build(lambda: db.connect(p, readonly=True), lambda t: None, cfg, base))
+    return con, TestClient(app)
+
+
+def test_share_requires_cloud():
+    try:
+        import fastapi  # noqa: F401
+    except ImportError:
+        return
+    base = Path(tempfile.mkdtemp())
+    _, c = _share_app(base, cloud=False)
+    r = c.post("/api/gps/share", json={"mode": "1h"})
+    assert r.status_code == 400 and "painel online" in r.json()["detail"]
+    assert not (base / "share.json").exists()
+    assert c.get("/api/gps/share").json()["cloud"] is False
+    # com nuvem: o link sai uma vez; no Pi fica só o hash, pendente até o obd-sync enviar
+    base = Path(tempfile.mkdtemp())
+    _, c = _share_app(base)
+    (base / "live.json").write_text(json.dumps({"trip_id": 12}))
+    r = c.post("/api/gps/share", json={"mode": "viagem", "dest": True, "label": "Ana"})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["url"].startswith("https://obd.exemplo/s/") and j["pending"] is True
+    tok = j["url"].rsplit("/", 1)[1]
+    assert sharemod.TOKEN_RE.match(tok)
+    raw = (base / "share.json").read_text()
+    assert tok not in raw and hashlib.sha256(tok.encode()).hexdigest() in raw
+    rec = json.loads(raw)["links"][0]
+    assert rec["id"] == j["id"] and rec["mode"] == "viagem" and rec["trip"] == 12 and rec["state"] == "pendente" and rec["dest"] is True
+    assert rec["expires_ts"] - rec["created_ts"] == 24 * 3600_000
+    assert c.post("/api/gps/share", json={"mode": "nunca"}).status_code == 400
+    lst = c.get("/api/gps/share").json()
+    assert lst["cloud"] is True and lst["links"][0]["state"] == "pendente" and "hash" not in json.dumps(lst)
+    assert lst["modes"] == ["24h", "sempre"]                                    # a tela oferece só estas duas (decisão do dono)
+    # "até eu cancelar": sem prazo (data-sentinela no arquivo; a API mostra None)
+    r = c.post("/api/gps/share", json={"mode": "sempre"})
+    assert r.status_code == 200 and r.json()["expires_ts"] is None and r.json()["mode"] == "sempre"
+    rec2 = [x for x in json.loads((base / "share.json").read_text())["links"] if x["id"] == r.json()["id"]][0]
+    assert rec2["expires_ts"] == sharemod.FOREVER_TS
+    it = [x for x in c.get("/api/gps/share").json()["links"] if x["id"] == r.json()["id"]][0]
+    assert it["expires_ts"] is None and it["mode"] == "sempre"
+    # no máximo 5 ativos
+    for _ in range(3):
+        assert c.post("/api/gps/share", json={"mode": "24h"}).status_code == 200
+    assert c.post("/api/gps/share", json={"mode": "24h"}).status_code == 429
+    # encerrar um pendente: nunca chega à nuvem
+    ids = [x["id"] for x in c.get("/api/gps/share").json()["links"]]
+    assert c.post(f"/api/gps/share/{ids[0]}", json={"revoke": True}).json() == {"ok": True}
+    assert c.post("/api/gps/share/xyz", json={"revoke": True}).status_code == 400
+    # a nuvem sem senha de localização (último ping): recusa criar
+    (base / "share_cloud.json").write_text(json.dumps({"ts": int(time.time() * 1000), "loc": False, "links": []}))
+    r = c.post("/api/gps/share", json={"mode": "1h"})
+    assert r.status_code == 400 and "LOC_PASSWORD" in r.json()["detail"]
+    # obd-sync: com a senha de localização entra na fila de envio (só hashes); sem ela, nada sai
+    from obdpi import sync as syncmod
+    old = (syncmod.STATE, syncmod.SHARE_FILE, syncmod.SHARE_CLOUD)
+    syncmod.STATE, syncmod.SHARE_FILE, syncmod.SHARE_CLOUD = base / "st.json", base / "share.json", base / "share_cloud.json"
+    try:
+        s = syncmod.Sync({"cloud": {"url": "https://obd.exemplo", "token": "t"}, "gps": {"cloud": "auto"}})
+        sent = []
+        def fake_cloud(path, payload=None, method=None, timeout=60):
+            sent.append((path, payload))
+            return {"ok": True, "created": [x["hash"][:8] for x in payload.get("create", [])], "links": [{"id": "abcd0123", "state": "ativo", "dest": True}]}
+        s.cloud = fake_cloud
+        assert s.share_sync() == 0 and sent == []                     # sem a senha de localização confirmada
+        s.loc = True
+        assert s.share_sync() == 4                                     # o encerrado antes de enviar nunca sai do Pi
+        path, body = sent[0]
+        assert path == "/api/sync/share" and len(body["create"]) == 4 and body["revoke"] == []
+        assert [x["mode"] for x in body["create"]].count("sempre") == 1
+        assert tok not in json.dumps(body) and all(len(x["hash"]) == 64 for x in body["create"])
+        states = {x["id"]: x["state"] for x in json.loads((base / "share.json").read_text())["links"]}
+        assert states[ids[0]] == "encerrado" and list(states.values()).count("enviado") == 4
+        assert s.share_links[0]["id"] == "abcd0123"
+        assert json.loads((base / "share_cloud.json").read_text())["links"][0]["id"] == "abcd0123"
+        assert s.share_sync() == 0                                     # nada pendente
+        # encerrar um enviado: vai na próxima sincronização
+        sid = [k for k, v in states.items() if v == "enviado"][0]
+        assert c.post(f"/api/gps/share/{sid}", json={"revoke": True}).json() == {"ok": True}
+        assert c.get("/api/gps/share").json()["links"][0]["state"] in ("encerrando", "ativo", "pendente", "vencido", "encerrado")
+        sent.clear()
+        assert s.share_sync() == 1 and sent[0][1]["revoke"] == [sid]
+    finally:
+        syncmod.STATE, syncmod.SHARE_FILE, syncmod.SHARE_CLOUD = old
+
+
+def test_share_live_channel_and_trip_end():
+    from obdpi import sync as syncmod
+    base = Path(tempfile.mkdtemp())
+    old = (syncmod.STATE, syncmod.GPS_FILE)
+    syncmod.STATE, syncmod.GPS_FILE = base / "st.json", base / "gps.json"
+    try:
+        ts = int(time.time() * 1000)
+        syncmod.GPS_FILE.write_text(json.dumps({"state": "ok", "lat": -23.5, "lon": -46.6, "fix_ts": ts, "trip_id": 7, "place": {"name": "Casa"},
+                                                "dest": {"name": "Casa", "eta_ts": ts + 60_000, "left_km": 1.0}}))
+        d = {"ts": ts, "trip_id": 7, "engine_on": True, "state": "coletando", "values": {}, "value_ts": {}, "gps": {"state": "ok"}}
+        raw = json.dumps(d).encode()
+        s = syncmod.Sync({"cloud": {"url": "https://obd.exemplo", "token": "t"}, "gps": {"cloud": "auto"}})
+        assert s.live_body(raw, d) is raw                                # sem link ativo: o mesmo de sempre
+        s.share_on = True
+        assert s.live_body(raw, d) is raw                                # link ativo mas sem a senha de localização: nada
+        s.loc = True
+        out = json.loads(s.live_body(raw, d))
+        assert out["_share"]["lat"] == -23.5 and out["_share"]["trip"] == 7 and "dest" not in out["_share"] and out["trip_id"] == 7
+        assert "Casa" not in json.dumps(out["_share"], ensure_ascii=False)
+        s.share_links = [{"id": "abcd0123", "dest": True}]
+        assert json.loads(s.live_body(raw, d))["_share"]["dest"] == "Casa"
+        s.share_on = False
+        assert s.live_body(raw, d) is raw
+        s.loc = False
+        s.share_on = True
+        assert s.live_body(raw, d) is raw
+        s.loc = True
+        # trajeto da viagem (uma vez por viagem) e aviso de fim de viagem
+        calls = []
+        s.cloud = lambda path, payload=None, method=None, timeout=60: calls.append((path, payload)) or {"ok": True}
+        s.local = lambda path, method="GET", body=None: (200, json.dumps({"trip": 7, "pts": [[-23.5, -46.6, ts]]}).encode())
+        s.share_track(d)
+        s.share_track(d)
+        assert calls == [("/api/sync/share", {"track": {"trip": 7, "pts": [[-23.5, -46.6, ts]]}})]
+        calls.clear()
+        s.share_trip_watch(d)
+        s.share_trip_watch(d)
+        s.share_trip_watch({**d, "trip_id": None, "state": "ecu_silenciosa"})
+        assert calls == [("/api/sync/share", {"trip_end": 7})] and s.share_track_trip is None
+        calls.clear()
+        s.share_on, s.share_links = False, []
+        s.share_trip_watch(d)
+        s.share_trip_watch({**d, "trip_id": 8})                          # sem link nenhum: não incomoda a nuvem
+        assert calls == []
+        # vigia do estacionamento: a posição sobe a cada 5 s enquanto dura o alarme
+        syncmod.GPS_FILE.write_text(json.dumps({"ts": ts, "state": "ok", "guard": {"state": "alarme", "since": ts}}))
+        s.gps_live_raw()
+        assert s.guard_alarm is True
+        syncmod.GPS_FILE.write_text(json.dumps({"ts": ts, "state": "ok"}))
+        s.gps_live_raw()
+        assert s.guard_alarm is False
+    finally:
+        syncmod.STATE, syncmod.GPS_FILE = old
+
+
+def test_share_track_only_current_trip():
+    try:
+        import fastapi  # noqa: F401
+    except ImportError:
+        return
+    base = Path(tempfile.mkdtemp())
+    con, c = _share_app(base)
+    t1 = sim.commute(seed=5)
+    t2 = sim.commute(seed=6, t0=t1.obd[-1]["ts"] + 3600_000)
+    a = sim.to_db(con, t1, finalize=True)
+    b = sim.to_db(con, t2, finalize=False)
+    con.execute("UPDATE trip SET end_ts=NULL WHERE id=?", (b,))
+    con.commit()
+    j = c.get(f"/api/gps/share/track?trip={b}").json()
+    pts = j["pts"]
+    b0 = con.execute("SELECT start_ts FROM trip WHERE id=?", (b,)).fetchone()[0]
+    assert j["trip"] == b and len(pts) > 50 and all(p[2] >= b0 for p in pts)                # nada da viagem anterior
+    from obdpi.gps.geo import haversine_m
+    assert all(haversine_m(p[0], p[1], q[0], q[1]) >= sharemod.TRACK_STEP_M - 2 for p, q in zip(pts, pts[1:]))   # 5 casas ≈ 1 m
+    few = sharemod.track_points(db.connect(str(base / "obd.db"), readonly=True), b, max_n=20)["pts"]
+    assert len(few) <= 21 and few[-1] == pts[-1]                                             # a ponta atual fica
+    assert c.get("/api/gps/share/track?trip=999").json() == {"trip": 999, "pts": []}
+    assert a != b
+
+
+def _guard(always_on, **kw):
+    con = new_db()
+    calls = []
+    hubx = SimpleNamespace(con=con, power={"always_on": always_on, "min_batt_v": 12.0}, poweroff=lambda: calls.append(1))
+    return con, placesmod.ParkGuard(hubx), calls
+
+
+def _gfix(ts, la, lo, spd=0.0):
+    return Fix(t_gps=ts, mono=0, lat=la, lon=lo, speed=spd, heading=0, hdop=0.9, sats=9, mode=3, ts=ts)
+
+
+def _gctx(ts, fix=None, engine_on=False, trip_id=None, batt=12.6):
+    return SimpleNamespace(fix=fix, ts=ts, engine_on=engine_on, trip_id=trip_id, values={"batt": batt}, value_ts={"batt": ts})
+
+
+def test_park_guard_always_on():
+    from obdpi.gps import store as gstore
+    from obdpi.gps.geo import offset
+    rnd = random.Random(9)
+    # desligado (padrão): nada acontece, nem com o carro sendo levado
+    con, g, calls = _guard(False)
+    ts = T0
+    for i in range(400):
+        ts += 1000
+        la, lo = offset(*HOME, i * 4.0, 0)
+        assert g.tick(_gctx(ts, batt=11.0)) == [] and g.feed(_gctx(ts, _gfix(ts, la, lo, 14.0))) == []
+    assert g.private() == {} and calls == []
+    # ligado: estacionado em casa (posição de estacionamento válida)
+    con, g, calls = _guard(True)
+    gstore.model_set(con, "parked", {"lat": HOME[0], "lon": HOME[1], "ts": T0, "valid": True}, T0)
+    ts = T0
+    alerts = []
+    for _ in range(30):                                   # ainda não armou (1 min depois de desligar)
+        ts += 1000
+        alerts += g.tick(_gctx(ts)) + g.feed(_gctx(ts, _gfix(ts, *offset(*HOME, 200, 0), 20.0)))
+    assert alerts == [] and g.state == "aguardando"
+    for _ in range(40):
+        ts += 1000
+        alerts += g.tick(_gctx(ts))
+    assert g.state == "armado" and g.anchor == {"lat": HOME[0], "lon": HOME[1]}
+    for _ in range(300):                                  # ruído do GPS parado (±8 m) e picos isolados: nada
+        ts += 1000
+        la, lo = offset(*HOME, rnd.uniform(-8, 8), rnd.uniform(-8, 8))
+        alerts += g.tick(_gctx(ts)) + g.feed(_gctx(ts, _gfix(ts, la, lo, rnd.uniform(0, 2))))
+    ts += 1000
+    alerts += g.feed(_gctx(ts, _gfix(ts, *offset(*HOME, 90, 0), 0.5)))          # um salto de 90 m sozinho
+    assert alerts == [] and g.private()["guard"]["state"] == "armado"
+    # guincho: 10 km/h por mais de 10 s, saindo do lugar → 1 alerta crítico, sem coordenada no texto
+    d = 0.0
+    for _ in range(40):
+        ts += 1000
+        d += 10 / 3.6
+        alerts += g.tick(_gctx(ts)) + g.feed(_gctx(ts, _gfix(ts, *offset(*HOME, d, 0), 10.0)))
+    assert len(alerts) == 1 and alerts[0].rule == "gps:park_guard" and alerts[0].severity == "crit"
+    assert str(HOME[0])[:6] not in alerts[0].detail and "-23" not in alerts[0].detail
+    assert g.private()["guard"]["state"] == "alarme" and con.execute("SELECT COUNT(*) FROM geo_event WHERE kind='vigia'").fetchone()[0] == 1
+    for _ in range(200):                                  # 500 m adiante: avisa de novo (só uma vez)
+        ts += 1000
+        d += 10 / 3.6
+        alerts += g.feed(_gctx(ts, _gfix(ts, *offset(*HOME, d, 0), 10.0)))
+    assert len(alerts) == 2 and alerts[1].title.startswith("Carro desligado continua")
+    # o dono liga o carro: desarma
+    g.tick(_gctx(ts, engine_on=True, trip_id=5))
+    assert g.state == "aguardando" and g.alarm is None
+    assert g.feed(_gctx(ts, _gfix(ts, *offset(*HOME, d + 100, 0), 40.0), engine_on=True, trip_id=5)) == []
+    # sem posição de estacionamento válida: a primeira posição precisa parada vira a âncora; deslocamento de 60 m+ dispara
+    con, g, calls = _guard(True)
+    ts = T0
+    for _ in range(61):
+        ts += 1000
+        g.tick(_gctx(ts))
+    assert g.state == "armado" and g.anchor is None
+    g.feed(_gctx(ts, _gfix(ts, *HOME, 0.0)))
+    out = []
+    for k in range(4):
+        ts += 1000
+        out += g.feed(_gctx(ts, _gfix(ts, *offset(*HOME, 70 + k, 0), 2.0)))     # empurrado devagar (2 km/h)
+    assert len(out) == 1 and out[0].value >= 70
+    # bateria: abaixo de 12 V por 10 min com o carro desligado → aviso; 1 min depois desliga o Pi (uma vez)
+    con, g, calls = _guard(True)
+    ts, al = T0, []
+    for i in range(9 * 60):
+        ts += 1000
+        al += g.tick(_gctx(ts, batt=11.7 if i % 97 else 12.2))   # um pico acima zera a contagem só se ficar acima
+    assert al == []
+    for _ in range(10 * 60 + 1):
+        ts += 1000
+        al += g.tick(_gctx(ts, batt=11.7))
+    assert len(al) == 1 and al[0].rule == "power:low_batt" and calls == []
+    for _ in range(61):
+        ts += 1000
+        al += g.tick(_gctx(ts, batt=11.7))
+    assert calls == [1] and len(al) == 1
+    for _ in range(100):
+        ts += 1000
+        g.tick(_gctx(ts, batt=11.6))
+    assert calls == [1]
+    # leitura velha da bateria não conta; carro ligado também não
+    con, g, calls = _guard(True)
+    ts = T0
+    for _ in range(15 * 60):
+        ts += 1000
+        assert g.tick(SimpleNamespace(fix=None, ts=ts, engine_on=False, trip_id=None, values={"batt": 11.0}, value_ts={"batt": T0})) == []
+    for _ in range(15 * 60):
+        ts += 1000
+        assert g.tick(_gctx(ts, engine_on=True, trip_id=3, batt=11.0)) == []
+    assert calls == []
+
+
+def test_park_guard_in_hub():
+    base = Path(tempfile.mkdtemp())
+    con = new_db()
+    mk = lambda pw: hub.GpsHub({"gps": {"source": "gpsd", "geo_db": str(base / "nada.db")}, "power": pw}, con, Clock(),
+                               config.State(str(base / "s.json")), lambda *a: None, lambda *a: None, base)
+    h = mk({})
+    g = h._engine(placesmod.ParkGuard)
+    assert g is not None and g.on is False and h.power["always_on"] is False
+    assert h.pump(Clock().now(), {"batt": 10.0}, {}, False, None) == []
+    assert "guard" not in json.loads((base / "gps.json").read_text())                 # padrão: o gps.json não muda
+    h2 = mk({"always_on": True})
+    g2 = h2._engine(placesmod.ParkGuard)
+    assert g2.on is True
+    h2.pump(Clock().now(), {"batt": 12.5}, {}, False, None)                        # sem receptor: a vigia segue (bateria)
+    assert g2.off_since is not None
+    h2.reader = FakeReader()
+    h2.pump(Clock().now(), {}, {}, False, None)
+    assert h2.dec.stopped_ms == 60_000                                              # sempre ligado e parado: 1 por minuto
+    h2.pump(Clock().now(), {}, {}, True, 4)
+    assert h2.dec.stopped_ms == 30_000
+    assert json.loads((base / "gps.json").read_text())["guard"]["state"] == "aguardando"
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

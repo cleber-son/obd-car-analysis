@@ -56,6 +56,15 @@ sysctl -q --system || true
 # sistema somente leitura (deploy/overlay.sh): não liga aqui; quem liga é scripts/protect.sh, e o deploy respeita
 chmod 755 deploy/overlay.sh
 
+echo "== modo sempre ligado (power.always_on): regra de sudo do desligamento por bateria baixa, só com o modo ligado"
+if PYTHONPATH=src venv/bin/python -c "import sys; from obdpi import config; sys.exit(0 if config.load().get('power', {}).get('always_on') is True else 1)" 2>/dev/null; then
+  printf 'obd ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff\n' > /etc/sudoers.d/obd-poweroff.tmp
+  chmod 440 /etc/sudoers.d/obd-poweroff.tmp
+  if visudo -cf /etc/sudoers.d/obd-poweroff.tmp >/dev/null; then mv /etc/sudoers.d/obd-poweroff.tmp /etc/sudoers.d/obd-poweroff; else rm -f /etc/sudoers.d/obd-poweroff.tmp; echo "AVISO: regra de sudo recusada pelo visudo"; fi
+else
+  rm -f /etc/sudoers.d/obd-poweroff                  # modo desligado (padrão): nenhuma permissão extra
+fi
+
 echo "== WiFi sem economia de energia (menos atraso no painel ao vivo e no SSH)"
 install -d /etc/NetworkManager/conf.d
 printf '[connection]\nwifi.powersave = 2\n' > /etc/NetworkManager/conf.d/obd-wifi-powersave.conf

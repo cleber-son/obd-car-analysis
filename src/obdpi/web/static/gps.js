@@ -1056,5 +1056,77 @@
     card.appendChild(box);
   });
 
+  // ---- F9: compartilhar a viagem ao vivo (seção 9.21) — link com validade que abre no celular de quem recebe
+  if (tabs && !$('[data-g="compartilhar"]', tabs)) tabs.insertAdjacentHTML("beforeend", `<button type="button" class="rbtn" data-g="compartilhar">📤 Compartilhar</button>`);
+  try { if (localStorage.getItem("gpsSub") === "compartilhar") sub = "compartilhar"; } catch { }
+  const SH_MODES = [["24h", "24 horas"], ["sempre", "Até eu cancelar"]];        // decisão do dono: só estas duas na tela
+  const SH_MODE = { sempre: "sem prazo", viagem: "até o fim da viagem", tempo: "prazo fixo" };
+  const shUntil = (x) => x.mode === "sempre" || x.expires_ts == null ? "♾️ sem prazo — até você cancelar" : "até " + dt(x.expires_ts);
+  const SH_STATE = { ativo: ["--ok", "Ativo"], enviado: ["--ok", "Ativo"], "aguardando a viagem": ["--warn", "Aguardando a viagem"], pendente: ["--warn", "Enviando para a nuvem…"],
+    encerrando: ["--muted", "Encerrando…"], encerrado: ["--muted", "Encerrado"], vencido: ["--muted", "Venceu"], "viagem terminou": ["--muted", "A viagem terminou"], recusado: ["--bad", "Recusado pela nuvem"] };
+  // folha de compartilhar do iPhone; sem ela (ou se o navegador recusar depois da espera), copia o link
+  async function shareSend(url) {
+    if (navigator.share) {
+      try { await navigator.share({ title: "Delfos · viagem ao vivo", text: "Acompanhe a viagem do Civic ao vivo:", url }); return "ok"; }
+      catch (e) { if (e && e.name === "AbortError") return "cancelado"; }
+    }
+    try { await navigator.clipboard.writeText(url); return "copiado"; } catch { return "manual"; }
+  }
+  const SH_SENT = { ok: "✅ Link enviado.", cancelado: "", copiado: "📋 Link copiado: cole na conversa.", manual: "Copie o link acima e envie." };
+  function sharedBox(box, j) {
+    box.innerHTML = `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><div style="font-weight:600">Link criado (${j.mode === "sempre" ? "sem prazo: vale até você encerrar aqui" : "vale " + shUntil(j)}). Ele só aparece agora: envie ou guarde.</div>
+      <input type="text" readonly value="${esc(j.url)}" aria-label="Link de compartilhamento" style="width:100%;margin-top:8px" id="shUrl">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn" type="button" id="shSend">📤 Enviar o link</button><button class="rbtn" type="button" id="shCopy">📋 Copiar</button></div>
+      <div class="muted" id="shMsg" style="font-size:13px;margin-top:6px" role="status">${j.pending ? "Começa a valer em até 10 s, quando o Pi enviar para a nuvem." : ""}</div></div>`;
+    const msg = (t) => { if (t) $("#shMsg", box).textContent = t; };
+    $("#shSend", box).addEventListener("click", async () => msg(SH_SENT[await shareSend(j.url)]));
+    $("#shCopy", box).addEventListener("click", async () => { try { await navigator.clipboard.writeText(j.url); msg(SH_SENT.copiado); } catch { $("#shUrl", box).select(); msg(SH_SENT.manual); } });
+  }
+  EXTRA.compartilhar = async (body) => {
+    const j = await get("/api/gps/share");
+    const pi = !cloud(), links = j.links || [];
+    const why = pi && !j.cloud ? "Compartilhar precisa do painel online configurado ([cloud] url e token no Pi): o link é servido por ele."
+      : pi && j.loc === false ? "O painel online está sem a senha de localização (LOC_PASSWORD). Sem ela nenhuma posição sai do Pi, nem para um link." : "";
+    const act = links.filter((x) => ["ativo", "enviado", "aguardando a viagem", "pendente"].includes(x.state));
+    body.innerHTML = `<div class="card"><h2>📤 Compartilhar a viagem</h2>
+      <div class="muted" style="margin-top:6px;font-size:14px">Quem recebe o link vê em tempo real o carro andando no mapa e o trajeto desta viagem, com velocidade, rotação, temperatura do motor, consumo, tempo e km, e o aviso do carro se houver. Não vê lugares salvos, onde o carro estaciona, outras viagens nem o resto do painel. Não precisa de senha nem de instalar nada.</div>
+      ${why ? `<div class="empty" style="margin-top:10px">${esc(why)}</div>` : `<form id="shForm" style="margin-top:12px;display:grid;gap:10px">
+        <div role="radiogroup" aria-label="Validade" style="display:flex;gap:8px;flex-wrap:wrap">${SH_MODES.map(([k, l], i) => `<label class="rbtn" style="display:inline-flex;gap:6px;align-items:center"><input type="radio" name="shMode" value="${k}"${i ? "" : " checked"}> ${l}</label>`).join("")}</div>
+        <label class="muted" style="font-size:13px"><input type="checkbox" id="shDest"> Mostrar o nome do destino (ex.: "Casa") junto da chegada prevista. Desligado, aparece só "chegada prevista 14:35".</label>
+        <input type="text" id="shLabel" maxlength="40" placeholder="Nome do link (opcional, ex.: Para a Ana)" aria-label="Nome do link">
+        <div><button class="btn" type="submit">📤 Compartilhar viagem</button></div>
+        <div class="muted" style="font-size:12px">"Até eu cancelar" não vence sozinho: fica valendo até você tocar em Encerrar aqui. Com o carro desligado a página mostra só "Carro desligado" e a hora do último sinal, nunca onde ele parou; na viagem seguinte volta o trajeto dela. Depois que um link acaba, a página de quem recebeu para de mostrar o carro. No máximo ${j.max || 5} links ativos.</div>
+      </form><div id="shOut" role="status"></div>`}</div>
+      ${act.some((x) => x.mode === "sempre") ? `<div class="banner" style="--s:var(--warn)"><span class="ic">♾️</span><div><b>${act.filter((x) => x.mode === "sempre").length} link(s) sem prazo ativo(s).</b> Quem tem o link vê as suas viagens até você encerrar.</div></div>` : ""}
+      <div class="card"><h2>Links</h2>${links.length ? `<div class="tbl" style="margin-top:10px"><table class="cards"><thead><tr><th>Link</th><th>Validade</th><th>Visto</th><th>Situação</th><th></th></tr></thead><tbody>
+        ${links.map((x) => { const s = SH_STATE[x.state] || ["--muted", x.state || "—"], live = act.includes(x);
+          return `<tr><td class="head"><b>${esc(x.label || "Link " + x.id)}</b><br><span class="muted" style="font-size:12px">${esc(SH_MODE[x.mode] || x.mode || "")} · criado ${dt(x.created_ts)}${x.src === "nuvem" && pi ? " no painel online" : ""}${x.dest ? " · mostra o destino" : ""}</span></td>
+            <td class="num" data-l="Validade">${x.mode === "sempre" && live ? `<b style="color:var(--warn)">${shUntil(x)}</b>` : shUntil(x)}</td><td class="num" data-l="Visto">${x.views ? x.views + "×" : "—"}</td>
+            <td data-l="Situação"><b style="color:var(${s[0]})">${esc(s[1])}</b></td>
+            <td>${live ? `<button class="rbtn" type="button" data-shx="${esc(x.id)}">Encerrar</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+        : `<div class="empty" style="margin-top:10px">Nenhum link ativo nem criado nas últimas 24 h.</div>`}</div>`;
+    const f = $("#shForm", body);
+    f?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const out = $("#shOut", body), btn = f.querySelector("button[type=submit]");
+      btn.disabled = true; out.textContent = "Criando o link…";
+      try {
+        const r = await post("/api/gps/share", { mode: f.querySelector("input[name=shMode]:checked").value, dest: $("#shDest", body).checked, label: $("#shLabel", body).value });
+        sharedBox(out, r);
+        const how = await shareSend(r.url);                 // o iPhone pode recusar depois da espera: o botão "Enviar o link" fica
+        await EXTRA.compartilhar(body);                      // lista atualizada, com o link novo
+        sharedBox($("#shOut", body), r);
+        if (SH_SENT[how]) $("#shMsg", body).textContent = SH_SENT[how];
+        return;
+      } catch (err) { out.textContent = err instanceof Locked ? "Localização trancada: desbloqueie para criar o link." : "Não foi possível criar: " + err.message; }
+      btn.disabled = false;
+    });
+    body.querySelectorAll("[data-shx]").forEach((b) => b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { await post(`/api/gps/share/${b.dataset.shx}`, { revoke: true }); await EXTRA.compartilhar(body); }
+      catch (err) { b.disabled = false; b.textContent = "Erro: " + err.message; }
+    }));
+  };
+
   window.obdGps = { render, trip, openTrip };
 })();

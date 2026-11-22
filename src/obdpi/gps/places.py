@@ -492,3 +492,139 @@ class GeofenceEngine:
             self.say = say = None
         return {"place": {"id": self.current["id"], "name": self.current["name"], "kind": self.current["kind"]} if self.current else None,
                 "say": say}
+
+
+# ---------------------------------------------------------------- F9: modo sempre ligado (seção 9.7, power.always_on)
+GUARD_MOVE_M = 60.0             # saiu mais de 60 m da posição de estacionamento…
+GUARD_MOVE_N = 3                # …em 3 posições precisas seguidas (o ruído do GPS parado não dispara)
+GUARD_SPEED_KMH = 8.0           # ou andou acima de 8 km/h…
+GUARD_SPEED_MS = 10_000         # …por 10 s
+GUARD_SETTLE_MS = 60_000        # arma 1 min depois de o motor desligar sem viagem aberta
+GUARD_REPEAT_M = 500.0          # alarme já dado: avisa de novo a cada 500 m a mais
+BATT_LOW_MS = 10 * 60_000       # bateria abaixo de power.min_batt_v por 10 min (carro desligado) → desliga o Pi
+BATT_FRESH_MS = 120_000
+POWEROFF_DELAY_MS = 60_000      # tempo para o aviso ser gravado e enviado antes de desligar
+
+
+def _poweroff() -> None:
+    """Desliga o Pi pela regra de sudo restrita que o install.sh cria só com power.always_on."""
+    import subprocess
+    subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "poweroff"], timeout=30, check=False)
+
+
+class ParkGuard:
+    """Vigia do estacionamento com o Pi ligado direto (sem isso o Pi apaga com o carro e nada roda). Desligado por
+    padrão: com power.always_on = false não faz nada (feed e tick devolvem [] e o gps.json não ganha nada)."""
+
+    def __init__(self, hub):
+        pw = getattr(hub, "power", None) or {}
+        self.on = bool(pw.get("always_on"))
+        self.min_v = float(pw.get("min_batt_v", 12.0) or 12.0)
+        self.con = hub.con
+        self.poweroff = getattr(hub, "poweroff", None) or _poweroff
+        self.state = "aguardando"
+        self.off_since: int | None = None
+        self.anchor: dict | None = None
+        self.far_n = 0
+        self.fast_since: int | None = None
+        self.alarm: dict | None = None
+        self.low_since: int | None = None
+        self.shutdown_at: int | None = None
+        self.shutdown_done = False
+
+    def on_trip_start(self, tid, ts, merged) -> None:
+        self._disarm()
+
+    def shift(self, off: int) -> None:
+        for k in ("off_since", "fast_since", "low_since", "shutdown_at"):
+            if getattr(self, k) is not None:
+                setattr(self, k, getattr(self, k) + off)
+        if self.alarm:
+            self.alarm["ts"] += off
+
+    def _disarm(self) -> None:
+        self.state, self.off_since, self.anchor, self.far_n, self.fast_since, self.alarm = "aguardando", None, None, 0, None, None
+
+    def tick(self, ctx) -> list:
+        """A cada volta do coletor (com ou sem posição): arma a vigia e cuida da bateria."""
+        if not self.on:
+            return []
+        ts = ctx.ts
+        if ctx.engine_on or ctx.trip_id is not None:
+            self._disarm()
+            self.low_since = None
+            return []
+        if self.off_since is None:
+            self.off_since = ts
+        if self.state == "aguardando" and ts - self.off_since >= GUARD_SETTLE_MS:
+            self.state = "armado"
+            try:
+                pk = store.model_get(self.con, "parked")
+            except Exception:
+                pk = None
+            if pk and pk.get("valid") and pk.get("lat") is not None:
+                self.anchor = {"lat": pk["lat"], "lon": pk["lon"]}
+        return self._battery(ctx)
+
+    def _battery(self, ctx) -> list:
+        ts, v = ctx.ts, (ctx.values or {}).get("batt")
+        vt = (ctx.value_ts or {}).get("batt")
+        if self.shutdown_at is not None:
+            if ts >= self.shutdown_at and not self.shutdown_done:
+                self.shutdown_done = True
+                log.warning("power: bateria baixa há 10 min; desligando o Pi")
+                try:
+                    self.poweroff()
+                except Exception as e:
+                    log.warning("power: desligamento falhou: %r", e)
+            return []
+        if v is None or (vt is not None and ts - vt > BATT_FRESH_MS) or v >= self.min_v:
+            self.low_since = None
+            return []
+        if self.low_since is None:
+            self.low_since = ts
+        if ts - self.low_since < BATT_LOW_MS:
+            return []
+        self.shutdown_at = ts + POWEROFF_DELAY_MS
+        txt = f"{v:.1f}".replace(".", ",")
+        return [Alert("power", "power:low_batt", "warn", "Bateria baixa: o Pi vai se desligar",
+                      f"Bateria em {txt} V há 10 min com o carro desligado. O Pi se desliga em 1 min para não descarregar a bateria; "
+                      "volta sozinho na próxima partida.", value=round(v, 2), ts=ts)]
+
+    def feed(self, ctx) -> list:
+        if not self.on or ctx.engine_on or ctx.trip_id is not None or self.state == "aguardando":
+            return []
+        f = ctx.fix
+        if self.anchor is None:                      # sem posição de estacionamento válida: a primeira precisa vira a âncora
+            if precise(f) and (f.speed or 0) < PARK_KMH:
+                self.anchor = {"lat": f.lat, "lon": f.lon}
+            return []
+        d = haversine_m(f.lat, f.lon, self.anchor["lat"], self.anchor["lon"])
+        self.far_n = self.far_n + 1 if precise(f) and d > GUARD_MOVE_M else 0
+        if (f.speed or 0) > GUARD_SPEED_KMH:
+            self.fast_since = self.fast_since if self.fast_since is not None else f.ts
+        else:
+            self.fast_since = None
+        moving = self.fast_since is not None and f.ts - self.fast_since >= GUARD_SPEED_MS
+        if not (moving or self.far_n >= GUARD_MOVE_N):
+            return []
+        if self.alarm and haversine_m(f.lat, f.lon, self.alarm["lat"], self.alarm["lon"]) < GUARD_REPEAT_M:
+            return []
+        first = self.alarm is None
+        self.state = "alarme"
+        self.alarm = {"ts": f.ts if first else self.alarm["ts"], "lat": f.lat, "lon": f.lon}
+        store.add_event(self.con, f.ts, "vigia", lat=round(f.lat, 6), lon=round(f.lon, 6), value=round(d),
+                        detail=json.dumps({"kmh": round(f.speed or 0, 1)}, ensure_ascii=False))
+        txt = f"{d / 1000:.1f}".replace(".", ",") + " km" if d >= 1000 else f"{d:.0f} m"
+        # sem coordenada no texto: alertas e avisos vão para o painel público e para o ntfy
+        return [Alert("gps", "gps:park_guard", "crit", "Carro se movendo com o motor desligado" if first else "Carro desligado continua se movendo",
+                      f"O carro está a {txt} de onde foi estacionado (guincho, manobra de terceiros ou furto?). "
+                      "Veja no mapa do painel onde ele está; a posição sobe para a nuvem a cada 5 s.", value=round(d), ts=f.ts)]
+
+    def live(self) -> dict:
+        return {}
+
+    def private(self) -> dict:
+        if not self.on:
+            return {}
+        return {"guard": {"state": self.state, "since": self.alarm["ts"] if self.alarm else None}}

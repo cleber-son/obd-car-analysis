@@ -121,7 +121,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 </head>
 <body>
 <div class="app">
-  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="grBtn" aria-label="Modo gráfico">📈</a><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="accBtn">⏱ 0–100</a><a href="#" id="voBtn" aria-label="Voz ligada (toque para silenciar)" hidden>🔊</a><a href="/">Painel</a></span></div>
+  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="grBtn" aria-label="Modo gráfico">📈</a><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="accBtn">⏱ 0–100</a><a href="#" id="voBtn" aria-label="Voz ligada (toque para silenciar)" hidden>🔊</a><a href="#" id="shBtn" aria-label="Compartilhar viagem" hidden>📤</a><a href="/">Painel</a></span></div>
   <div class="rpmbar" id="rpmbar"><i id="rpmfill"></i><div class="ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></div>
   <div class="alert" id="alert"></div>
   <div class="core">
@@ -145,6 +145,17 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     <div class="acst go">Quadros do modo direção</div>
     <ul id="cfgList"></ul>
     <div class="acbtns"><button type="button" id="cfgSave">Salvar</button><button type="button" id="cfgReset">Padrão</button></div>
+  </div></div>
+  <div class="acc" id="sh" hidden><div class="accin cfg">
+    <div class="acst go">Compartilhar viagem</div>
+    <div style="font-size:14px;color:var(--muted);max-width:420px">Quem recebe o link vê o carro no mapa e os dados da viagem, ao vivo, até o link acabar. Com o carro desligado, só "Carro desligado", nunca onde ele parou.</div>
+    <ul id="shList">
+      <li><label><input type="radio" name="shMode" value="24h" checked> 24 horas</label></li>
+      <li><label><input type="radio" name="shMode" value="sempre"> Até eu cancelar (encerre no painel)</label></li>
+      <li><label><input type="checkbox" id="shDest"> Mostrar o nome do destino</label></li>
+    </ul>
+    <div class="acbtns"><button type="button" id="shGo">📤 Compartilhar</button><button type="button" id="shX">Fechar</button></div>
+    <div id="shMsg" style="font-size:14px;color:var(--muted);min-height:20px;max-width:420px;word-break:break-all" role="status"></div>
   </div></div>
   <div class="foot"><span id="ftrip"></span><span id="fage"></span></div>
 </div>
@@ -465,6 +476,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     else if (v.gear && v.gear > 1 && rpm < 1300 && (v.load ?? 0) > 80) hint = "↓ Reduza a marcha";
     $("hint").textContent = hint;
     lastD = d; pushHist(d); if (graphMode) drawGraphs(); else renderTiles(d);
+    $("shBtn").hidden = !(DEMO || d.gps?.state === "ok");          // F9: compartilhar só aparece com GPS
     // alerta recente (10 min)
     const a = (on || coll) ? (d.alerts || []).find((x) => Date.now() - (x.ts_end || x.ts) < 10 * 60e3 && x.sev !== "info") : null;
     const al = $("alert"), g = d.gps || {}, w = g.state === "ok" && g.warn?.kind === "radar" ? g.warn : null;
@@ -502,6 +514,30 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   const DEMO = /[?&]demo=1/.test(location.search);
   if (DEMO) demo(); else connect();
   if (location.hash === "#acc") { acc.hidden = false; post("arm"); }
+  // F9: compartilhar a viagem ao vivo (cria o link e abre a folha de compartilhar do iPhone; sem ela, copia o link)
+  const shSend = async (url) => {
+    if (navigator.share) { try { await navigator.share({ title: "Delfos · viagem ao vivo", text: "Acompanhe a viagem do Civic ao vivo:", url }); return "✅ Link enviado."; }
+      catch (e) { if (e && e.name === "AbortError") return ""; } }
+    try { await navigator.clipboard.writeText(url); return "📋 Link copiado: cole na conversa."; } catch { return "Copie o link: " + url; }
+  };
+  let shUrl = null;
+  $("shBtn").addEventListener("click", (e) => { e.preventDefault(); shUrl = null; $("shGo").textContent = "📤 Compartilhar"; $("shMsg").textContent = ""; $("sh").hidden = false; });
+  $("shX").addEventListener("click", () => { $("sh").hidden = true; });
+  $("shGo").addEventListener("click", async () => {
+    const msg = $("shMsg");
+    if (shUrl) { msg.textContent = await shSend(shUrl); return; }          // segundo toque: o iPhone pode ter recusado depois da espera
+    if (DEMO) { msg.textContent = "Demonstração: aqui o link seria criado e enviado."; return; }
+    $("shGo").disabled = true; msg.textContent = "Criando o link…";
+    try {
+      const r = await fetch("/api/gps/share", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: document.querySelector("input[name=shMode]:checked").value, dest: $("shDest").checked }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401 && j.locked) msg.textContent = j.configured ? "Localização trancada: desbloqueie no painel (aba Mapa) e tente de novo." : "O painel online está sem a senha de localização: não dá para compartilhar.";
+      else if (!r.ok) msg.textContent = "Não foi possível: " + (j.error || j.detail || r.status);
+      else { shUrl = j.url; $("shGo").textContent = "📤 Enviar o link"; msg.textContent = (await shSend(j.url)) || "Toque em Enviar o link."; }
+    } catch { msg.textContent = "Sem conexão agora."; }
+    $("shGo").disabled = false;
+  });
   document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else { if (!DEMO) connect(); lock(); } });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { });
   // manter a tela acesa (quando o navegador permitir)

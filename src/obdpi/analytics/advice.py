@@ -249,6 +249,22 @@ A.update({
                   "Se foi guincho: procurar o pátio do órgão de trânsito da cidade"],
         "urgencia": "logo", "rodar": "Confira o carro antes de rodar.",
     },
+    # F9: modo sempre ligado (power.always_on), seção 9.7
+    "gps:park_guard": {
+        "o_que": "Com o motor desligado, o GPS viu o carro sair de onde estava estacionado (mais de 60 m, ou andando acima de 8 km/h por 10 s).",
+        "causas": ["Guincho", "Manobra por terceiros (manobrista, oficina, família)", "Furto ou tentativa de furto"],
+        "verificar": ["Onde o carro está agora: Mapa → Agora no painel (a posição sobe para a nuvem a cada 5 s enquanto dura o aviso)",
+                      "Se alguém da família ou uma oficina está com o carro"],
+        "fazer": ["Se ninguém conhecido está com o carro: acionar a polícia com o horário e a posição do painel"],
+        "urgencia": "logo", "rodar": "Confira o carro antes de rodar.",
+    },
+    "power:low_batt": {
+        "o_que": "No modo sempre ligado, a bateria ficou abaixo do limite configurado por 10 minutos com o carro desligado; o Pi se desliga para não descarregar a bateria.",
+        "causas": ["Carro parado muitos dias com o Pi ligado", "Bateria fraca ou alternador carregando pouco"],
+        "verificar": ["Tensão da bateria na partida seguinte (aba Ao vivo)", "Há quantos dias o carro está parado"],
+        "fazer": ["Dar uma volta de 20 min para recarregar", "Se repetir com poucos dias parado: testar a bateria"],
+        "urgencia": "acompanhar", "rodar": "Pode rodar normalmente.",
+    },
 })
 
 DTC: dict[str, dict] = {

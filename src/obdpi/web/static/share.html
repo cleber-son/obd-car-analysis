@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="strict-origin">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<title>Delfos · Viagem ao vivo</title>
+<link rel="stylesheet" href="/static/leaflet.css">
+<style>
+/* Página do link de compartilhamento (docs/GPS-ARQUITETURA.md, seção 9.21). Sem senha, sem instalar nada, sem
+   guardar nada no aparelho. Mostra só a viagem em andamento enquanto o link vale. */
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --line: #e2e6ec; --fg: #121820; --muted: #5d6878;
+  --ok: #0f9d63; --warn: #b77400; --bad: #d42b3c; --accent: #1677d2; --track: #1677d2; --car: #ff6b3d;
+  --font: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif; --mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1117; --panel: #151b24; --line: #263041; --fg: #e8edf4; --muted: #8592a6;
+  --ok: #2ee59d; --warn: #ffb020; --bad: #ff4d5e; --accent: #2ec8ff; --track: #2ec8ff; --car: #ff8a5c; } }
+:root[data-theme="dark"] { --bg: #0d1117; --panel: #151b24; --line: #263041; --fg: #e8edf4; --muted: #8592a6;
+  --ok: #2ee59d; --warn: #ffb020; --bad: #ff4d5e; --accent: #2ec8ff; --track: #2ec8ff; --car: #ff8a5c; }
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 var(--font) }
+body { padding: calc(env(safe-area-inset-top, 0px) + 12px) max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 16px) max(16px, env(safe-area-inset-left, 0px)) }
+.wrap { max-width: 720px; margin: 0 auto; display: grid; gap: 12px }
+header { display: flex; align-items: center; gap: 12px }
+.logo { width: 38px; height: 38px; flex: none; border-radius: 11px; background: conic-gradient(from 200deg, #ff6b3d, #ffb020, #2ee59d, #2ec8ff, #8b7bff, #ff4fa3, #ff6b3d); display: grid; place-items: center }
+.logo i { width: 24px; height: 24px; border-radius: 8px; background: var(--bg) }
+header h1 { margin: 0; font-size: 18px; line-height: 1.2 } header p { margin: 0; font-size: 12px; color: var(--muted) }
+.pill { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 6px; font: 600 12px var(--font); padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--muted) }
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--muted)) }
+.pill.live .dot { animation: pulse 1.6s ease-in-out infinite } @keyframes pulse { 50% { opacity: .35 } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 14px }
+.map { height: min(48vh, 420px); min-height: 240px; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); position: relative }
+.map .leaflet-container { height: 100%; background: var(--panel) }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) } }
+:root[data-theme="dark"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) }
+.overlay { position: absolute; inset: 0; z-index: 500; display: grid; place-items: center; text-align: center; padding: 24px; background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--muted); font-size: 14px }
+.overlay b { display: block; color: var(--fg); font-size: 16px; margin-bottom: 4px }
+.follow { position: absolute; right: 10px; bottom: 26px; z-index: 600; font: 600 13px var(--font); padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg) }
+.car { width: 26px; height: 26px; display: grid; place-items: center }
+.car i { display: block; width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 22px solid var(--car); filter: drop-shadow(0 0 2px #000a) }
+.car i.dot { width: 16px; height: 16px; border: 3px solid #fff; border-radius: 50%; background: var(--car) }
+.alert { border-color: var(--s, var(--warn)); background: color-mix(in srgb, var(--s, var(--warn)) 12%, var(--panel)); font-weight: 600 }
+.big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap }
+.big b { font: 800 56px/1 var(--font); letter-spacing: -.03em; font-variant-numeric: tabular-nums }
+.big span { color: var(--muted); font-weight: 600 }
+.eta { margin-left: auto; text-align: right; font-size: 14px; color: var(--muted) } .eta b { display: block; font-size: 18px; color: var(--fg) }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px }
+.t { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; min-width: 0 }
+.t .l { font: 600 11px var(--font); color: var(--muted); text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.t .v { font: 700 20px var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis } .t .v small { font: 600 11px var(--font); color: var(--muted); margin-left: 2px }
+.t .s { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.t.warn .v { color: var(--warn) } .t.bad .v { color: var(--bad) }
+@media (max-width: 380px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)) } .big b { font-size: 48px } }
+.foot { font-size: 12px; color: var(--muted); text-align: center }
+.gone { text-align: center; padding: 28px 18px } .gone h2 { margin: 6px 0; font-size: 20px } .gone p { margin: 0; color: var(--muted) }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo" aria-hidden="true"><i></i></div>
+    <div><h1 id="title">Viagem ao vivo</h1><p id="sub">Delfos · o motor fala, Delfos traduz.</p></div>
+    <span class="pill" id="pill" role="status"><span class="dot"></span><span id="pillTxt">Conectando…</span></span>
+  </header>
+
+  <div id="main">
+    <div class="map" id="mapBox"><div id="map" style="height:100%"></div>
+      <div class="overlay" id="ov"><div><b id="ovT">Conectando…</b><span id="ovS"></span></div></div>
+      <button type="button" class="follow" id="follow" hidden>◎ Seguir o carro</button>
+    </div>
+    <div class="card alert" id="alert" hidden style="margin-top:12px" role="alert"></div>
+    <div class="card" style="margin-top:12px">
+      <div class="big"><b id="spd">—</b><span>km/h</span>
+        <div class="eta" id="eta" hidden><span>chegada prevista</span><b id="etaT">—</b><span id="etaS"></span></div></div>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="t"><div class="l">Rotação</div><div class="v" id="rpm">—</div><div class="s">rpm</div></div>
+      <div class="t" id="tEct"><div class="l">Motor</div><div class="v" id="ect">—</div><div class="s" id="ectS">temperatura</div></div>
+      <div class="t"><div class="l">Consumo</div><div class="v" id="kml">—</div><div class="s" id="kmlS">agora</div></div>
+      <div class="t"><div class="l">Tempo</div><div class="v" id="ttime">—</div><div class="s">desde a saída</div></div>
+      <div class="t"><div class="l">Distância</div><div class="v" id="tkm">—</div><div class="s">nesta viagem</div></div>
+      <div class="t"><div class="l">Média</div><div class="v" id="tkml">—</div><div class="s">da viagem</div></div>
+    </div>
+  </div>
+
+  <div class="card gone" id="gone" hidden><div style="font-size:34px" aria-hidden="true">🔒</div><h2 id="goneT">Este link foi encerrado</h2><p id="goneS">A posição do carro não é mais mostrada.</p></div>
+
+  <div class="foot"><span id="valid"></span><br><span id="upd"></span><br>Você vê só esta viagem, enquanto o link valer. Nada fica guardado neste aparelho.</div>
+</div>
+<script src="/static/leaflet.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const nf = (v, d = 0) => v == null || !Number.isFinite(+v) ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d });
+  const hhmm = (ts) => new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const durTxt = (s) => s == null ? "—" : s >= 3600 ? `${Math.floor(s / 3600)} h ${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}` : `${Math.max(0, Math.floor(s / 60))} min`;
+  const STALE_MS = 90000;                         // sem notícia do carro há 90 s: some a posição (não mostra onde parou)
+  const m = location.pathname.match(/^\/s\/([A-Za-z0-9_-]{22})\/?$/);
+  const TOKEN = m ? m[1] : null;
+  const API = TOKEN ? `/api/share/${TOKEN}` : null;
+  const born = Date.now();
+  let skew = 0, expires = 0, mode = "tempo", dead = false, lastMsg = 0, follow = true;
+  let st = null;                                   // último estado recebido: {state, car, data, ...}
+  let trk = { trip: null, v: -1, pts: [] };
+
+  // ---- mapa (Leaflet local; ladrilhos do OpenStreetMap, que recebem só a origem do site como Referer)
+  let map = null, line = null, car = null;
+  function ensureMap() {
+    if (map || !window.L) return;
+    map = L.map("map", { zoomControl: true, attributionControl: true, preferCanvas: true });
+    map.attributionControl.setPrefix(false);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    map.setView([-15.78, -47.93], 4);
+    line = L.polyline([], { color: getComputedStyle(document.documentElement).getPropertyValue("--track").trim() || "#1677d2", weight: 5, opacity: .9, interactive: false }).addTo(map);
+    map.on("dragstart", () => { follow = false; $("follow").hidden = false; });
+  }
+  $("follow").addEventListener("click", () => { follow = true; $("follow").hidden = true; drawCar(true); });
+  function clearMap() {
+    trk = { trip: null, v: -1, pts: [] };
+    if (line) line.setLatLngs([]);
+    if (car) { car.remove(); car = null; }
+  }
+  function drawCar(center) {
+    if (!map) return;
+    const c = st && st.state === "ao_vivo" ? st.car : null;
+    if (!c) { if (car) { car.remove(); car = null; } return; }
+    const html = c.hdg == null ? `<i class="dot"></i>` : `<i style="transform:rotate(${Math.round(c.hdg)}deg)"></i>`;
+    const icon = L.divIcon({ className: "car", html, iconSize: [26, 26], iconAnchor: [13, 13] });
+    if (car) { car.setLatLng([c.lat, c.lon]); car.setIcon(icon); } else car = L.marker([c.lat, c.lon], { icon, keyboard: false, interactive: false }).addTo(map);
+    if (follow || center) map.setView([c.lat, c.lon], map.getZoom() < 12 ? 15 : map.getZoom(), { animate: !center });
+  }
+
+  // ---- tela
+  function pill(txt, color, live) { $("pillTxt").textContent = txt; $("pill").style.setProperty("--c", color); $("pill").classList.toggle("live", !!live); }
+  function overlay(t, s) { $("ov").hidden = !t; $("ovT").textContent = t || ""; $("ovS").textContent = s || ""; }
+  function gone(reason) {
+    if (dead) return; dead = true;
+    st = null; clearMap();
+    if (map) { try { map.remove(); } catch { } map = null; }
+    $("main").hidden = true; $("gone").hidden = false;
+    const T = { viagem_terminou: ["A viagem terminou", "O link valia até o fim da viagem e foi encerrado sozinho."],
+                vencido: ["Este link venceu", "O prazo do link acabou. A posição do carro não é mais mostrada."],
+                nao_encontrado: ["Link não encontrado", "Confira se o endereço está completo. Se o link acabou de ser criado, ele começa a valer em alguns segundos."],
+                encerrado: ["Este link foi encerrado", "Quem compartilhou encerrou o link. A posição do carro não é mais mostrada."] };
+    const [a, b] = T[reason] || T.encerrado;
+    $("goneT").textContent = a; $("goneS").textContent = b;
+    pill("Encerrado", "var(--muted)", false);
+    $("valid").textContent = ""; $("upd").textContent = "";
+    try { ws && ws.close(); } catch { }
+    clearTimeout(pollT);
+  }
+  function setMeta(s) {
+    expires = s.expires_ts || 0;                     // null = sem prazo ("até cancelar")
+    if (s.now) skew = s.now - Date.now();
+    mode = s.mode || mode;
+    $("title").textContent = s.label ? `Viagem ao vivo · ${s.label}` : "Viagem ao vivo";
+  }
+  function applyTrack(t) {
+    if (!t) return;
+    if (t.trip !== trk.trip || t.v !== trk.v || !t.from) trk = { trip: t.trip, v: t.v, pts: [] };
+    for (const p of t.pts || []) trk.pts.push(p);
+    if (line) line.setLatLngs(trk.pts);
+  }
+  function render() {
+    const s = st, d = s && s.state === "ao_vivo" ? s.data || {} : null;
+    ensureMap();
+    const last = s && s.last_ts ? ` · última atualização ${hhmm(s.last_ts)}` : "";
+    if (!s || s.state === "desligado" || s.state === "aguardando") {
+      pill("Desligado", "var(--muted)", false);
+      overlay("Carro desligado" + last, "O carro e o trajeto aparecem aqui quando ele sair de novo.");
+      clearMap();
+    } else if (s.state === "sem_sinal") {
+      pill("Sem sinal", "var(--warn)", false);
+      overlay("Sem sinal do carro" + last, "Pode ser falta de internet no caminho ou o carro foi desligado. A posição volta sozinha quando o sinal voltar.");
+      clearMap();
+    } else {
+      pill("Ao vivo", "var(--ok)", true);
+      overlay(s.car ? "" : "Sem GPS agora", s.car ? "" : "Os números do carro continuam chegando; o mapa volta quando o GPS pegar sinal.");
+    }
+    $("spd").textContent = d ? nf(d.spd) : "—";
+    $("rpm").textContent = d ? nf(d.rpm) : "—";
+    $("ect").innerHTML = d && d.ect != null ? `${nf(d.ect)}<small>°C</small>` : "—";
+    const ec = d ? d.ect_st : null;
+    $("tEct").classList.toggle("warn", ec === "warn"); $("tEct").classList.toggle("bad", ec === "crit");
+    $("ectS").textContent = !d || d.ect == null ? "temperatura" : ec === "crit" ? "muito quente" : ec === "warn" ? "quente" : d.ect < 70 ? "esquentando" : "normal";
+    if (d && d.kml != null) { $("kml").innerHTML = `${nf(d.kml, 1)}<small>km/L</small>`; $("kmlS").textContent = d.lh != null ? `agora · ${nf(d.lh, 1)} L/h` : "agora"; }
+    else if (d && d.lh != null) { $("kml").innerHTML = `${nf(d.lh, 1)}<small>L/h</small>`; $("kmlS").textContent = "parado"; }
+    else { $("kml").textContent = "—"; $("kmlS").textContent = "agora"; }
+    $("ttime").textContent = d && d.trip_s != null ? durTxt(d.trip_s + Math.max(0, (Date.now() - lastMsg) / 1000)) : "—";
+    $("tkm").innerHTML = d && d.trip_km != null ? `${nf(d.trip_km, 1)}<small>km</small>` : "—";
+    $("tkml").innerHTML = d && d.trip_kml != null ? `${nf(d.trip_kml, 1)}<small>km/L</small>` : "—";
+    const al = $("alert");
+    al.hidden = !(d && d.alert);
+    if (d && d.alert) { al.style.setProperty("--s", d.alert_sev === "crit" ? "var(--bad)" : "var(--warn)"); al.textContent = `⚠ Aviso do carro: ${d.alert}`; }
+    const eta = d && d.eta && d.eta > Date.now() + skew - 60000;
+    $("eta").hidden = !eta;
+    if (eta) { $("etaT").textContent = hhmm(d.eta); $("etaS").textContent = (d.left_km != null ? `faltam ${nf(d.left_km, 1)} km` : "") + (d.dest ? ` · ${d.dest}` : ""); }
+    drawCar(false);
+  }
+  function onState(s) {
+    if (dead) return;
+    lastMsg = Date.now();
+    setMeta(s);
+    st = { state: s.state, car: s.car, data: s.data, last_ts: s.last_ts };
+    if (s.track) applyTrack(s.track); else if (s.state !== "ao_vivo") clearMap();
+    render();
+  }
+  function onFrame(f) {
+    if (dead || !st) return;
+    lastMsg = Date.now();
+    st = { state: f.state, car: f.car, data: f.data, last_ts: f.last_ts };
+    if (f.state === "ao_vivo" && f.pt) {
+      if (f.v === trk.v && f.n === trk.pts.length + 1) { trk.pts.push(f.pt); if (line) line.addLatLng(f.pt); }
+      else pollOnce();                              // perdeu algum ponto: busca o trajeto inteiro
+    }
+    render();
+  }
+
+  // ---- relógio: validade, "atualizado há", e a trava local (sem notícia há 90 s ou link vencido = nada na tela)
+  setInterval(() => {
+    if (dead) return;
+    const now = Date.now() + skew;
+    if (expires && now >= expires) { gone("vencido"); return; }
+    if (expires) { const left = (expires - now) / 1000;
+      $("valid").textContent = mode === "viagem" ? `Vale até o fim da viagem (no máximo até ${hhmm(expires)}).` : `Vale por mais ${durTxt(left)} (até ${hhmm(expires)}).`; }
+    else if (mode === "sempre") $("valid").textContent = "Vale até quem compartilhou encerrar o link.";
+    if (lastMsg) {
+      const age = (Date.now() - lastMsg) / 1000;
+      $("upd").textContent = age < 3 ? "Atualizado agora" : `Atualizado há ${Math.round(age)} s`;
+      if (age * 1000 > STALE_MS && st && st.state === "ao_vivo") { st = { state: "sem_sinal", last_ts: Date.now() - age * 1000 + skew }; render(); }
+      else if (st && st.state === "ao_vivo") $("ttime").textContent = st.data && st.data.trip_s != null ? durTxt(st.data.trip_s + age) : "—";
+    }
+  }, 1000);
+
+  // ---- dados: WebSocket (tempo real); consulta a cada 3 s se o WebSocket não funcionar
+  let ws = null, wsFails = 0, pollT = null, polling = false;
+  async function pollOnce() {
+    if (dead) return;
+    const q = trk.pts.length && trk.v >= 0 ? `?since=${trk.pts.length}&v=${trk.v}` : "";
+    let r;
+    try { r = await fetch(API + q, { cache: "no-store", credentials: "omit" }); }
+    catch { pill("Sem conexão", "var(--muted)", false); return; }
+    if (r.status === 404 && Date.now() - born < 30000) return;            // link criado no Pi agora: começa a valer em segundos
+    if (r.status === 404 || r.status === 410) { const j = await r.json().catch(() => ({})); gone(j.reason || (r.status === 404 ? "nao_encontrado" : "encerrado")); return; }
+    if (r.status === 429) { clearTimeout(pollT); pollT = setTimeout(pollLoop, 10000); return "slow"; }
+    if (!r.ok) return;
+    onState(await r.json());
+  }
+  async function pollLoop() {
+    if (dead) return;
+    const x = await pollOnce();
+    if (x !== "slow" && polling) pollT = setTimeout(pollLoop, 3000);
+  }
+  function startPolling() { if (polling || dead) return; polling = true; pollLoop(); }
+  function openWs() {
+    if (dead) return;
+    if (!("WebSocket" in window)) { startPolling(); return; }
+    let opened = false;
+    try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + API + "/ws"); }
+    catch { startPolling(); return; }
+    ws.onopen = () => { opened = true; wsFails = 0; if (polling) { polling = false; clearTimeout(pollT); } };
+    ws.onmessage = (e) => { let x; try { x = JSON.parse(e.data); } catch { return; } if (x.t === "s") onState(x); else if (x.t === "f") onFrame(x); };
+    ws.onclose = (e) => {
+      if (dead) return;
+      if (e.code === 4410) { pollOnce().then(() => { if (!dead) gone("encerrado"); }); return; }   // link encerrado: descobre o motivo
+      if (!opened) wsFails++;
+      if (wsFails >= 2) startPolling();          // WebSocket barrado (rede, proxy): consulta a cada 3 s, e tenta de novo depois
+      setTimeout(openWs, Math.min(30000, 2000 * (wsFails + 1)));
+    };
+    ws.onerror = () => { try { ws.close(); } catch { } };
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !dead) pollOnce(); });
+
+  if (!TOKEN) { gone("nao_encontrado"); return; }
+  ensureMap();
+  pollOnce().then(() => { if (!dead) openWs(); });
+})();
+</script>
+</body>
+</html>

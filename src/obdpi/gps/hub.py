@@ -162,11 +162,23 @@ LIVE_ENGINES += [fuelstop.FuelStopEngine, eta.EtaEngine]     # fuelstop.detect r
 FINALIZERS.insert(FINALIZERS.index(routes.assign_trip), traffic.finalize)    # antes das rotas: as duas da F4 continuam no fim
 PRIVATE_KEYS = ("place", "parked", "dest", "say")             # chaves de private() que vão para o gps.json (privado)
 
+# ---- F9: modo sempre ligado (power.always_on, desligado por padrão): vigia do estacionamento e proteção da bateria.
+# Motores com tick(ctx) são chamados a cada volta do pump(), com ou sem posição (a bateria não depende do GPS).
+LIVE_ENGINES += [places.ParkGuard]
+PRIVATE_KEYS += ("guard",)
+GUARD_STOPPED_EVERY_S = 60       # sempre ligado, carro desligado e parado: 1 posição por minuto (seção 9.7)
+
 
 def vehicle_cfg(cfg: dict) -> dict:
     """Seção [vehicle] com os padrões (massa, CdA, Crr, ocupantes: dinamômetro da F6)."""
     sec = cfg.get("vehicle") if isinstance(cfg, dict) else None
     return {**config.DEFAULTS["vehicle"], **(sec or {})}
+
+
+def power_cfg(cfg: dict) -> dict:
+    """Seção [power] com os padrões (F9: modo sempre ligado)."""
+    sec = cfg.get("power") if isinstance(cfg, dict) else None
+    return {**config.DEFAULTS["power"], **(sec or {})}
 
 
 def make_ctx(con, cfg: dict, **kw) -> SimpleNamespace:
@@ -195,6 +207,7 @@ class GpsHub:
     def __init__(self, cfg, con, clock, state, event, queue_push, run_dir):
         self.cfg = gps_cfg(cfg)
         self.vehicle = vehicle_cfg(cfg)
+        self.power = power_cfg(cfg)
         self.con, self.clock, self.state = con, clock, state
         self.event, self.queue_push = event, queue_push
         self.run_dir = Path(run_dir)
@@ -204,6 +217,7 @@ class GpsHub:
         self.reader: GpsReader | None = None
         self.geo = roads.GeoDb(self.cfg.get("geo_db")) if self.enabled else None     # F7: mapa offline (só leitura)
         self.dec = Decimator(self.cfg.get("store_hz", 1), self.cfg.get("stopped_every_s", 30))
+        self._stopped_ms = self.dec.stopped_ms
         self.desloc: float | None = None
         self._dsamples: list[float] = []
         self._epoch = -1
@@ -316,6 +330,7 @@ class GpsHub:
             self._commands()
         except Exception as e:
             self._warn("comandos", e)
+        alerts += self._tick(ts, values, value_ts, engine_on, trip_id)
         try:
             r = self.reader
             if r is None:
@@ -325,6 +340,9 @@ class GpsHub:
             if r.epoch != self._epoch:                     # reconexão da fonte: recalcula o deslocamento da hora
                 self._epoch, self._dsamples, self.desloc = r.epoch, [], None
             fixes = r.drain()
+            if self.power.get("always_on"):           # F9: sempre ligado e carro desligado: parado grava 1 por minuto
+                parked = not engine_on and trip_id is None
+                self.dec.stopped_ms = max(self._stopped_ms, GUARD_STOPPED_EVERY_S * 1000) if parked else self._stopped_ms
             now_clock, now_mono = self.clock.now(), time.monotonic()
             groups: dict[int, list[Fix]] = {}
             for f in fixes:
@@ -365,6 +383,21 @@ class GpsHub:
         except Exception as e:
             self._warn("pump", e)
         return alerts
+
+    def _tick(self, ts, values, value_ts, engine_on, trip_id) -> list:
+        """F9: motores com tick(ctx) a cada volta (sempre ligado: armar a vigia e proteger a bateria)."""
+        out: list = []
+        c = None
+        for e in self.engines:
+            fn = getattr(e, "tick", None)
+            if fn and getattr(e, "on", True):          # desligado (padrão): nem monta o contexto
+                try:
+                    c = c or SimpleNamespace(fix=None, values=values, value_ts=value_ts, engine_on=engine_on, trip_id=trip_id, ts=ts,
+                                             con=self.con, cfg=self.cfg)
+                    out += fn(c) or []
+                except Exception as ex:
+                    self._warn(type(e).__name__, ex)
+        return out
 
     def _transitions(self, st: dict) -> None:
         state, prev = st["state"], self.prev_state

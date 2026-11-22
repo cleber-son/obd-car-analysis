@@ -20,6 +20,14 @@ rate_hz = 5              # taxa pedida ao receptor; grava 1 Hz andando e 1 a cad
 moved_m = 300            # "o carro mudou de lugar desligado" a partir desta distância (descontado o que o OBD explica)
 summary_names = true     # nomes dos lugares no resumo da viagem no celular ("Casa → Trabalho"); false = só números
 
+# Modo sempre ligado (docs/GPS-ARQUITETURA.md, 9.7): só com alimentação permanente do Pi (relé temporizado ou sensor de
+# ignição) e internet no carro. Liga a vigia do estacionamento (alerta se o carro se mover desligado; posição à nuvem a
+# cada 5 s) e desliga o Pi com a bateria abaixo de min_batt_v por 10 min. Rode deploy/install.sh depois de mudar
+# (cria a regra de sudo do desligamento só com always_on = true).
+# [power]
+# always_on = false
+# min_batt_v = 12.0
+
 [vehicle]
 tyre = "205/55 R16"
 occupants = 2            # pessoas que costumam andar no carro (entra na massa do dinamômetro, F6)
