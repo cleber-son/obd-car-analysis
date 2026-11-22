@@ -167,14 +167,15 @@
     "Base do coletor de admissão (junto ao cabeçote)", "Em volta dos bicos injetores",
     "Bico 1 (lado da correia)", "Bico 2", "Bico 3", "Bico 4 (lado do câmbio)", "Outro ponto"];
   const spoken = (p) => p.replace(/\s*\(.*?\)/g, "").replace(/\//g, " e ");
-  async function leakTest() {
-    open("Caça-vazamento de ar", ["rpm", "stft1", "o2c1_lambda"]);
+  async function leakTest(only = null) {                // only: lista de pontos para já começar em sequência (ex.: só os bicos)
+    if (Array.isArray(only) && !only.length) only = null; else if (!Array.isArray(only)) only = null;
+    open(only ? "Caça-vazamento nos bicos" : "Caça-vazamento de ar", ["rpm", "stft1", "o2c1_lambda"]);
     await ready(`O celular <b>fala</b> cada passo: "prepare", "borrife agora", "pare de borrifar". Você borrifa <b>limpa-carburador</b> num ponto por vez, só quando ouvir. Se houver vazamento ali, o motor suga o produto e as leituras mudam: ele avisa "reagiu".<br><br>
       Use <b>Sequência por voz</b> para passar por todos os pontos sem tocar na tela. Volume do celular alto; 🔊 no topo liga e desliga a voz.<br><br>
       ⚠️ Produto inflamável: longe do escapamento quente e do alternador, sem cigarro nem faísca por perto.`, [C.on, C.hot, C.stopped, C.calm]);
     const hits = [], clean = [], count = {};
     const AUTO = POINTS.filter((p) => p !== "Outro ponto" && p !== "Em volta dos bicos injetores");   // na sequência, bico por bico
-    let queue = null;
+    let queue = only ? only.slice() : null;
     for (;;) {
       const base = await phase(8, "Não borrife ainda", "Medindo o motor em repouso", "", null, queue ? "Não borrife. Medindo o repouso." : "Não borrife ainda. Medindo o motor em repouso.");
       const b = { stft: mean(col(base, "stft1")), sst: sd(col(base, "stft1")), rpm: mean(col(base, "rpm")), srpm: sd(col(base, "rpm")), lam: mean(lam(base)) };
@@ -227,6 +228,119 @@
     await finish("leak", "Caça-vazamento", hits.length, hits.length ? hits : clean.map((c) => c + ": sem reação"),
       `Testados ${clean.length} ponto(s), nenhum reagiu. Se a mistura continua pobre parado, peça um <b>teste de fumaça</b> na oficina: ele acha vazamentos pequenos que o spray não alcança.`,
       `O ar falso entra por: <b>${hits.map(esc).join("; ")}</b>.<br>Corrija a vedação desse ponto, faça o reaprendizado da marcha lenta e rode 30–50 km.`);
+  }
+
+  // ------------------------------------------------------------ bicos injetores novos: antes da partida, partida, lenta, 2.500 rpm e comparação com a linha de base
+  // linha de base de 2026-11-21 (anéis de baixo dos bicos rasgados): ajuste curto +46,9 % na lenta, λ 1,17
+  const INJ_BASE = { stft: 46.9, lam: 1.17 };
+  const BICOS = ["Bico 1 (lado da correia)", "Bico 2", "Bico 3", "Bico 4 (lado do câmbio)"];
+  async function ask(big, small, opts, talk = big) { say(big, small); speak(talk); return buttons(opts); }
+  async function injTest() {
+    open("Bicos injetores novos", ["rpm", "stft1", "o2c1_lambda", "ect"]);
+    await ready(`Teste completo depois de trocar os bicos. O celular <b>fala</b> cada passo:<br>
+      1. <b>antes da partida</b>: confere a montagem e procura vazamento de combustível com a bomba pressurizando;<br>
+      2. <b>partida</b> e aquecimento;<br>3. <b>marcha lenta</b> por 1 minuto e <b>2.500 rpm</b> por 25 s;<br>
+      4. compara com antes da troca (ajuste curto <b>+46,9 %</b>, λ <b>1,17</b>) e oferece o caça-vazamento só nos 4 bicos.<br><br>
+      ⚠️ Cheiro forte de gasolina ou bico molhado: <b>não dê a partida</b>. Tenha um extintor por perto.`, [C.stopped]);
+    const lines = []; let bad = 0;
+    const started = !!live?.engine_on || await ask("O motor já foi ligado depois da troca?", "Se ainda não, o teste começa pela checagem antes da partida.",
+      [{ t: "Ainda não: começar antes da partida", v: false, main: true }, { t: "Já liguei: pular para a marcha lenta", v: true }], "O motor já foi ligado depois da troca dos bicos?");
+
+    if (!started) {
+      // 1) montagem: cada item confirmado pelo dono
+      const CHECK = [["Os 4 bicos encaixados até o fim na flauta, com as presilhas no lugar (deu o clique)", "Bicos encaixados e presilhas no lugar?"],
+        ["Anéis novos de cima e de baixo, lubrificados com óleo de motor (sem graxa nem silicone)", "Anéis novos, de cima e de baixo, com óleo de motor?"],
+        ["Flauta parafusada por igual e os 4 conectores encaixados com clique", "Flauta parafusada e os quatro conectores encaixados?"],
+        ["Nenhuma ferramenta, pano ou tampão esquecido sobre o motor ou nos furos", "Nada esquecido em cima do motor?"]];
+      for (const [t, talk] of CHECK) {
+        const r = await ask("Confira a montagem", esc(t), [{ t: "✓ Conferido", v: 1, main: true }, { t: "Ainda não: vou arrumar", v: 0 }], talk);
+        if (!r) { log(null, `Montagem pendente: ${esc(t)}`); return finish("inj", "Bicos injetores novos", 0, ["montagem pendente antes da partida"], "", `Arrume isto antes de ligar: <b>${esc(t)}</b>. Depois rode o teste de novo.`, true); }
+      }
+      log(true, "Montagem conferida (bicos, anéis, flauta, conectores)");
+      // 2) pressurizar sem ligar: 3 ciclos de ignição; a bomba roda ~2 s em cada um
+      for (let i = 1; i <= 3; i++) {
+        beep(880, 150);
+        await phase(5, `Ligue a ignição (${i} de 3)`, "Só a chave na posição 2, <b>sem dar partida</b>. Escute a bomba zumbir uns 2 segundos.", "go", null, `Ligue a ignição, sem dar partida. Vez ${i} de 3.`);
+        beep(660, 150);
+        await phase(4, "Desligue a ignição", "Espere a contagem", "", null, "Desligue.");
+      }
+      const leak = await ask("Olhe e cheire em volta dos bicos", "Com uma lanterna, olhe a base de cada bico e as emendas da flauta. Tem <b>gotejando, molhado ou cheiro forte</b> de combustível?",
+        [{ t: "Seco, sem cheiro", v: 0, main: true }, { t: "Tem vazamento", v: 1 }], "Com a lanterna, olhe a base de cada bico e as emendas da flauta. Está seco?");
+      if (leak) { log(false, "<b>Vazamento de combustível com a bomba pressurizando</b>"); speak("Não dê a partida.");
+        return finish("inj", "Bicos injetores novos", 1, ["vazamento de combustível antes da partida"], "",
+          "<b>Não dê a partida.</b> Desligue a ignição, solte a flauta e confira o anel de cima do bico que vazou (torcido, cortado ou sem óleo) e se ele entrou reto. Seque tudo e repita este teste."); }
+      log(true, "Sem vazamento de combustível com a linha pressurizada (3 ciclos de ignição)");
+      // 3) partida: pode demorar um pouco na primeira (ar na linha)
+      beep(990, 200);
+      const t0 = Date.now(); let ok = false;
+      await phase(40, "Dê a partida agora", "Se não pegar em 5 s, solte, espere 10 s e tente de novo.", "go", () => { if (live?.engine_on) { ok = true; return "stop"; } return {}; }, "Pode dar a partida.");
+      if (!ok) return finish("inj", "Bicos injetores novos", 1, ["motor não pegou em 40 s"], "", "O motor não pegou. Confira os conectores dos bicos e o fusível da bomba (FI EM). Se tentar de novo, faça 2 ou 3 ciclos de ignição antes.", true);
+      const tStart = (Date.now() - t0) / 1000; lines.push(`pegou em ${nf(tStart, 0)} s`);
+      log(true, `Motor pegou (${nf(tStart, 0)} s depois do pedido)`);
+      await phase(15, "Deixe em marcha lenta", "Não acelere. Já já confira os bicos de novo.", "", null, "Pegou. Deixe em marcha lenta, sem acelerar.");
+      const leak2 = await ask("Olhe os bicos com o motor ligado", "A pressão agora é a de trabalho. Alguma gota ou cheiro de combustível na base dos bicos ou na flauta?",
+        [{ t: "Seco", v: 0, main: true }, { t: "Tem vazamento", v: 1 }], "Olhe os bicos de novo com o motor ligado. Está seco?");
+      if (leak2) { log(false, "<b>Vazamento de combustível com o motor ligado</b>"); speak("Desligue o motor agora.");
+        return finish("inj", "Bicos injetores novos", 1, [...lines, "vazamento de combustível com o motor ligado"], "", "<b>Desligue o motor agora.</b> Confira o anel de cima do bico que vazou e a presilha. Não rode o carro assim."); }
+      log(true, "Seco com o motor ligado");
+    }
+
+    // 4) aquecer até a malha fechada (a sonda passa a corrigir a mistura)
+    if ((live?.values?.ect ?? 0) < 80) {
+      let said = 0;
+      await phase(900, "Aquecendo", "", "", () => { const e = live?.values?.ect; if (e == null) return {};
+        if (e >= 80) return "stop";
+        if (e - said >= 10) { said = Math.floor(e / 10) * 10; speak(`Motor em ${nf(e)} graus.`, false); }
+        return { big: `${nf(e)} °C`, small: "Esperando chegar a 80 °C. Pé fora do pedal; o teste segue sozinho." }; }, "Agora vamos esperar o motor aquecer. Não acelere.");
+      if ((live?.values?.ect ?? 0) < 80) log(null, `Motor não chegou a 80 °C em 15 min (${nf(live?.values?.ect)} °C): medindo assim mesmo.`);
+    }
+    // 5) marcha lenta 60 s: os primeiros 15 s descartados (ajuste ainda assentando)
+    beep(880);
+    const idle = (await phase(60, "Marcha lenta", "Pé fora do pedal, tudo desligado. Medindo 1 minuto.", "", null, "Marcha lenta por um minuto. Não toque no pedal.")).filter((x, _, a) => x.t > (a[0]?.t ?? 0) + 15000);
+    const st0 = mean(col(idle, "stft1")), la0 = mean(lam(idle)), rp = col(idle, "rpm"), r0 = mean(rp), dev = sd(rp);
+    const dips = r0 == null ? 0 : rp.filter((x) => x < r0 - 100).length;
+    if (r0 == null || st0 == null) return finish("inj", "Bicos injetores novos", 0, lines, "", "Não recebi o ajuste curto e a rotação durante a marcha lenta. Confira se o painel está ao vivo e repita.", true);
+    // 6) 2.500 rpm 25 s
+    beep(880);
+    const hi = steady(await phase(25, "", "", "", hold(2500, 300), "Agora acelere e segure em dois mil e quinhentos rotações."), 2500, 450).slice(3);
+    beep(660); await phase(5, "Pode soltar", "Voltando à marcha lenta", "", null, "Pode soltar.");
+    const st1 = mean(col(hi, "stft1")), la1 = mean(lam(hi));
+
+    // veredito
+    const okIdle = Math.abs(st0) <= 10, warnIdle = !okIdle && Math.abs(st0) <= 20;
+    lines.push(`lenta: ajuste ${sg(st0, 1)} % (antes ${sg(INJ_BASE.stft, 1)} %)`, `λ ${nf(la0, 2)} (antes ${nf(INJ_BASE.lam, 2)})`, `rotação ${nf(r0)} ±${nf(dev)} rpm`);
+    if (st1 != null) lines.push(`2.500 rpm: ajuste ${sg(st1, 1)} %${la1 ? ", λ " + nf(la1, 2) : ""}`);
+    const gain = Math.abs(INJ_BASE.stft) - Math.abs(st0);
+    log(okIdle, `Ajuste curto na lenta: <b>${sg(st0, 1)} %</b> (antes ${sg(INJ_BASE.stft, 1)} %${st0 > 0 ? `, ${gain > 0 ? `melhorou ${nf(gain, 0)} pontos` : "não melhorou"}` : ""}) ${okIdle ? "· dentro da meta −10 a +10 %" : st0 < -10 ? "· <b>rico: a central está tirando combustível</b>" : warnIdle ? "· <b>melhor, mas ainda fora da meta</b>" : "· <b>ainda pobre: entra ar</b>"}`);
+    if (!okIdle) bad++;
+    if (la0 != null) { const okL = la0 >= 0.95 && la0 <= 1.05; if (!okL) bad++; log(okL, `Sonda na lenta: λ <b>${nf(la0, 2)}</b> (antes ${nf(INJ_BASE.lam, 2)}) ${okL ? "· perto de 1,00" : la0 > 1.05 ? "· <b>pobre</b>" : "· <b>rica</b>"}`); }
+    const okR = dev < 30 && dips <= 1 && r0 >= 650 && r0 <= 900; if (!okR) bad++;
+    log(okR, `Marcha lenta ${nf(r0)} rpm, variação ±${nf(dev)} rpm${dips > 1 ? `, <b>${dips} quedas acima de 100 rpm</b> (falha de queima: bico entupido, conector solto ou vela)` : ""} ${okR ? "· estável" : r0 > 900 ? "· <b>alta: a central ainda compensa ar; faça o reaprendizado</b>" : ""}`);
+    if (st1 != null) { const ok1 = Math.abs(st1) <= 10; if (!ok1) bad++; log(ok1, `Ajuste curto a 2.500 rpm: <b>${sg(st1, 1)} %</b> ${ok1 ? "· normal" : st1 > 0 ? "· <b>pobre também com rotação: falta combustível (bico, pressão ou filtro)</b>" : "· <b>rico</b>"}`); }
+    else log(null, "Não consegui leitura estável a 2.500 rpm.");
+    const mil = live?.mil, codes = [...(live?.dtc?.confirmed || []), ...(live?.dtc?.pending || [])];
+    if (mil || codes.length) { bad++; log(false, `Central com ${mil ? "<b>luz de injeção acesa</b>" : "código registrado"}${codes.length ? ": " + codes.map(esc).join(", ") : ""}`); lines.push(`códigos: ${codes.join(", ") || "MIL"}`); }
+    else log(true, "Nenhum código de falha na central");
+
+    let msg;
+    if (okIdle && !bad) msg = `<b>Vazamento resolvido.</b> O ajuste caiu de ${sg(INJ_BASE.stft, 0)} % para ${sg(st0, 0)} % e a sonda está em λ ${nf(la0, 2)}. Agora faça o <b>Reaprendizado da marcha lenta</b> e rode 30–50 km; o painel compara sozinho.`;
+    else if (st0 > 10 && st1 != null && st0 - st1 > 8) msg = `A mistura ainda fica pobre <b>parado</b> (${sg(st0, 0)} %) e melhora com rotação (${sg(st1, 0)} %): ainda entra ar. Faça o <b>caça-vazamento nos bicos</b> (anel de baixo mal assentado) e depois na junta do coletor, servofreio e PCV.`;
+    else if (st0 > 10) msg = `A mistura ainda está pobre (${sg(st0, 0)} %) em todas as rotações: confira se os 4 conectores dos bicos estão encaixados e a pressão de combustível. Rode também o <b>Raio-X da mistura</b>.`;
+    else if (st0 < -10) msg = `Mistura <b>rica</b> (${sg(st0, 0)} %): um bico pode estar pingando ou o anel de cima vazando para dentro. Desligue e confira se algum bico molhou a vela ao redor.`;
+    else msg = "A mistura está boa, mas veja os itens em vermelho acima.";
+    log(okIdle && !bad, msg);
+    // caça-vazamento só nos bicos, já com o motor quente
+    if (st0 > 10) {
+      const go = await ask(bad ? "⚠️ Encontrei algo" : "Quase", msg + "<br><br>Fazer agora o caça-vazamento <b>só nos 4 bicos</b>?", [{ t: "🎯 Caça-vazamento nos bicos", v: 1, main: true }, { t: "Não, ver o resultado", v: 0 }], "A mistura ainda está pobre. Quer fazer o caça-vazamento nos quatro bicos agora?");
+      if (go) { saveInj(bad, lines); close(); return run(() => leakTest(BICOS))(); }
+    }
+    await finish("inj", "Bicos injetores novos", bad, lines, msg, msg);
+  }
+  // guarda o resultado sem a tela final, quando o teste emenda no caça-vazamento
+  function saveInj(bad, lines) {
+    const rec = { id: "inj", title: "Bicos injetores novos", ts: Date.now(), verdict: bad ? `${bad} ponto(s) de atenção` : "tudo certo", lines };
+    try { const all = JSON.parse(localStorage.getItem("obdTests") || "[]"); all.unshift(rec); localStorage.setItem("obdTests", JSON.stringify(all.slice(0, 40))); } catch { }
+    fetch("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "teste", ts: rec.ts, text: `${rec.title}: ${rec.verdict}. ${lines.join("; ")}`.slice(0, 480) }) }).catch(() => { });
   }
 
   // ------------------------------------------------------------ reaprendizado da marcha lenta (depois de bateria desligada / corpo de borboleta)
@@ -450,6 +564,7 @@
 
   // ------------------------------------------------------------ lista e histórico
   const TESTS = [
+    { id: "inj", f: injTest, ic: "💉", t: "Bicos injetores novos", d: "Depois de trocar os bicos: confere a montagem e vazamento de combustível antes da partida, mede a mistura na lenta e a 2.500 rpm e compara com antes da troca.", need: "Antes da partida ou motor ligado, parado", min: "5–20 min", g: "Mistura e admissão" },
     { id: "relearn", f: relearnTest, ic: "🔁", t: "Reaprendizado da marcha lenta", d: "Depois de desligar a bateria ou mexer na borboleta: acompanha a ventoinha, conta 10 min e avisa por voz quando pode desligar.", need: "Motor ligado, parado", min: "15–30 min", g: "Mistura e admissão" },
     { id: "leak", f: leakTest, ic: "🎯", t: "Caça-vazamento de ar", d: "Borrife limpa-carburador em cada ponto: o celular apita quando o motor reage. Acha entrada falsa de ar.", need: "Motor quente, parado", min: "5 min", g: "Mistura e admissão" },
     { id: "mix", f: mixTest, ic: "🔬", t: "Raio-X da mistura", d: "Mede a correção de combustível em 3 rotações e diz a causa: entrada de ar, MAF ou falta de combustível.", need: "Motor quente, parado", min: "1 min", g: "Mistura e admissão" },

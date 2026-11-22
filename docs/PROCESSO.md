@@ -280,3 +280,14 @@ Pedido: implementar todas, sem perguntar. Código novo em `src/obdpi/extras.py` 
 - Furos dos bicos no coletor sujos, com restos de anel velho grudados. Orientação: tampar os furos, aspirar (sem ar comprimido), tirar a borracha com ferramenta de plástico/madeira, um furo por vez, pano com limpa-carburador. Anéis novos de cima e de baixo, com óleo de motor; conferir o clique da presilha verde; ligar a ignição 2–3 vezes e procurar vazamento antes da partida.
 - **Próximo passo (quando o dono voltar):** rodar 🔁 Reaprendizado da marcha lenta + 30–50 km, e comparar com hoje. Linha de base a vencer: ajuste curto +46,9 % cravado na lenta, λ 1,17, MAF ÷ esperado ≈ 0,55. Resolvido se o ajuste curto ficar entre −10 e +10 % na lenta e a sonda perto de λ 1,00.
 - Pendente: deploy do `tests.js` atual no Pi (nomes Bico 1…4, voz no iPhone, Testar o som); o painel online já tem. Conferir se a anotação do teste (vinda da nuvem) chegou ao banco do Pi.
+
+## 2026-11-22 — Teste guiado "Bicos injetores novos"
+- Pedido: prioridade para testar a troca dos bicos, feita hoje. Novo teste 💉 no topo de Diagnóstico → Testes (`tests.js`, `injTest`), com voz:
+  1. **Antes da partida**: confirma montagem (bicos encaixados e presilhas, anéis novos de cima e de baixo com óleo de motor, flauta e conectores, nada esquecido no motor); 3 ciclos de ignição para a bomba pressurizar; pergunta se há gota/cheiro de combustível. Vazou → "não dê a partida" e encerra.
+  2. **Partida** (até 40 s) e nova olhada nos bicos com o motor ligado (vazou → "desligue o motor agora").
+  3. Espera o motor chegar a 80 °C, mede **1 min de marcha lenta** (descarta os 15 s iniciais) e **2.500 rpm por 25 s**.
+  4. Compara com a linha de base de 21/11 (ajuste curto +46,9 %, λ 1,17). Meta: ajuste −10 a +10 % na lenta e a 2.500, λ 0,95–1,05, lenta 650–900 rpm estável (±30, sem quedas de 100 rpm), sem código/MIL. Diz a causa provável (ainda entra ar / falta combustível / rica: bico pingando).
+  5. Se ainda pobre, emenda no **caça-vazamento só nos 4 bicos** (`leakTest(BICOS)` já começa a sequência pelos bicos).
+- Já dá para começar com o motor ligado (pula a parte de antes da partida).
+- Simulado no PC (DOM falso, relógio acelerado, carro falso) nos cenários resolvido, ainda pobre e rico.
+- Publicado no painel online (versão 30466ddf). O Pi recebe no próximo deploy.
