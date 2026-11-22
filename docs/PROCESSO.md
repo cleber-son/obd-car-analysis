@@ -544,3 +544,11 @@ trocado/verificado, motivos e etc." **Nada publicado** (nem nuvem nem Pi); sem c
   das regras vêm dos testes guiados que já existiam e de valores de oficina; a comparação dos sensores em dupla com o
   motor ligado é aproximada (as duas leituras não são do mesmo instante), por isso sai com confiança baixa e manda
   confirmar na Varredura do pedal.
+
+## 2026-11-22 — Deploy do Ao vivo e do modo direção (nuvem + Pi), sem o Diagnóstico geral
+
+- Publicado o commit `1ee724e` (Ao vivo: autonomia, último abastecimento, mapa com trajeto desde a saída; modo direção
+  com R$ gastos, nova ordem e paisagem; cabeçalho Pi/Ignição/Motor/GPS) a partir de um `git worktree` do commit, para
+  **não** levar o Diagnóstico geral (`461d969`), que o dono pediu só no git por enquanto.
+- Nuvem: `wrangler deploy` (cache `delfos-v6`). Pi: `scripts/deploy.sh` pelo WiFi "garagem", serviços ativos, sem
+  `checkup.js` no Pi (conferido).
