@@ -565,6 +565,7 @@
 
   // ------------------------------------------------------------ lista e histórico
   const TESTS = [
+    { id: "geral", f: () => window.obdCheckup?.start(), ic: "🩺", t: "Diagnóstico geral", d: "O carro inteiro, passo a passo: você olha níveis e pneus, responde como o carro anda e o painel mede bateria, partida, mistura, catalisador, alternador e ventoinha. No fim diz o que provavelmente está ruim e o que fazer.", need: "Motor frio e desligado é o ideal", min: "20–30 min", g: "Carro inteiro" },
     { id: "inj", f: injTest, ic: "💉", t: "Bicos injetores novos", d: "Depois de trocar os bicos: confere a montagem e vazamento de combustível antes da partida, mede a mistura na lenta e a 2.500 rpm e compara com antes da troca.", need: "Antes da partida ou motor ligado, parado", min: "5–20 min", g: "Mistura e admissão" },
     { id: "relearn", f: relearnTest, ic: "🔁", t: "Reaprendizado da marcha lenta", d: "Depois de desligar a bateria ou mexer na borboleta: acompanha a ventoinha, conta 10 min e avisa por voz quando pode desligar.", need: "Motor ligado, parado", min: "15–30 min", g: "Mistura e admissão" },
     { id: "leak", f: leakTest, ic: "🎯", t: "Caça-vazamento de ar", d: "Borrife limpa-carburador em cada ponto: o celular apita quando o motor reage. Acha entrada falsa de ar.", need: "Motor quente, parado", min: "5 min", g: "Mistura e admissão" },
@@ -594,8 +595,10 @@
       return `${head}<button type="button" class="tcard" data-t="${t.id}"><span class="tic">${t.ic}</span><span><b>${t.t}</b><span class="d">${t.d}</span><span class="need">${t.need} · ${t.min}</span>${last ? `<span class="last" style="--s:${good(last) ? "var(--ok)" : "var(--bad)"}">${good(last) ? "✓" : "!"} último: ${esc(last.verdict)}</span>` : ""}</span><span class="go">Iniciar ›</span></button>`; }).join("");
   }
   window.obdTests = { render() { renderList(); renderHistory(); } };
+  // peças reaproveitadas pelo Diagnóstico geral (checkup.js)
+  window.obdTestKit = { open, close, say, log, buttons, ask, phase, ready, speak, beep, C, hold, steady, fit, Cancel, launch: (id, arg) => { const t = TESTS.find((x) => x.id === id); return t ? run(() => t.f(arg))() : null; } };
   document.addEventListener("click", (e) => {
-    const b = e.target.closest(".tcard[data-t]"); if (b) { run(TESTS.find((t) => t.id === b.dataset.t).f)(); return; }
+    const b = e.target.closest(".tcard[data-t]"); if (b) { const t = TESTS.find((t) => t.id === b.dataset.t); if (t.id === "geral") t.f(); else run(t.f)(); return; }
     if (e.target.closest("#tstClose")) close();
   });
 })();

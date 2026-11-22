@@ -351,7 +351,20 @@ async function publicFill(req, env) {
 
 // Outras anotações que o dono faz pelo painel público: serviço feito, hodômetro, item de manutenção.
 // Cada uma aceita só os campos esperados, com limites, e a fila tem teto. O Pi aplica quando conecta.
+// Relatório do "Diagnóstico geral" feito pelo painel público: só texto e números, tudo com tamanho limitado e sem HTML
+// (só <b>). O Pi valida de novo antes de gravar (analytics/checkup.py) e é ele quem escreve a linha do diário.
+export function cleanCheckup(b) {
+  if (!b || !Array.isArray(b.achados) || typeof b.rotulo !== "string" || !b.rotulo.trim()) return null;
+  const s = (v, n) => String(v ?? "").replace(/<(?!\/?b>)[^>]*>/g, "").slice(0, n);
+  const l = (v, n, z) => (Array.isArray(v) ? v : []).slice(0, n).map((x) => s(x, z));
+  const m = {}; for (const [k, v] of Object.entries(b.m && typeof b.m === "object" ? b.m : {}).slice(0, 60)) if (typeof v === "number" || typeof v === "boolean") m[s(k, 24)] = v;
+  const ts = Number(b.ts) > 9e11 && Number(b.ts) <= Date.now() + 864e5 ? Number(b.ts) : Date.now();
+  return { ts, rotulo: s(b.rotulo, 80), resumo: s(b.resumo, 500), parcial: !!b.parcial, bons: l(b.bons, 30, 200), pulados: l(b.pulados, 30, 200), obs: l(b.obs, 6, 400), hist: l(b.hist, 12, 400), m,
+    achados: b.achados.slice(0, 40).filter((a) => a && typeof a === "object").map((a) => ({ id: s(a.id, 40), sis: s(a.sis, 40), sev: Math.max(0, Math.min(3, Math.trunc(Number(a.sev)) || 0)),
+      conf: s(a.conf, 8), acao: s(a.acao, 12), t: s(a.t, 200), pq: s(a.pq, 600), ev: l(a.ev, 6, 300), fz: s(a.fz, 500), teste: s(a.teste, 12) })) };
+}
 const PUBLIC_NOTES = {
+  "/api/checkup": cleanCheckup,
   "/api/annotations": (b) => { const text = String(b.text || "").trim().slice(0, 200); if (text.length < 3) return null;
     return { text, kind: ["manutencao", "teste"].includes(b.kind) ? b.kind : "manutencao", ts: Date.now() }; },
   "/api/maintenance/odometer": (b) => { const km = Number(b.km); return km >= 1 && km <= 999999 ? { km, ts: Date.now() } : null; },
@@ -360,12 +373,12 @@ const PUBLIC_NOTES = {
     const odo = Number(b.odo); if (b.odo !== "" && b.odo != null && odo >= 0 && odo <= 999999) out.odo = odo; return out; },
 };
 async function publicNote(req, env, path) {
-  let b; try { b = JSON.parse((await req.text()).slice(0, 2000)); } catch { return json({ error: "dados inválidos" }, 400); }
+  let b; try { b = JSON.parse((await req.text()).slice(0, path === "/api/checkup" ? 40000 : 2000)); } catch { return json({ error: "dados inválidos" }, 400); }
   const clean = PUBLIC_NOTES[path](b || {});
   if (!clean) return json({ error: "Preencha o campo corretamente." }, 400);
   const pend = await env.DB.prepare("SELECT COUNT(*) n FROM cmd WHERE done=0").first();
   if (pend && pend.n >= 30) return json({ error: "Há muitas ações esperando o Pi conectar. Tente depois." }, 429);
-  if (path === "/api/annotations" && clean.kind === "teste") {            // resultados de teste: não deixa repetir em menos de 30 s
+  if ((path === "/api/annotations" && clean.kind === "teste") || path === "/api/checkup") {            // resultados de teste: não deixa repetir em menos de 30 s
     const last = await env.DB.prepare("SELECT MAX(ts) t FROM cmd WHERE path=? AND done=0").bind(path).first();
     if (last && last.t && Date.now() - last.t < 30_000) return json({ ok: true, queued: true, duplicate: true });
   }

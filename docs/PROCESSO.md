@@ -484,3 +484,63 @@ momento, mostrando de onde saí quando liguei o carro."
   `test_sync_trip_track_only_with_loc_and_incremental` (Python, 3 vezes seguidas sem falha) e, na nuvem, o do trajeto
   em `cloud/test/loc.test.mjs` (401 sem a senha em qualquer grafia, servido com ela, nunca no `/api/live`, teto e fim
   da viagem). Publicar: só `npm run deploy` (sem migração) e o `scripts/deploy.sh` do Pi, quando o dono liberar.
+
+## 2026-11-22 — Diagnóstico geral: passo a passo do carro inteiro, com relatório no fim
+
+Pedido do dono: "um botão em diagnóstico, chamado diagnóstico geral, que orienta o usuário a fazer passo a passo de
+diagnóstico de carro de tudo, para ele no final avaliar e dizer o que supostamente está ruim no carro, o que deve ser
+trocado/verificado, motivos e etc." **Nada publicado** (nem nuvem nem Pi); sem commit.
+
+- **Onde:** cartão **🩺 Diagnóstico geral** no topo de Diagnóstico (botão Começar / Continuar / Fazer de novo, e o último
+  resultado, que abre o relatório) e primeiro item de Testes guiados. Usa a mesma janela, voz e bipes dos testes.
+- **Etapas** (uns 25 min; cada uma pode ser pulada): (1) **olhar o carro**, 13 itens com instrução simples (vareta e
+  aspecto do óleo, reservatório de arrefecimento, fluido de freio, terminais e idade da bateria, correia, manchas no chão,
+  sulco e desgaste dos pneus, amortecedores, luzes); (2) **bateria em repouso** e leitura de códigos, luz da injeção e
+  autotestes com a ignição ligada; (3) **partida** (mínima de tensão, carga do alternador); (4) **15 perguntas** sobre
+  como o carro anda (luzes do painel, partida, marcha lenta, força, consumo, fumaça, cheiros, barulhos, vibração, freio,
+  freio de mão, embreagem, direção, ar-condicionado, temperatura), respondidas enquanto o motor aquece; (5) espera até
+  80 °C medindo quantos °C por minuto aquece; (6) **marcha lenta** 45 s (rotação, variação, quedas, ajuste curto, λ);
+  (7) **2.500 rpm** 30 s (ajuste, sonda de trás, volta à marcha lenta, sensores em dupla do pedal e da borboleta);
+  (8) **tudo ligado** (tensão e rotação com ar, farol alto e desembaçador); (9) **ciclo da ventoinha** (opcional);
+  (10) **volta curta** (opcional; o celular fica guardado, só grava ajuste, temperatura e tensão com o carro andando).
+- **Interromper e continuar:** o progresso é gravado a cada resposta e a cada etapa (neste aparelho, por 12 h). Fechar
+  no meio e abrir de novo oferece "Continuar de onde parou". Motor já ligado, motor que não pega e motor desligado no
+  meio têm caminho próprio. Acima de 106 °C em qualquer etapa a voz manda desligar e nada mais é pedido com o motor ligado.
+- **Veredito por regras fixas** (`static/checkup.js`, função `avaliar`, sem IA): cada achado tem sistema, urgência
+  (**pode rodar / agende / pare**), confiança (alta, média, baixa), ação (**provável troca / verificar / serviço ou
+  ajuste**), o porquê, as **evidências** (número medido ou resposta dada), o que fazer e o teste guiado que confirma.
+  Ordena por urgência e depois por confiança. Regras de cruzamento: bateria só vira "provável troca" com vários sinais
+  (e nunca antes de limpar terminal com zinabre); junta do cabeçote só aparece como "suspeita" com sinais que se
+  confirmam; a assinatura do ajuste curto separa entrada de ar, falta de combustível e MAF (o carro não tem LTFT);
+  queda de rotação com mistura normal aponta falha de queima, com mistura ruim aponta a mistura; catalisador perde
+  confiança se a mistura está fora; motor abaixo de 70 °C não tem mistura nem marcha lenta julgadas.
+- **Histórico do carro entra no fim:** códigos (`/api/dtc`), "Como está o carro" dos últimos 30 dias
+  (`/api/diagnostics`), alertas de 14 dias, manutenção vencida (`/api/maintenance`) e testes guiados recentes. Histórico
+  ruim + medição ruim hoje = mais confiança; histórico ruim + medição boa hoje = só uma nota ("se houve conserto recente,
+  é o esperado"), o que evita acusar os bicos trocados hoje; histórico ruim sem medição = achado marcado como histórico.
+- **Relatório:** na tela (itens recolhidos, tocando abre), por voz o principal, **Copiar para mandar ao mecânico**
+  (texto corrido), botão para o teste guiado que confirma cada hipótese e, na **página da oficina** (`/oficina#geral`),
+  um cartão novo com o relatório aberto, **Imprimir ou salvar em PDF** e **Compartilhar o texto**.
+- **Guardado:** no histórico de testes do aparelho; no Pi, `POST /api/checkup` valida de novo, grava o relatório
+  (tabela `checkup`, últimos 20) e escreve a linha no diário de manutenção (entra no contexto da IA). `GET /api/checkup`
+  vai para a nuvem junto com os outros documentos. No painel online o relatório entra na fila de ações (`cleanCheckup`
+  no Worker: só texto e números, com limite) e o Pi aplica ao conectar; se a rota não existir, vai só a linha do diário.
+- **IA (opcional):** com a chave configurada e no painel do Pi aparece **Pedir o parecer da IA**: o relatório vai como
+  pergunta (`POST /api/checkup/ai` → `ai.ask`, que agora aceita um rótulo curto para a conversa) pedindo segunda opinião
+  sobre prioridade, causa única e falso alarme. Sem chave o botão não aparece e nada muda.
+- **Segurança do conteúdo:** o relatório que chega de fora é cortado e tipado no Worker e de novo no Pi; o HTML do
+  relatório escapa tudo e só deixa `<b>`; o texto para o mecânico e para a IA é sempre remontado no servidor.
+- **Arquivos:** novos `src/obdpi/web/static/checkup.js`, `src/obdpi/analytics/checkup.py`, `tests/test_checkup.py`,
+  `cloud/test/checkup.test.mjs`; alterados `tests.js` (expõe `window.obdTestKit` e a entrada na lista), `index.html`
+  (cartão e script), `oficina.html` (cartão), `web/app.py` (3 rotas), `ai.py` (rótulo), `sync.py` (documento),
+  `cloud/src/index.js` (fila). **Falta incluir `/static/checkup.js` no `sw.js`** (lista SHELL) e subir a versão do cache.
+- **Testes:** suíte Python 141 (17 novos: limpeza, limites, HTML, duplicado, últimos 20, texto, IA sem chave);
+  `npm test` da nuvem 40 (16 novos: catálogo coerente, carro saudável, bateria, alternador, as três assinaturas de
+  mistura, motor frio, falha de queima, superaquecimento, junta, freio, ordem, histórico, pulados, não pega, HTML,
+  limpeza da fila). Simulação do fluxo inteiro (DOM falso, relógio virtual, carro falso) em 8 cenários: saudável
+  (20,8 min com ventoinha e volta), bateria fraca, mistura pobre, superaquecendo, falha de queima com P0302, motor já
+  ligado e quente, motor que não pega, e fechar no meio e continuar. Rotas conferidas com o FastAPI de verdade.
+- **Não conferido:** iPhone de verdade (voz com tantas etapas, tela ligada por 25 min), Chromium e o carro. Os limites
+  das regras vêm dos testes guiados que já existiam e de valores de oficina; a comparação dos sensores em dupla com o
+  motor ligado é aproximada (as duas leituras não são do mesmo instante), por isso sai com confiança baixa e manda
+  confirmar na Varredura do pedal.

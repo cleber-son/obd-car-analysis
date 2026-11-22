@@ -174,6 +174,9 @@
   <section class="view" id="v-diagnostico" hidden>
     <div class="card"><h2>🩺 Como está o carro</h2><div class="lbl" style="margin:4px 0 10px" id="insBase">Últimos 30 dias · toque em um item para ver os números</div>
       <div id="insBox"><div class="empty">Carregando…</div></div></div>
+    <div class="card"><div class="row-head"><div><h2>🩺 Diagnóstico geral</h2><div class="lbl" style="margin-top:4px">Passo a passo do carro inteiro: você olha, responde e o painel mede. No fim, o que provavelmente está ruim e o que fazer</div></div>
+      <button class="btn" type="button" id="ckBtn">Começar</button></div>
+      <div class="list" id="ckBox" style="margin-top:10px"></div></div>
     <div class="card"><div class="row-head"><div><h2>🤖 Laudo da IA</h2><div class="lbl" style="margin-top:4px">Análise completa dos dados e perguntas sobre o carro</div></div>
       <button class="btn" type="button" id="aiBtn">Analisar dados</button></div></div>
     <div class="card"><div class="row-head"><div><h2>🧬 Impressão digital do motor</h2><div class="lbl" style="margin-top:4px" id="fpSub">O carro de hoje comparado com ele mesmo quando estava saudável</div></div>
@@ -341,10 +344,11 @@
 </div>
 <script src="/static/app.js"></script>
 <script src="/static/tests.js"></script>
+<script src="/static/checkup.js"></script>
 <script src="/static/extras.js"></script>
 <script src="/static/leaflet.js"></script>
 <script src="/static/gpsmap.js"></script>
 <script src="/static/gps.js"></script>
+<script src="/static/vivo.js"></script>
 </body>
 </html>
-<script src="/static/vivo.js"></script>

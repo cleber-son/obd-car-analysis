@@ -28,7 +28,8 @@ table { width: 100%; border-collapse: collapse; font-size: 14px } th { text-alig
 td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); vertical-align: top } td.n { font-family: var(--mono); white-space: nowrap }
 .tbl { overflow-x: auto } .muted { color: var(--muted) } .empty { color: var(--muted); font-size: 14px }
 .foot { color: var(--muted); font-size: 12px; text-align: center }
-@media print { body { background: #fff } .card { break-inside: avoid; border-color: #bbb } }
+button { font: 600 14px var(--sans); padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer }
+@media print { body { background: #fff } .card { break-inside: avoid; border-color: #bbb } .noprint { display: none !important } #geral .card, #geral details { break-inside: avoid } }
 </style>
 </head>
 <body>
@@ -38,6 +39,10 @@ td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); vertical-align: 
     <div class="sub" id="meta">Resumo gerado pelo Delfos, o registrador OBD instalado no carro. Carregando…</div>
   </header>
   <div class="card verdict" id="verdict" style="--s:var(--muted)">Carregando…</div>
+  <div class="card" id="geral" hidden><h2>Diagnóstico geral feito pelo dono</h2>
+    <p class="sub" style="margin:0 0 10px">Passo a passo guiado pelo painel: o dono olhou níveis e pneus, respondeu como o carro anda e o leitor mediu bateria, partida, mistura, catalisador, alternador e arrefecimento. Os achados são hipóteses, com a evidência de cada um.</p>
+    <div id="geralBox"></div>
+    <div class="noprint" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" id="geralPrint">Imprimir ou salvar em PDF</button><button type="button" id="geralShare">Compartilhar o texto</button><span class="muted" id="geralMsg" style="font-size:13px;align-self:center"></span></div></div>
   <div class="card" id="hypCard" hidden><h2>Causa mais provável</h2><div id="hyp"></div></div>
   <div class="card"><h2>Sistema por sistema</h2><div id="sys"><div class="empty">Carregando…</div></div></div>
   <div class="card"><h2>Códigos de falha (DTC)</h2><div id="dtc"><div class="empty">Carregando…</div></div></div>
@@ -51,9 +56,22 @@ td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); vertical-align: 
       <li>Os dados vêm do OBD genérico (modo 01) lido a cada ~0,6 s; não substituem o scanner da marca.</li></ul></div>
   <div class="foot" id="foot"></div>
 </div>
+<script src="/static/checkup.js"></script>
 <script>
 (async () => {
   const $ = (id) => document.getElementById(id);
+  // Diagnóstico geral: o último guardado no Pi; sem ele, o que este aparelho acabou de fazer
+  (async () => {
+    let rep = (await fetch("/api/checkup").then((r) => r.ok ? r.json() : null).catch(() => null))?.last || null, loc = null;
+    try { loc = JSON.parse(localStorage.getItem("obdCheckupLast") || "null"); } catch { }
+    if (loc && (!rep || loc.ts > rep.ts)) rep = loc;
+    if (!rep || !window.obdCheckup) return;
+    $("geral").hidden = false; $("geralBox").innerHTML = window.obdCheckup.html(rep, { open: true });
+    const text = rep.mecanico || window.obdCheckup.texto(rep);
+    $("geralPrint").onclick = () => window.print();
+    $("geralShare").onclick = async () => { try { if (navigator.share) await navigator.share({ title: "Diagnóstico geral do Civic", text }); else { await navigator.clipboard.writeText(text); $("geralMsg").textContent = "Texto copiado."; } } catch { } };
+    if (location.hash === "#geral") $("geral").scrollIntoView();
+  })();
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const nf = (v, d = 0) => v == null ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d });
   const dt = (ts) => new Date(ts).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });

@@ -701,6 +701,38 @@ def add_annotation(body: dict, x_token: str | None = Header(None)):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- diagnóstico geral (passo a passo do carro inteiro)
+@app.get("/api/checkup")
+def checkup_last():
+    """Último relatório do Diagnóstico geral (painel e página da oficina) e a lista dos anteriores."""
+    from ..analytics import checkup
+    return checkup.latest(ro())
+
+
+@app.post("/api/checkup")
+def checkup_save(body: dict, x_token: str | None = Header(None)):
+    """Guarda o relatório montado no painel e anota uma linha no diário de manutenção."""
+    from ..analytics import checkup
+    check_admin(x_token)
+    try:
+        return checkup.save(db.connect(DB), body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/checkup/ai")
+def checkup_ai(body: dict, x_token: str | None = Header(None)):
+    """Segunda opinião da IA sobre o relatório (opcional: só com a chave configurada). A resposta sai em /api/ai/chat."""
+    from .. import ai
+    from ..analytics import checkup
+    check_admin(x_token)
+    try:
+        question, label = checkup.ai_question(body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return ai.ask(DB, read_live(), question, label)
+
+
 # ---------------------------------------------------------------- sistema
 def _sh(*cmd) -> str:
     try:

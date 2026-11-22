@@ -406,12 +406,13 @@ def chat_list(db_path: str) -> list[dict]:
         return []
 
 
-def ask(db_path: str, live: dict, question: str) -> dict:
+def ask(db_path: str, live: dict, question: str, label: str | None = None) -> dict:
+    """label: texto curto que aparece na conversa do painel no lugar de uma pergunta longa (ex.: parecer do Diagnóstico geral)."""
     if not configured():
         return {"ok": False, "error": "Chave de IA não configurada (Mais → Sistema → Análise por IA)."}
     rw = sqlite3.connect(db_path, timeout=30)
     _chat_table(rw)
-    cid = rw.execute("INSERT INTO ai_chat(ts, question, status) VALUES (?,?,?)", (int(time.time() * 1000), question, "running")).lastrowid
+    cid = rw.execute("INSERT INTO ai_chat(ts, question, status) VALUES (?,?,?)", (int(time.time() * 1000), label or question, "running")).lastrowid
     rw.commit()
     rw.close()
     threading.Thread(target=_ask_run, args=(db_path, live, question, cid), daemon=True).start()
