@@ -13,6 +13,7 @@ from bisect import bisect_left
 
 from . import places as placesmod
 from . import store
+from . import terrain as terrainmod
 from .geo import haversine_m, simplify
 from .geocode import name_of
 
@@ -229,6 +230,10 @@ def build_track(fixes: list, fast_rows: list | None = None, slow: dict | None = 
         if (q["ts"] - p["ts"]) / 1000 > GAP_S and min(p["speed"] or 0, q["speed"] or 0) >= STOP_SPEED:
             gaps.append([_num((p["ts"] - t0) / 1000, 1), _num((q["ts"] - t0) / 1000, 1)])
             forced_gap |= {i - 1, i}
+    try:
+        slope = terrainmod.slope_series(fixes)          # F6: coluna "slope" (inclinação, %) no trajeto
+    except Exception:
+        slope = None
     eps, every = eps_m, every_s
     for _round in range(40):
         keep = set(simplify(pts, eps)) | forced_gap | {0, len(fixes) - 1}
@@ -246,7 +251,7 @@ def build_track(fixes: list, fast_rows: list | None = None, slow: dict | None = 
             if len(forced_gap) + (fixes[-1]["ts"] - t0) / 1000 / every > max_pts:
                 every *= 2
             continue
-        trk = _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps)
+        trk = _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps, slope)
         if len(json.dumps(trk, separators=(",", ":"))) <= TRACK_MAX_BYTES or len(idx) <= 50:
             trk["eps_m"] = eps
             return trk
@@ -254,12 +259,12 @@ def build_track(fixes: list, fast_rows: list | None = None, slow: dict | None = 
         every *= 2
     step = max(1, len(fixes) // 50)                  # caso patológico (centenas de buracos): amostra uniforme
     idx = sorted(set(range(0, len(fixes), step)) | {len(fixes) - 1})
-    trk = _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps[:50])
+    trk = _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps[:50], slope)
     trk["eps_m"] = None
     return trk
 
 
-def _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps) -> dict:
+def _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps, slope=None) -> dict:
     sel = [fixes[i] for i in idx]
     fts = [r["ts"] for r in fast_rows]
     cols: dict[str, list] = {"speed": [_num(f["speed"], 1) for f in sel]}
@@ -274,6 +279,8 @@ def _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps) -> dict:
         sts = [x[0] for x in ser]
         d = 3 if name == "lam" else 1
         cols[name] = [(lambda j: _num(ser[j][1], d) if j is not None else None)(_nearest(sts, f["ts"], SLOW_TOL_MS)) for f in sel]
+    if slope and any(x is not None for x in slope):
+        cols["slope"] = [_num(slope[i], 1) for i in idx]
     lats, lons = [f["lat"] for f in sel], [f["lon"] for f in sel]
     return {"v": 1, "trip": tid, "t0": t0, "n": len(sel), "bbox": [round(min(lats), 5), round(min(lons), 5), round(max(lats), 5), round(max(lons), 5)],
             "t": [_num((f["ts"] - t0) / 1000, 1) for f in sel], "lat": [round(x, 5) for x in lats], "lon": [round(x, 5) for x in lons],

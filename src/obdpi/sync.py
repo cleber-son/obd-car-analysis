@@ -222,6 +222,7 @@ class Sync:
         for r in sorted(rules):
             self.gather(f"/api/advice?rule={urllib.parse.quote(r)}", docs)
         self.gather_gps_open(docs)
+        self.gather_gps_perf(docs)
         self.gather_gps(docs)
         n = self.push(docs)
         return n
@@ -230,6 +231,12 @@ class Sync:
         """F5: documentos do GPS só com números (marchas, velocímetro, nota de condução). Abertos na nuvem (LOC_OPEN):
         sobem sempre, como o /api/gps/status."""
         for p in ("/api/gps/gears", "/api/gps/speedo", "/api/gps/score?days=90"):
+            self.gather(p, docs)
+
+    def gather_gps_perf(self, docs: list) -> None:
+        """F6: 0–100 e retomadas, dinamômetro, inclinação e altitude. Só números (abertos na nuvem, LOC_OPEN): sobem
+        sempre, como os da F5."""
+        for p in ("/api/gps/perf", "/api/gps/dyno", "/api/gps/terrain?days=90"):
             self.gather(p, docs)
 
     def gather_gps(self, docs: list) -> None:

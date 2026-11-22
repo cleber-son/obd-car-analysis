@@ -778,12 +778,22 @@ class Collector:
         f.unlink(missing_ok=True)
         if cmd == "arm":
             self.accel = {"state": "aguardando_parar", "armed_ts": self.clock.now(), "pts": [], "splits": {}}
+            self.accel_obd = False
+            self._gps("perf_arm")                      # F6: com GPS bom quem mede é o PerfDetector (hora do receptor, 5 Hz)
         elif cmd == "cancel":
             self.accel = None
+            self._gps("perf_cancel")
 
     def accel_feed(self, ts: int, spd: float | None, rpm: float | None) -> None:
         a = self.accel
-        if not a or spd is None or a["state"] in ("concluido", "cancelado"):
+        if not a or a["state"] in ("concluido", "cancelado"):
+            return
+        if not getattr(self, "accel_obd", False):      # F6: GPS bom → só espelha o estado (a tela não muda); sem GPS, o OBD
+            g = self._gps("perf_mirror")
+            if g:
+                self.accel = g
+                return
+        if spd is None:
             return
         if a["state"] == "aguardando_parar":
             if spd == 0:
@@ -800,6 +810,8 @@ class Collector:
                     a["state"] = "cancelado"      # armado e esquecido: libera a coleta normal
                 return
             a["state"] = "correndo"
+            self.accel_obd = True                      # começou pelo OBD: termina pelo OBD
+            self._gps("perf_cancel")
             a["t0"] = (a["last0"] + ts) / 2          # largada entre a última leitura parada e a primeira em movimento
             a["pts"] = [(a["last0"], 0.0)]
         a["pts"].append((ts, spd))

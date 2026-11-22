@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from .. import config
 from . import FLAG_BURST, FLAG_STOPPED, Fix, good
-from . import gears, places, routes, score, segments, speedo, store, trip
+from . import dyno, gears, perf, places, routes, score, segments, speedo, store, terrain, trip
 from .reader import GpsReader
 
 log = logging.getLogger("gps")
@@ -149,11 +149,21 @@ FINALIZERS += [routes.assign_trip, segments.scan_trip]
 LIVE_ENGINES += [gears.GearEngine, speedo.SpeedoEngine]
 FINALIZERS[1:1] = [score.finalize]          # logo depois de trip.finalize (que cria a linha de trip_gps); a ordem das F4 fica no fim
 
+# ---- F6: desempenho (0–100 e retomadas, dinamômetro, inclinação e altitude)
+LIVE_ENGINES += [perf.PerfDetector, dyno.DynoLive]
+FINALIZERS[2:2] = [dyno.finalize, terrain.finalize]   # depois da nota (F5); as duas da F4 continuam no fim
+
+
+def vehicle_cfg(cfg: dict) -> dict:
+    """Seção [vehicle] com os padrões (massa, CdA, Crr, ocupantes: dinamômetro da F6)."""
+    sec = cfg.get("vehicle") if isinstance(cfg, dict) else None
+    return {**config.DEFAULTS["vehicle"], **(sec or {})}
+
 
 def make_ctx(con, cfg: dict, **kw) -> SimpleNamespace:
     """ctx fora do coletor (sim.to_db, obdctl gps reanalyze): mesmos campos de GpsHub.ctx()."""
     base = dict(fix=None, values={}, value_ts={}, engine_on=False, trip_id=None, ts=int(time.time() * 1000), reader=None,
-                cfg=gps_cfg(cfg), con=con, geo=None, models={})
+                cfg=gps_cfg(cfg), con=con, geo=None, models={}, vehicle=vehicle_cfg(cfg))
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -169,6 +179,7 @@ def run_finalizers(con, tid: int, ctx) -> None:
 class GpsHub:
     def __init__(self, cfg, con, clock, state, event, queue_push, run_dir):
         self.cfg = gps_cfg(cfg)
+        self.vehicle = vehicle_cfg(cfg)
         self.con, self.clock, self.state = con, clock, state
         self.event, self.queue_push = event, queue_push
         self.run_dir = Path(run_dir)
@@ -204,7 +215,7 @@ class GpsHub:
 
     def ctx(self, **kw) -> SimpleNamespace:
         base = dict(fix=None, values={}, value_ts={}, engine_on=False, trip_id=None, ts=self.clock.now(), reader=self.reader,
-                    cfg=self.cfg, con=self.con, geo=None, models={})
+                    cfg=self.cfg, con=self.con, geo=None, models={}, vehicle=self.vehicle)
         base.update(kw)
         return SimpleNamespace(**base)
 
@@ -263,9 +274,12 @@ class GpsHub:
                 log.debug("gps: comando ignorado nesta versão: %s", c)
 
     def start_burst(self, seconds: float) -> None:
-        """Janela de desempenho: grava a taxa cheia por 'seconds', incluindo os 5 s anteriores (tirados do anel)."""
-        self.dec.burst_until = self.clock.now() + int(seconds * 1000)
-        if self.reader:
+        """Janela de desempenho: grava a taxa cheia por 'seconds', incluindo os 5 s anteriores (tirados do anel).
+        Pedido com a rajada já aberta só estende o fim (F6: arrancada, retomada, puxada e descida em ponto morto)."""
+        now = self.clock.now()
+        was_on = self.dec.burst_until >= now
+        self.dec.burst_until = max(self.dec.burst_until, now + int(seconds * 1000))
+        if self.reader and not was_on:
             prev = [f for f in self.reader.recent(5) if f.ts]
             store.insert_fixes(self.con, prev, None, FLAG_BURST)
 
@@ -422,6 +436,24 @@ class GpsHub:
             return None
         e = self._engine(gears.GearEngine)
         return e.table() if e else None
+
+    # ---- F6: teste de 0–100 armado pelo botão (o coletor espelha o PerfDetector quando o GPS está bom)
+    def perf_arm(self) -> None:
+        e = self._engine(perf.PerfDetector) if self.enabled else None
+        if e:
+            e.arm_test(self.clock.now())
+
+    def perf_cancel(self) -> None:
+        e = self._engine(perf.PerfDetector) if self.enabled else None
+        if e:
+            e.cancel_test()
+
+    def perf_mirror(self) -> dict | None:
+        """Estado do teste armado medido pelo GPS, ou None (sem GPS bom: o coletor mede pelo OBD, como antes)."""
+        if not self.enabled or self.reader is None:
+            return None
+        e = self._engine(perf.PerfDetector)
+        return e.mirror(self.clock.now()) if e else None
 
     def best_speed(self, obd_speed: float | None) -> float | None:
         """Velocidade do GPS se a posição é recente (< 1,5 s) e boa; senão a do OBD × fator do velocímetro (F5)."""

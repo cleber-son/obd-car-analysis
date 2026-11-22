@@ -1,4 +1,4 @@
-/* window.obdGps — aba Mapa (Diário, Mapa, Lugares, Rotas, Trechos), trajeto no detalhe da viagem e replay sincronizado.
+/* window.obdGps — aba Mapa (Diário, Mapa, Lugares, Rotas, Trechos, Desempenho), trajeto no detalhe da viagem e replay sincronizado.
    Usa os utilitários do app.js (window.OBD) e o window.obdMap (gpsmap.js). docs/GPS-ARQUITETURA.md, seções 8.1, 9.4,
    9.15, 9.22, 9.24, 9.3 e 9.5. Cada fase acrescenta o seu bloco (// ---- F4: …). Sem GPS: "GPS não conectado" e telas vazias. */
 (() => {
@@ -718,6 +718,134 @@
         ${(d.dicas || []).map((x) => `<div class="muted" style="font-size:13px;margin-top:4px">💡 ${esc(x)}</div>`).join("")}`;
     }
     const leg = $("#gTLeg", card); if (leg) leg.insertAdjacentElement("afterend", box); else card.appendChild(box);
+  });
+
+  // ---- F6: desempenho — 0–100 e retomadas, dinamômetro, inclinação e altitude (seções 9.8, 9.9, 9.12 e 9.23)
+  const CV = 1.35962, KGFM = 1 / 9.80665;
+  const FUELS = { gasolina: "gasolina", etanol: "etanol", mistura: "mistura" };
+  const runTag = (x) => [x.source === "gps" ? (x.auto ? "automática" : "teste armado") : "pelo OBD", x.hz ? `${nf(x.hz, x.hz >= 3 ? 0 : 1)} Hz` : "",
+    x.fuel ? FUELS[x.fuel] || x.fuel : "", x.note ? "⚠ " + x.note : ""].filter(Boolean).join(" · ");
+  const secs = (v) => v == null ? "—" : nf(v, 2) + " s";
+
+  function perfHtml(pf) {
+    if (!pf) return `<div class="empty">Ainda não sincronizado.</div>`;
+    const runs = pf.runs || [];
+    if (!runs.length) return `<div class="muted" style="margin-top:6px">Nenhuma arrancada ainda. Com o GPS, o Delfos mede sozinho toda arrancada de propósito (pé no fundo, 0–60 em até 12 s) e as retomadas
+      40–80, 60–100 e 80–120 na mesma marcha. O botão ⏱ 0–100 do modo direção continua valendo.</div>`;
+    const rec = pf.records || [];
+    return `${rec.length ? `<h3 class="lbl" style="margin-top:8px">Melhores tempos (em plano, GPS bom)</h3>
+      <div class="tbl" style="margin-top:6px"><table><thead><tr><th>Medida</th><th>Combustível</th><th>Tempo</th><th>Quando</th></tr></thead><tbody>
+      ${rec.map((r) => `<tr><td>${esc(r.label)}</td><td>${esc(FUELS[r.fuel] || "—")}</td><td class="num"><b>${secs(r.t_s)}</b></td><td>${dt(r.ts)}${r.source === "obd" ? " · OBD" : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      <h3 class="lbl" style="margin-top:12px">Últimas</h3>
+      <div class="list" style="margin-top:6px">${runs.slice(0, 12).map((x, i) => `<div class="alert click" data-run="${i}" style="--s:${x.t_s != null && x.valid ? "var(--ok)" : "var(--muted)"};cursor:pointer">
+        <span class="ic">${x.record ? "🏆" : x.kind === "0-100" ? "⏱" : "↗"}</span><div><div class="t">${esc(x.label)}${x.t_s != null ? " em " + secs(x.t_s) : " · incompleta"}</div>
+        <div class="d">${x.kind === "0-100" && x.t60 != null ? `0–60 ${secs(x.t60)} · 0–80 ${secs(x.t80)} · ` : ""}${esc(runTag(x))} · ${dt(x.ts)}</div></div>${x.curve ? '<span class="more">›</span>' : ""}</div>`).join("")}</div>
+      <svg class="chart" id="gPfChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:8px" hidden></svg>
+      <div class="muted" style="font-size:12px;margin-top:6px">Tempo pelo GPS (5 vezes por segundo, ±0,05 s; a 1 Hz ±0,25 s). Corridas em subida ou descida de mais de 2 % e com GPS fraco ficam marcadas e não contam como recorde.
+        A comparação que vale é o carro com ele mesmo: antes e depois de um reparo, gasolina contra etanol.</div>`;
+  }
+
+  function dynoHtml(dy, pi) {
+    if (!dy) return `<div class="empty">Ainda não sincronizado.</div>`;
+    const v = dy.vehicle || {}, runs = dy.runs || [], ok = runs.filter((x) => x.valid);
+    const b = dy.best, ref = dy.ref || {};
+    const cl = dy.coast_live, co = dy.coast;
+    return `${b ? `<div class="stats" style="margin-top:10px"><div><span class="lbl">Melhor (corrigido)</span><b>${nf(b.peak_cv_corr)} cv</b><span class="muted" style="font-size:12px">a ${nf(b.peak_kw_rpm)} rpm · medido ${nf(b.peak_cv)} cv</span></div>
+        <div><span class="lbl">Torque (corrigido)</span><b>${nf(b.peak_kgfm_corr, 1)} kgfm</b><span class="muted" style="font-size:12px">a ${nf(b.peak_nm_rpm)} rpm</span></div>
+        <div><span class="lbl">Referência de fábrica</span><b>~${ref.cv} cv</b><span class="muted" style="font-size:12px">a ${nf(ref.cv_rpm)} rpm · ~${nf(ref.kgfm, 1)} kgfm</span></div>
+        <div><span class="lbl">Precisão</span><b style="font-size:14px">${esc(dy.precisao || "")}</b></div></div>
+        <svg class="chart" id="gDyP" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:8px"></svg>
+        <div class="gm-legend"><span><i style="background:var(--rpm)"></i>potência (cv, corrigida)</span><span><i style="background:var(--speed)"></i>torque (kgfm × 5, corrigido)</span><span class="muted" id="gDyCap"></span></div>`
+      : `<div class="muted" style="margin-top:6px">Nenhuma puxada ainda. Para medir: motor quente, em 2ª, 3ª ou 4ª a ~1.500 rpm, pé no fundo sem trocar de marcha até perto do corte, num trecho plano e seguro.
+        O Delfos grava 5 posições por segundo durante a puxada e calcula a curva quando a viagem termina.</div>`}
+      ${ok.length ? `<div class="tbl" style="margin-top:10px"><table class="cards"><thead><tr><th>Quando</th><th>Marcha</th><th>Potência</th><th>Torque</th><th>Ar</th><th>Observação</th></tr></thead><tbody id="gDyRows">
+        ${runs.map((x, i) => [x, i]).filter(([x]) => x.valid).slice(0, 20).map(([x, i]) => `<tr class="click" data-dy="${i}"><td class="head">${dt(x.ts)}</td><td data-l="Marcha">${x.gear ? x.gear + "ª" : "—"}</td>
+          <td class="num" data-l="Potência"><b>${nf(x.peak_cv_corr)}</b> cv a ${nf(x.peak_kw_rpm)}</td><td class="num" data-l="Torque">${nf(x.peak_kgfm_corr, 1)} kgfm a ${nf(x.peak_nm_rpm)}</td>
+          <td class="num" data-l="Ar">${x.baro != null ? nf(x.baro) + " kPa" : "—"}${x.iat != null ? " · " + nf(x.iat) + " °C" : ""}</td><td data-l="Observação">${esc(x.why || "ok")}</td></tr>`).join("")}</tbody></table></div>
+        <div class="muted" style="font-size:12px;margin-top:6px">${ok.length} puxada(s) válida(s); toque numa linha para ver a curva. "Corrigido" = como se fosse ao nível do mar a 20 °C (aqui o ar tem ~10 % menos oxigênio). Resultado fora de 60–160 cv sai marcado como suspeito.</div>` : ""}
+      ${runs.length > ok.length ? `<div class="muted" style="font-size:12px;margin-top:6px">Pé no fundo que não virou curva: ${(() => { const by = {}; for (const x of runs) if (!x.valid) by[x.why || "—"] = (by[x.why || "—"] || 0) + 1;
+        return Object.entries(by).map(([w, n]) => `${esc(w)} (${n})`).join(" · "); })()}.</div>` : ""}
+      <h3 class="lbl" style="margin-top:14px">O carro</h3>
+      <div class="muted" style="margin-top:4px">Massa usada: <b>${nf(v.mass)} kg</b> (${nf(v.mass_base)} kg do carro com o motorista e combustível + ${Math.max(0, (v.occupants || 1) - 1)} passageiro(s) de 75 kg).
+        Arrasto: CdA ${nf(v.cda, 2)} m² e rolagem Crr ${nf(v.crr, 3)} (${esc(v.aero_src || "padrão")}). A massa pesa direto no resultado: confira antes de comparar.</div>
+      ${pi ? `<form id="gVeh" class="gpform" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));align-items:end">
+        <label class="muted" style="font-size:13px">Massa (kg, com o motorista)<input type="number" id="gVM" min="800" max="2500" step="5" value="${v.mass_base ?? ""}"></label>
+        <label class="muted" style="font-size:13px">Pessoas no carro<input type="number" id="gVO" min="1" max="5" step="1" value="${v.occupants ?? 1}"></label>
+        <button class="btn" type="submit">Salvar</button><span class="muted" id="gVMsg" style="font-size:13px" role="status"></span></form>` : ""}
+      <h3 class="lbl" style="margin-top:14px">Calibrar o arrasto (descida em ponto morto)</h3>
+      <div class="muted" style="margin-top:4px">Melhora a precisão de ±8–10 % para ±5 %. Numa reta plana e sem vento: chegue a ~90 km/h, ponha em <b>ponto morto</b> e deixe o carro cair até ~45 km/h sem frear.
+        Depois faça o mesmo no <b>sentido contrário</b>, no mesmo trecho (a média dos dois cancela a inclinação e o vento). Só onde for seguro.</div>
+      ${co && co.ok ? `<div class="muted" style="margin-top:6px">Calibrado em ${dt(co.ts)}: CdA ${nf(co.cda, 2)} m² e Crr ${nf(co.crr, 3)}${co.prev ? ` (antes: ${nf(co.prev.cda, 2)} e ${nf(co.prev.crr, 3)})` : ""}.</div>` : ""}
+      ${cl ? `<div class="banner" style="--s:${cl.state === "recusado" ? "var(--warn)" : "var(--speed)"};margin-top:8px"><span class="ic">${cl.state === "concluido" ? "✅" : cl.state === "recusado" ? "⚠️" : "🛞"}</span><div>${esc(cl.msg || cl.state)} ${cl.n ? `(${cl.n} descida(s) medida(s))` : ""}</div></div>` : ""}
+      ${pi ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">${cl && !["concluido", "recusado"].includes(cl.state) ? `<button class="rbtn" type="button" id="gCoX">Cancelar a calibração</button>`
+          : `<button class="btn" type="button" id="gCoGo">Começar a calibração</button>`}${co ? `<button class="rbtn" type="button" id="gCoRs">Voltar aos valores padrão</button>` : ""}<span class="muted" id="gCoMsg" style="font-size:13px" role="status"></span></div>` : ""}`;
+  }
+
+  function terrainHtml(te) {
+    if (!te) return `<div class="empty">Ainda não sincronizado.</div>`;
+    const L = te.leitura || {}, bands = (te.bands || []).filter((x) => x.s > 0), P = te.power || {};
+    const cell = (v, d = 1, u = "") => v == null ? "—" : nf(v, d) + u;
+    const now = te.agora || {};
+    return `${now.avail_pct != null ? `<div class="stats" style="margin-top:10px"><div><span class="lbl">Potência disponível agora</span><b>${nf(now.avail_pct)} %</b><span class="muted" style="font-size:12px">da que o motor teria ao nível do mar</span></div>
+        ${now.slope != null ? `<div><span class="lbl">Inclinação agora</span><b>${now.slope > 0 ? "+" : ""}${nf(now.slope, 1)} %</b></div>` : ""}</div>` : ""}
+      <div class="banner" style="--s:${L.msg ? "var(--warn)" : "var(--muted)"};margin-top:10px"><span class="ic">${L.msg ? "💨" : "⛰"}</span><div>${L.msg ? `<b>${esc(L.msg)}</b><br>` : ""}${esc(L.texto || "")}</div></div>
+      ${bands.length ? `<div class="tbl" style="margin-top:10px"><table><thead><tr><th>Inclinação</th><th>Tempo</th><th>Carga</th><th>MAP</th><th>Borboleta</th><th>Ajuste curto</th><th>Sonda (erro)</th><th>Avanço</th><th>L/100 km</th><th>Ar ÷ esperado</th></tr></thead><tbody>
+        ${bands.map((x) => `<tr><td>${esc(x.band)}</td><td class="num">${dur(x.s)}</td><td class="num">${cell(x.load, 0, " %")}</td><td class="num">${cell(x.map, 0)}</td><td class="num">${cell(x.tps, 1, " %")}</td>
+          <td class="num">${x.stft == null ? "—" : (x.stft > 0 ? "+" : "") + nf(x.stft, 1) + " %"}</td><td class="num">${cell(x.lam_err, 3)}</td><td class="num">${cell(x.timing, 1, "°")}</td><td class="num">${cell(x.l100, 1)}</td><td class="num">${cell(x.air, 2)}</td></tr>`).join("")}</tbody></table></div>
+        <div class="muted" style="font-size:12px;margin-top:6px">${te.trips} viagem(ns) com GPS em ${te.days} dias. Inclinação pela altitude do GPS (e pela velocidade vertical do receptor, quando vem); este carro não tem ajuste longo: tudo usa o curto.</div>`
+        : `<div class="muted" style="margin-top:6px">Sem viagens com GPS no período.</div>`}
+      ${(P.bands || []).length ? `<h3 class="lbl" style="margin-top:14px">Altitude × potência</h3>
+        <div class="tbl" style="margin-top:6px"><table><thead><tr><th>Altitude</th><th>Tempo</th><th>Pressão</th><th>MAP no fundo</th><th>Teoria</th><th>Puxadas</th><th>Medido</th><th>Corrigido</th></tr></thead><tbody>
+        ${P.bands.map((x) => `<tr style="${x.restricao ? "color:var(--warn)" : ""}"><td>${nf(x.alt)}–${nf(x.alt_hi)} m</td><td class="num">${dur(x.s)}</td><td class="num">${cell(x.baro, 1, " kPa")}</td><td class="num">${cell(x.map_wot, 1, " kPa")}</td>
+          <td class="num">${cell(x.theory_pct, 0, " %")}</td><td class="num">${x.pulls}</td><td class="num">${x.peak_kw != null ? nf(x.peak_kw * CV) + " cv" : "—"}</td><td class="num">${x.peak_kw_corr != null ? nf(x.peak_kw_corr * CV) + " cv" : "—"}</td></tr>`).join("")}</tbody></table></div>
+        <div class="muted" style="font-size:12px;margin-top:6px">Motor aspirado perde ~1 % de potência a cada 100 m de altitude ("Teoria" = % do ar ao nível do mar). Se a potência corrigida cair mais que isso, ou se com o pé no fundo o MAP ficar mais de 8 kPa abaixo da pressão, há algo além do ar rarefeito.</div>
+        ${(P.msgs || []).map((m) => `<div class="banner" style="--s:var(--warn);margin-top:8px"><span class="ic">⚠️</span><div>${esc(m)}</div></div>`).join("")}` : ""}`;
+  }
+
+  const f5Desempenho = EXTRA.desempenho;
+  EXTRA.desempenho = async (body) => {
+    await f5Desempenho(body);
+    const [pf, dy, te] = await Promise.all(["/api/gps/perf", "/api/gps/dyno", "/api/gps/terrain?days=90"].map((p) => get(p).catch((e) => { if (e instanceof Locked) throw e; return null; })));
+    const pi = !cloud();
+    body.insertAdjacentHTML("beforeend", `<div class="card"><h2>⏱ Arrancadas e retomadas</h2>${perfHtml(pf)}</div>
+      <div class="card"><h2>📈 Dinamômetro</h2>${dynoHtml(dy, pi)}</div>
+      <div class="card"><h2>⛰ Inclinação e altitude × motor</h2>${terrainHtml(te)}</div>`);
+    const LC = U().lineChart;
+    const runs = pf?.runs || [];
+    const showRun = (i) => { const x = runs[i], svg = $("#gPfChart", body); if (!x?.curve || !svg || !LC) return; svg.hidden = false;
+      LC(svg, [{ pts: x.curve.map((p) => [p[0], p[1]]), c: "--speed", area: true }], { ymin: 0, xfmt: (t) => nf(t, 0) + " s" }); };
+    body.querySelectorAll("[data-run]").forEach((el) => el.addEventListener("click", () => showRun(+el.dataset.run)));
+    const drows = dy?.runs || [];
+    const showDyno = (i) => { const x = drows[i], svg = $("#gDyP", body); if (!x?.valid || !x.curve || !svg || !LC) return;
+      const c = x.corr || 1, cv = x.curve;
+      LC(svg, [{ pts: cv.rpm.map((r, k) => [r, cv.kw[k] * c * CV]), c: "--rpm", w: 2.5 }, { pts: cv.rpm.map((r, k) => [r, cv.nm[k] * c * KGFM * 5]), c: "--speed" }],
+        { ymin: 0, xfmt: (r) => nf(r, 0) + " rpm" });
+      const cap = $("#gDyCap", body); if (cap) cap.textContent = `${dt(x.ts)} · ${x.gear}ª · ${nf(x.mass_kg)} kg`; };
+    const firstOk = drows.findIndex((x) => x.valid && x.curve);
+    if (firstOk >= 0) showDyno(firstOk);
+    $("#gDyRows", body)?.addEventListener("click", (e) => { const tr = e.target.closest("tr[data-dy]"); if (tr) showDyno(+tr.dataset.dy); });
+    $("#gVeh", body)?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try { await post("/api/gps/dyno/config", { mass_kg: +$("#gVM", body).value, occupants: +$("#gVO", body).value }); $("#gVMsg", body).textContent = "Salvo. Vale para as próximas puxadas (refaça a análise da viagem para recalcular as antigas)."; }
+      catch (err) { $("#gVMsg", body).textContent = "Erro: " + err.message; }
+    });
+    $("#gCoGo", body)?.addEventListener("click", async () => { try { await post("/api/gps/dyno/coast", {}); $("#gCoMsg", body).textContent = "Pronto: o Delfos está esperando a descida em ponto morto. Acompanhe pelo modo direção ou aqui."; } catch (err) { $("#gCoMsg", body).textContent = "Erro: " + err.message; } });
+    $("#gCoX", body)?.addEventListener("click", async () => { try { await post("/api/gps/dyno/coast", { cancel: true }); render(); } catch (err) { $("#gCoMsg", body).textContent = "Erro: " + err.message; } });
+    $("#gCoRs", body)?.addEventListener("click", async () => {
+      if (!confirm("Esquecer a calibração e voltar aos valores padrão de arrasto?")) return;
+      try { await post("/api/gps/dyno/config", { reset_coast: true }); render(); } catch (err) { $("#gCoMsg", body).textContent = "Erro: " + err.message; }
+    });
+  };
+
+  // detalhe da viagem: arrancadas e retomadas medidas nela
+  TRIP_EXTRA.push(({ card, det }) => {
+    const runs = (det?.accel || []).filter((x) => x.source === "gps");
+    if (!runs.length) return;
+    const box = document.createElement("div");
+    box.style.marginTop = "8px";
+    box.innerHTML = runs.map((x) => { let lbl = x.kind || "0-100"; try { lbl = JSON.parse(x.json || "{}").label || lbl; } catch { }
+      return `<div class="muted" style="font-size:13px">⏱ ${esc(lbl)} ${x.t_s != null ? "em <b>" + secs(x.t_s) + "</b>" : "incompleta"} · ${tm(x.ts)}${x.note ? " · " + esc(x.note) : ""}</div>`; }).join("");
+    card.appendChild(box);
   });
 
   window.obdGps = { render, trip, openTrip };

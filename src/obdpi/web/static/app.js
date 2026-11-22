@@ -165,10 +165,11 @@
     lineChart($("#timChart"), [{ pts: hist.timing || [], c: "--volt", area: true }], { x0, x1: now });
     $("#timTxt").textContent = v.timing == null ? "" : `Marcha lenta típica 5–15°; em aceleração sobe (25–40°). Quedas bruscas em carga podem indicar detonação.`;
   }
+  const roll = (a) => a.kind && a.kind !== "0-100";          // F6: retomadas (80–120 etc.) medidas pelo GPS
   async function loadAccel() {
     const r = await api("/api/accel").catch(() => []);
-    $("#accList").innerHTML = r.length ? r.slice(0, 5).map((a, i) => `<div class="alert" style="--s:${a.t100 ? "var(--ok)" : "var(--muted)"}"><span class="ic">${i + 1}</span><div><div class="t">${a.t100 ? "0–100 em " + nf(a.t100, 2) + " s" : "Incompleto"}</div>
-      <div class="d">0–60 ${nf(a.t60, 2)} s · 0–80 ${nf(a.t80, 2)} s · ${nf(a.hz, 1)} leit/s · ${dt(a.ts)}</div></div><span class="pill">${a.fuel_mix > 0.5 ? "Etanol" : "Gasolina"}</span></div>`).join("")
+    $("#accList").innerHTML = r.length ? r.slice(0, 5).map((a, i) => `<div class="alert" style="--s:${(roll(a) ? a.t_s : a.t100) ? "var(--ok)" : "var(--muted)"}"><span class="ic">${i + 1}</span><div><div class="t">${roll(a) ? (a.t_s ? `${a.kind.replace("-", "–")} km/h em ${nf(a.t_s, 2)} s${a.gear ? ` (${a.gear}ª)` : ""}` : "Incompleto") : a.t100 ? "0–100 em " + nf(a.t100, 2) + " s" : "Incompleto"}</div>
+      <div class="d">${roll(a) ? "retomada" : `0–60 ${nf(a.t60, 2)} s · 0–80 ${nf(a.t80, 2)} s`} · ${nf(a.hz, 1)} leit/s · ${dt(a.ts)}</div></div><span class="pill">${a.fuel_mix > 0.5 ? "Etanol" : "Gasolina"}</span></div>`).join("")
       : `<div class="empty">Nenhum teste ainda. Toque em Iniciar teste (abre o modo direção).</div>`;
   }
   let summary = null;

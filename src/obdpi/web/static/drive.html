@@ -117,7 +117,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 </head>
 <body>
 <div class="app">
-  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="grBtn" aria-label="Modo gráfico">📈</a><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="accBtn">⏱ 0–100</a><a href="/">Painel</a></span></div>
+  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="grBtn" aria-label="Modo gráfico">📈</a><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="accBtn">⏱ 0–100</a><a href="#" id="voBtn" aria-label="Voz ligada (toque para silenciar)" hidden>🔊</a><a href="/">Painel</a></span></div>
   <div class="rpmbar" id="rpmbar"><i id="rpmfill"></i><div class="ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></div>
   <div class="alert" id="alert"></div>
   <div class="core">
@@ -143,6 +143,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   </div></div>
   <div class="foot"><span id="ftrip"></span><span id="fage"></span></div>
 </div>
+<script src="/static/voice.js"></script>
 <script>
 (() => {
   const $ = (s) => document.getElementById(s);
@@ -183,7 +184,14 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     iat: { l: "Ar admitido", c: "--temp", k: "iat", r: (v) => [nf(v.iat), "°C", ""] },
     map: { l: "MAP", c: "--speed", k: "map", r: (v) => [nf(v.map), "kPa", ""] },
     maf: { l: "Fluxo de ar", c: "--speed", k: "maf", r: (v) => [nf(v.maf, 1), "g/s", ""] },
+    // F6 (GPS): velocidade real, altitude e inclinação, potência; sem GPS mostram "—"
+    gpsspd: { l: "Velocidade real (GPS)", c: "--speed", r: (v, t, g) => [g.state === "ok" ? nf(g.speed) : "—", "km/h",
+      g.state !== "ok" || g.speed == null || v.speed == null ? (g.state === "ok" ? "" : "sem GPS") : `painel do carro ${sgn(v.speed - g.speed, 0)} km/h`] },
+    alt: { l: "Altitude", c: "--volt", r: (v, t, g) => [g.state === "ok" ? nf(g.alt) : "—", "m", g.slope != null ? `inclinação ${sgn(g.slope, 1)} %` : g.state === "ok" ? "" : "sem GPS"] },
+    power: { l: "Potência agora", c: "--rpm", r: (v, t, g) => [g.power_kw != null ? nf(g.power_kw * 1.36) : "—", "cv",
+      [g.power_kw != null ? nf(g.power_kw) + " kW" : "", g.avail_pct != null ? `${nf(g.avail_pct)} % disponível na altitude` : ""].filter(Boolean).join(" · ") || (g.state === "ok" ? "" : "sem GPS")] },
   };
+  const GPS_TILES = ["gpsspd", "alt", "power"];
   const DEFAULT = ["kml", "kmlavg", "kmltank", "stft", "timing", "ect", "prev", "auto", "km", "time", "avg", "tps"];
   let chosen; try { chosen = JSON.parse(localStorage.getItem("driveTiles")) || DEFAULT; } catch { chosen = DEFAULT; }
   try { if (!localStorage.getItem("tilesV2")) { localStorage.setItem("tilesV2", "1");            // quadro novo entra uma vez para quem já tinha personalizado
@@ -193,11 +201,20 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     $("tiles").innerHTML = chosen.map((id) => { const t = CAT[id]; return `<div class="t${t.wide ? " wide" : ""}" id="t-${id}" style="--c:var(${t.c})"><div class="l">${t.l}</div><div class="v" id="v-${id}">—</div><div class="s" id="s-${id}"></div>${t.bar ? `<div class="lam trim"><i id="bar-${id}"></i></div>` : ""}</div>`; }).join("");
   }
   buildTiles();
+  // quando o GPS aparecer pela primeira vez neste aparelho, os quadros do GPS entram uma vez no fim (dá para tirar no ⚙)
+  let gpsTilesDone = false;
+  function gpsTilesOnce(g, persist) {
+    if (g?.state !== "ok" || gpsTilesDone) return;
+    gpsTilesDone = true;
+    if (persist) { try { if (localStorage.getItem("tilesGps")) return; localStorage.setItem("tilesGps", "1"); } catch { return; } }
+    const add = GPS_TILES.filter((k) => !chosen.includes(k)); if (!add.length) return;
+    chosen = [...chosen, ...add]; if (persist) { try { localStorage.setItem("driveTiles", JSON.stringify(chosen)); } catch { } } buildTiles();
+  }
   function renderTiles(d) {
-    const v = d.values || {}, tr = d.trip || {};
+    const v = d.values || {}, tr = d.trip || {}, g = d.gps || {};
     for (const id of chosen) {
       const t = CAT[id]; const el = $("t-" + id); if (!el) continue;
-      const [val, unit, sub] = t.r(v, tr);
+      const [val, unit, sub] = t.r(v, tr, g);
       $("v-" + id).innerHTML = `${val}<small>${unit}</small>`; $("s-" + id).textContent = sub || "";
       const st = t.k ? d.status?.[t.k]?.[0] : null;
       el.classList.toggle("bad", st === "warn" || st === "crit");           // fora do normal = vermelho
@@ -314,7 +331,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
       const pedal = acc > 0 ? 28 + Math.random() * 8 : 0, lh = gear ? 1.2 + pedal * .16 + spd * .03 : 0.9; km += spd / 3600 * .5;
       const v = { speed: Math.round(spd), rpm: Math.round(rpm), gear, pedal_d: 20 + pedal * .6, tps: 12.5 + pedal * .55, tps_cmd: 1.2 + pedal * .8, stft1: (gear ? 4 : 38) + Math.sin(t / 3000) * 5, o2c1_lambda: (gear ? 1 : 1.09) + Math.sin(t / 2100) * .02,
         lambda_cmd: .99, fuel_lh: +lh.toFixed(2), kml_inst: spd > 3 ? +(spd / lh).toFixed(1) : null, timing: gear ? 22 + Math.sin(t / 4000) * 8 : 8, maf: gear ? 6 + pedal * .5 : 1.5, load: gear ? 35 + pedal : 24, map: gear ? 45 + pedal : 30, ect: 92, iat: 41, batt: 14.1 };
-      const d = { ts: t, state: "coletando", engine_on: true, values: v, value_ts: {}, status: { stft1: [gear ? "ok" : "crit", "", "±10"] }, alerts: [], dtc: {}, mil: false, trip: { km: +km.toFixed(2), elapsed_s: 600, moving_s: 420, fuel_l: .8, kml: 9.4, avg_moving: 31, max_speed: 72 } };
+      const cyc = Math.floor(t / 60000), gps = { state: "ok", src: "demo", sats: 9, hz: 5, speed: +(spd * 0.97).toFixed(1), alt: Math.round(760 + Math.sin(t / 50000) * 30),
+        slope: +(Math.cos(t / 50000) * 2.4).toFixed(1), power_kw: gear && acc > 0 ? Math.round(18 + spd * 0.4) : gear ? Math.round(4 + spd * 0.12) : null, avail_pct: 87 };
+      if (ph >= 20 && ph < 50) gps.perf = { state: "concluido", kind: cyc % 2 ? "80-120" : "0-100", gear: cyc % 2 ? 4 : null, t_s: +(cyc % 2 ? 7.4 + (cyc % 5) / 10 : 10.4 + (cyc % 7) / 10).toFixed(2), record: cyc % 3 === 0, auto: 1, ts: cyc * 60000 + 18000 };
+      const d = { ts: t, state: "coletando", engine_on: true, values: v, value_ts: {}, status: { stft1: [gear ? "ok" : "crit", "", "±10"] }, alerts: [], dtc: {}, mil: false, trip: { km: +km.toFixed(2), elapsed_s: 600, moving_s: 420, fuel_l: .8, kml: 9.4, avg_moving: 31, max_speed: 72 }, gps };
       t += 500; return d; };
     while (t < Date.now() - 500) { const d = frame(); lastD = d; pushHist(d); }
     setInterval(() => render(frame()), 500);
@@ -335,7 +355,32 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     const time = a.state === "concluido" ? a.splits["100"] : a.elapsed;
     $("actime").textContent = time != null ? nf(time, 2) : "0,00";
     $("acspl").innerHTML = ["60", "80", "100"].map((k) => `<div><b>${a.splits?.[k] != null ? nf(a.splits[k], 2) + "s" : "—"}</b><span>0–${k} km/h</span></div>`).join("");
-    if (a.hz && a.state === "concluido") $("acspl").insertAdjacentHTML("beforeend", `<div style="grid-column:1/-1;font-size:12px;color:var(--muted)">${nf(a.hz, 1)} leituras/s · precisão ≈ ±${nf(1 / a.hz / 2, 2)} s · rpm máx ${nf(a.max_rpm)}</div>`);
+    if (a.hz && a.state === "concluido") $("acspl").insertAdjacentHTML("beforeend", `<div style="grid-column:1/-1;font-size:12px;color:var(--muted)">${a.src === "gps" ? "GPS " : ""}${nf(a.hz, 1)} ${a.src === "gps" ? "Hz" : "leituras/s"} · precisão ≈ ±${nf(a.src === "gps" ? (a.hz >= 3 ? 0.05 : 0.25) : 1 / a.hz / 2, 2)} s${a.max_rpm ? " · rpm máx " + nf(a.max_rpm) : ""}${a.record ? " · 🏆 novo recorde" : ""}${a.note ? " · " + a.note + " (não vale recorde)" : ""}</div>`);
+    else if (a.src === "gps" && ["pronto", "correndo"].includes(a.state)) $("acspl").insertAdjacentHTML("beforeend", `<div style="grid-column:1/-1;font-size:12px;color:var(--muted)">medindo pelo GPS</div>`);
+  }
+
+  // ---- voz (F6): resultado do 0–100 e das retomadas, embreagem patinando; só com GPS
+  const NUM = { 40: "quarenta", 60: "sessenta", 80: "oitenta", 100: "cem", 120: "cento e vinte" };
+  const ORD = { 1: "primeira", 2: "segunda", 3: "terceira", 4: "quarta", 5: "quinta" };
+  const V = () => window.obdVoice;
+  let voiceShown = false;                        // o botão só aparece com GPS (sem GPS nada é falado e o topo fica como antes)
+  function paintVoice() { const b = $("voBtn"); if (!b) return; const on = V()?.enabled?.(); b.textContent = on ? "🔊" : "🔇";
+    b.setAttribute("aria-label", on ? "Voz ligada (toque para silenciar)" : "Voz desligada (toque para ligar)"); b.hidden = !(voiceShown && V()?.supported?.()); }
+  $("voBtn").addEventListener("click", (e) => { e.preventDefault(); const vo = V(); if (!vo) return; vo.unlock(); vo.set(!vo.enabled()); paintVoice(); if (vo.enabled()) vo.speak("Voz ligada", { interrupt: true }); });
+  paintVoice();
+  function perfText(p) {
+    const [a, b] = String(p.kind || "0-100").split("-");
+    const what = a === "0" ? "Zero a cem" : `${NUM[a] || a} a ${NUM[b] || b}${p.gear ? " em " + (ORD[p.gear] || p.gear + "ª") : ""}`;
+    if (p.t_s == null) return a === "0" && !p.auto ? "Teste interrompido. Não chegou a cem." : "";
+    return `${what[0].toUpperCase()}${what.slice(1)}${p.gear ? ":" : " em"} ${nf(p.t_s, 1)} segundos.${p.record ? " Novo recorde." : ""}${p.note ? ` ${p.note}, não vale como recorde.` : ""}`;
+  }
+  function speakGps(d) {
+    const g = d.gps || {}, vo = V();
+    if ((g.state === "ok") !== voiceShown) { voiceShown = g.state === "ok"; paintVoice(); }
+    if (!vo || g.state !== "ok") return;
+    const p = g.perf;
+    if (p && p.state !== "correndo" && p.ts && Math.abs((d.ts || Date.now()) - p.ts) < 90e3) { const t = perfText(p); if (t) vo.speak(t, { key: "perf:" + p.ts + ":" + p.kind, interrupt: true }); }
+    if (g.slip) vo.speak("Embreagem patinando.", { key: "slip", cooldown_s: 60 });
   }
 
   let last = 0;
@@ -347,6 +392,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   function render(d0) {
     const d = freshLive(d0);
     renderAcc(d);
+    gpsTilesOnce(d.gps, !DEMO); speakGps(d);           // na demonstração os quadros do GPS aparecem sem mudar a escolha salva
     const v = d.values || {}, tr = d.trip || {};
     last = Date.now();
     const on = d.engine_on, coll = d.state === "coletando";
@@ -401,7 +447,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   // manter a tela acesa (quando o navegador permitir)
   let wl = null;
   async function lock() { try { if ("wakeLock" in navigator && !wl) { wl = await navigator.wakeLock.request("screen"); wl.addEventListener("release", () => { wl = null; }); } } catch { } }
-  lock(); document.addEventListener("click", lock, { once: true });
+  lock(); document.addEventListener("click", () => { lock(); window.obdVoice?.unlock(); }, { once: true });   // o 1º toque libera a voz no iPhone
 })();
 </script>
 </body>

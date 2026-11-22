@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from .. import db, timesrc
+from .. import config, db, timesrc
 
 
 def _read_json(p: Path) -> dict | None:
@@ -580,5 +580,75 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
         """Nota de condução de cada viagem do período e a tendência (sem posição: os eventos com lugar ficam no detalhe da viagem)."""
         days = max(1, min(int(days), 400))
         return {**scoremod.trend(ro(), int(time.time() * 1000) - days * 86400_000), "days": days}
+
+    # ---- F6: desempenho — 0–100 e retomadas, dinamômetro, inclinação e altitude (rotas abertas na nuvem: só números)
+    from ..gps import dyno as dynomod
+    from ..gps import perf as perfmod
+    from ..gps import terrain as terrainmod
+
+    vcfg = {**config.DEFAULTS["vehicle"], **(cfg.get("vehicle") or {})}
+
+    @r.get("/api/gps/perf")
+    def gps_perf():
+        """Arrancadas e retomadas (GPS e as antigas pelo OBD) e os recordes por tipo, marcha e combustível."""
+        return perfmod.report(ro())
+
+    @r.get("/api/gps/dyno")
+    def gps_dyno():
+        """Puxadas com a curva de potência e torque, os parâmetros do carro (massa, CdA, Crr) e a calibração por descida
+        em ponto morto, com o estado do assistente (lido do live.json)."""
+        out = dynomod.report(ro(), vcfg)
+        live = _read_json(run_dir / "live.json") or {}
+        out["coast_live"] = (live.get("gps") or {}).get("coast")
+        return out
+
+    @r.post("/api/gps/dyno/config")
+    def gps_dyno_config(body: dict, x_token: str | None = Header(None)):
+        """{mass_kg?, occupants?, cda?, crr?} ajusta o carro; {reset_coast: true} esquece a calibração (volta ao padrão)."""
+        check_admin(x_token)
+        body = body or {}
+        con = rw()
+        try:
+            cur = gstore.model_get(con, "vehicle") or {}
+            cur = cur if isinstance(cur, dict) else {}
+            lim = {"mass_kg": (800, 2500), "occupants": (1, 5), "cda": (0.3, 1.2), "crr": (0.005, 0.03)}
+            for k, (lo, hi) in lim.items():
+                if k in body:
+                    if body[k] in (None, ""):
+                        cur.pop(k, None)
+                        continue
+                    try:
+                        x = float(body[k])
+                    except (TypeError, ValueError):
+                        raise HTTPException(400, f"valor inválido em {k}") from None
+                    if not lo <= x <= hi:
+                        raise HTTPException(400, f"{k} fora de {lo}–{hi}")
+                    cur[k] = int(x) if k == "occupants" else x
+            now = int(time.time() * 1000)
+            gstore.model_set(con, "vehicle", cur, now)
+            if body.get("reset_coast"):
+                con.execute("DELETE FROM gps_model WHERE key='coast'")
+            con.commit()
+            veh = dynomod.vehicle(con, vcfg)
+        finally:
+            con.close()
+        return {"ok": True, "vehicle": veh}
+
+    @r.post("/api/gps/dyno/coast")
+    def gps_dyno_coast(body: dict | None = None, x_token: str | None = Header(None)):
+        """Arma o assistente de descida em ponto morto ({cancel: true} desarma). O coletor mede e grava a calibração."""
+        check_admin(x_token)
+        gps_cmd({"cmd": "coast_cancel" if (body or {}).get("cancel") else "coast_arm"})
+        return {"ok": True}
+
+    @r.get("/api/gps/terrain")
+    def gps_terrain(days: int = 90):
+        """Inclinação e altitude × carga, MAP, borboleta, ajuste curto, sonda, avanço, consumo e ar; leitura automática
+        (entrada de ar) e altitude × potência. Sem posição."""
+        days = max(1, min(int(days), 400))
+        live = _read_json(run_dir / "live.json") or {}
+        g = live.get("gps") or {}
+        return {**terrainmod.report(ro(), int(time.time() * 1000) - days * 86400_000), "days": days,
+                "agora": {"avail_pct": g.get("avail_pct"), "slope": g.get("slope")}}
 
     return r

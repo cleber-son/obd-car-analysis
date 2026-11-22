@@ -34,6 +34,9 @@ IDLE_RPM = 780
 GEAR_KMH_PER_KRPM = {1: 8.83, 2: 14.84, 3: 22.46, 4: 29.26, 5: 38.16}
 TORQUE = [(800, 110), (1000, 120), (2000, 150), (3000, 158), (4300, 172), (5500, 166), (6300, 160), (7000, 140)]   # Nm, R18A aprox.
 FAST_COLS = ("rpm", "speed", "map", "tps", "tps_rel", "tps_b", "tps_cmd", "pedal_d", "pedal_e", "fuel_lh", "load", "gear", "maf")
+DELTA = {1: 1.25, 2: 1.12, 3: 1.08, 4: 1.06, 5: 1.05}     # inércia das partes que giram, por marcha (física completa, F6)
+DELTA_N = 1.03                            # em ponto morto (só rodas e semieixos)
+IAT = 30.0                                # °C do ar admitido no simulador
 T0 = 1795000000000                        # 2026-11-19 (UTC), início padrão das viagens simuladas
 HOME = (-23.5000, -46.6000)               # ponto genérico inventado
 
@@ -47,6 +50,8 @@ class Leg:
     pedal: float | None = None     # None = segue a velocidade; 1.0 = pé no fundo (arrancada/puxada)
     hold_gear: int | None = None   # mantém a marcha (retomada, dinamômetro)
     brake: float | None = None     # m/s² da freada no fim do trecho (None = 2,0; freada forte ≈ 3,9)
+    acc: float | None = None       # m/s² da aceleração normal (None = 1,5); aceleração leve, por exemplo
+    coast: bool = False            # ponto morto: cai pela resistência (rolagem, inclinação e ar) até 'speed' e engata de novo
 
 
 @dataclass
@@ -69,6 +74,20 @@ def torque_nm(rpm: float) -> float:
     return pts[-1][1]
 
 
+def baro_kpa(alt: float) -> float:
+    return 101.325 * (1 - 2.25577e-5 * alt) ** 5.25588
+
+
+def rho_air(alt: float, iat: float = IAT) -> float:
+    return baro_kpa(alt) * 1000 / (287.05 * (iat + 273.15))
+
+
+def air_factor(alt: float, iat: float = IAT) -> float:
+    """Fração do torque de referência que o motor aspirado entrega com este ar (o inverso do fator de correção do
+    dinamômetro, seção 9.9): a 1.000 m, ~11 % a menos que ao nível do mar."""
+    return baro_kpa(alt) / 101.3 * math.sqrt(293 / (iat + 273))
+
+
 def _collector_gear(speed, rpm):
     """Mesma conta de Collector.gear()."""
     if not speed or not rpm or speed < 5 or rpm < 700:
@@ -82,11 +101,17 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
              speedo: float = 1.0, mass: float = 1350, cda: float = 0.63, crr: float = 0.011, alt0: float = 760,
              leak: bool = False, slip: tuple[float, float, float] | None = None,
              dropouts: tuple[tuple[float, float], ...] = (), noise: tuple[float, float, float] = (2.5, 0.15, 4.0),
-             mix: float = 0.0, ect0: float = 30, tyre: float = 1.0) -> SimTrip:
-    """tyre: circunferência real do pneu ÷ a nominal (relações verdadeiras = GEAR_KMH_PER_KRPM × tyre)."""
+             mix: float = 0.0, ect0: float = 30, tyre: float = 1.0, full_physics: bool = False,
+             climb_noise: float = 0.1) -> SimTrip:
+    """tyre: circunferência real do pneu ÷ a nominal (relações verdadeiras = GEAR_KMH_PER_KRPM × tyre).
+    full_physics (F6): nos trechos com pedal e em ponto morto, inércia das partes que giram (DELTA), densidade do ar pela
+    altitude no arrasto e torque × air_factor (o motor perde potência com a altitude). Desligado, tudo como antes.
+    leak="vacuo": entrada de ar falso que pesa mais com vácuo alto (ajuste curto sobe com o MAP baixo; F6, seção 9.12).
+    climb_noise: ruído (m/s) da velocidade vertical do receptor; sorteado à parte, não muda as outras séries."""
     from ..analytics import fuel as fuelmod
     from ..analytics.tripdiag import expected_air_gs
     rnd = random.Random(seed)
+    rnd_climb = random.Random(seed * 7919 + 17)
     ratios = {g: k * tyre for g, k in GEAR_KMH_PER_KRPM.items()}
     lat, lon = start
     alt, v, t = float(alt0), 0.0, 0.0
@@ -96,7 +121,7 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
     def record(a, grade, hdg, pedal):
         kmh = v * 3.6
         r = rpm * (1 + slip[2]) if slip and slip[0] <= t < slip[0] + slip[1] and kmh > 3 else rpm
-        truth.append({"t": round(t, 3), "lat": lat, "lon": lon, "alt": alt, "v": kmh, "a": a, "gear": (0 if shift_left > 0 else gear) if kmh >= 3 else None,
+        truth.append({"t": round(t, 3), "lat": lat, "lon": lon, "alt": alt, "v": kmh, "a": a, "gear": (0 if shift_left > 0 or gear is None else gear) if kmh >= 3 else None,
                       "rpm": r, "hdg": hdg, "grade": grade, "pedal": pedal})
 
     def update_gear(leg, a):
@@ -125,13 +150,16 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
             return
         else:
             want = kmh / ratios[gear] * 1000
-            if gear == 1 and kmh < 10 and a > 0:            # embreagem saindo
-                want = max(want, 1200 + (1500 if leg.pedal else 0))
+            launch = 1200 + (1500 if leg.pedal else 0)
+            if gear == 1 and a > 0 and kmh < (ratios[1] * launch / 1000 if leg.pedal and full_physics else 10):   # embreagem saindo
+                want = max(want, launch)
         rpm = max(float(IDLE_RPM) if kmh < 3 else 650.0, want)
 
     for i, leg in enumerate(legs):
         nxt = legs[i + 1] if i + 1 < len(legs) else None
         v_end = 0.0 if (leg.stop_s > 0 or nxt is None) else min(leg.speed, nxt.speed) / 3.6
+        if full_physics and nxt is not None and not leg.stop_s and (leg.pedal or nxt.coast):
+            v_end = leg.speed / 3.6                          # tira o pé (ou põe em ponto morto) sem frear antes
         hdg = bearing_deg(lat, lon, *leg.to)
         while True:
             rem = haversine_m(lat, lon, *leg.to)
@@ -140,18 +168,27 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
                 break
             hdg = bearing_deg(lat, lon, *leg.to)
             vt = leg.speed / 3.6
-            if leg.pedal:
-                k = ratios[gear]
-                force = torque_nm(rpm) * leg.pedal * EFF * (2 * math.pi / 60 * 3600) / k
-                res = mass * G * (crr + leg.grade / 100) + 0.5 * RHO * cda * v * v
-                amax = max(0.0, (force - res) / mass) if shift_left <= 0 else 0.0
+            rho = rho_air(alt) if full_physics else RHO
+            coasting = leg.coast and v > vt
+            amax = 0.0
+            if coasting:                                     # ponto morto: só a resistência
+                res = mass * G * (crr + leg.grade / 100) + 0.5 * rho * cda * v * v
+                vn = v - res / (mass * (DELTA_N if full_physics else 1.0)) * DT
             else:
-                amax = ACC
+                if leg.pedal:
+                    k = ratios[gear]
+                    tq = torque_nm(rpm) * (air_factor(alt) if full_physics else 1.0)
+                    force = tq * leg.pedal * EFF * (2 * math.pi / 60 * 3600) / k
+                    res = mass * G * (crr + leg.grade / 100) + 0.5 * rho * cda * v * v
+                    amax = max(0.0, (force - res) / (mass * (DELTA[gear] if full_physics else 1.0))) if shift_left <= 0 else 0.0
+                else:
+                    amax = leg.acc or ACC
+                br = leg.brake or BRAKE
+                vn = min(v + amax * DT, vt) if v <= vt else max(v - br * DT, vt)
             br = leg.brake or BRAKE
-            vn = min(v + amax * DT, vt) if v <= vt else max(v - br * DT, vt)
             vb = math.sqrt(v_end * v_end + 2 * br * max(0.0, rem - 1.0))
             vn = min(vn, vb)
-            if vn < 1.0:
+            if vn < 1.0 and not (full_physics and leg.pedal and amax > 0.05 and rem > 1.0):
                 vn = 1.0 if rem > 1.0 else 0.5               # chega devagar até a faixa (nunca fica parado no meio)
             step = (v + vn) / 2 * DT
             a = (vn - v) / DT
@@ -162,14 +199,22 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
             alt += step * leg.grade / 100
             v = vn
             t += DT
-            update_gear(leg, a)
-            record(a, leg.grade, hdg, leg.pedal)
+            if coasting:
+                gear, shift_left, rpm = None, 0.0, float(IDLE_RPM) + rnd_climb.uniform(-15, 15)
+                record(a, leg.grade, hdg, None)
+            else:
+                if gear is None:                             # fim da descida em ponto morto: engata a marcha da velocidade
+                    gear = next((g for g in sorted(ratios) if v * 3.6 / ratios[g] * 1000 <= 2800), 5)
+                update_gear(leg, a)
+                record(a, leg.grade, hdg, leg.pedal)
             if step >= rem:
                 break
         if leg.stop_s > 0 or nxt is None:
             v = 0.0
         for _ in range(int(round(leg.stop_s / DT))):
             t += DT
+            if gear is None:
+                gear = 1
             update_gear(leg, 0.0)
             record(0.0, leg.grade, hdg, None)
 
@@ -196,7 +241,7 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
         weak = last_drop_end is not None and tf - last_drop_end < 3
         fixes.append(Fix(t_gps=t0 + int(round(tf * 1000)), mono=tf, lat=la, lon=lo, alt=s["alt"] + ea, speed=spd,
                          heading=(s["hdg"] + rnd.gauss(0, 1.5)) % 360 if s["v"] >= 3 else None,
-                         climb=s["v"] / 3.6 * s["grade"] / 100, hdop=6.0 if weak else round(0.8 + rnd.random() * 0.4, 2),
+                         climb=s["v"] / 3.6 * s["grade"] / 100 + (rnd_climb.gauss(0, climb_noise) if climb_noise else 0.0), hdop=6.0 if weak else round(0.8 + rnd.random() * 0.4, 2),
                          sats=4 if weak else 9, mode=3))
 
     # ---------------------------------------------------------- OBD (o coletor)
@@ -224,7 +269,7 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
         if s.get("pedal"):
             load = max(load, 85.0 * s["pedal"])
         mp = 28 + 0.72 * load
-        iat = 30.0
+        iat = IAT
         maf = expected_air_gs(mp, rpm_s, iat) * 0.85
         if leak and idle:
             maf *= 0.6
@@ -240,10 +285,13 @@ def simulate(legs: list[Leg], *, start: tuple[float, float], t0: int, rate_hz: f
         obd.append(row)
         if to >= next_slow:
             next_slow += 5.0
-            stft = rnd.gauss(0, 2.0) + ((35 if idle else 5) if leak else 0)
+            if leak == "vacuo":                     # ar falso: pesa mais quanto maior o vácuo (MAP baixo)
+                stft = rnd.gauss(0, 2.0) + (35 if idle else max(0.0, (70 - mp) * 0.6))
+            else:
+                stft = rnd.gauss(0, 2.0) + ((35 if idle else 5) if leak else 0)
             obd.append({"ts": row["ts"] + 1, "slow": True, "ect": round(90 - (90 - ect0) * math.exp(-to / 160), 1), "iat": iat,
                         "stft1": round(stft, 1), "lambda_cmd": lam_cmd, "timing": round(12 + 20 * (1 - load / 100), 1),
-                        "baro": round(101.325 * (1 - 2.25577e-5 * s["alt"]) ** 5.25588), "run_time": round(30 + to),
+                        "baro": round(baro_kpa(s["alt"])), "run_time": round(30 + to),
                         "batt": 14.1})
     return SimTrip(t0=t0, truth=truth, fixes=fixes, obd=obd, dropouts=tuple(dropouts),
                    meta={"start": start, "end": (lat, lon), "km": sum(haversine_m(a["lat"], a["lon"], b["lat"], b["lon"]) for a, b in zip(truth, truth[1:])) / 1000})
@@ -328,9 +376,12 @@ def to_db(con, trip: SimTrip, *, with_gps: bool = True, finalize: bool = False) 
         cfg = gps_cfg({})
         dec = Decimator(cfg["store_hz"], cfg["stopped_every_s"])
         groups: dict[int, list[Fix]] = {}
+        bursts = [(trip.t0 + a * 1000, trip.t0 + b * 1000) for a, b in trip.meta.get("bursts") or ()]   # rajadas de 5 Hz (F6)
         for f in trip.fixes:
             g = Fix(t_gps=f.t_gps, mono=f.mono, lat=f.lat, lon=f.lon, alt=f.alt, speed=f.speed, heading=f.heading, climb=f.climb,
                     hdop=f.hdop, sats=f.sats, mode=f.mode, ts=f.t_gps)
+            if any(a <= g.ts <= b for a, b in bursts):
+                dec.burst_until = max(dec.burst_until, g.ts)
             fl = dec.pick(g)
             if fl is not None:
                 groups.setdefault(fl, []).append(g)
@@ -565,7 +616,146 @@ def slip(seed: int = 1, t0: int = T0, frac: float = 0.08, dur_s: float = 3.0, **
     return trip
 
 
-SCENARIOS = {"commute": commute, "tunnel": tunnel, "towed": towed, "straight": straight, "slip": slip}
+# -------------------------------------------------------------- cenários de desempenho (F6, seções 9.8, 9.9, 9.12 e 9.23)
+PERF_KW = dict(full_physics=True, ect0=88)
+
+
+def _bursts(trip: SimTrip, before_s: float = 5.0, after_s: float = 3.0) -> list[tuple[float, float]]:
+    """Janelas de rajada (5 Hz gravados) em volta dos trechos com pedal ou em ponto morto, como o PerfDetector e o
+    DynoLive ligariam ao vivo. Segundos desde o início da viagem."""
+    out: list[list[float]] = []
+    on = [s["t"] for s in trip.truth if s.get("pedal") or (s["gear"] == 0 and s["rpm"] < 1000 and s["v"] > 30)]
+    for t in on:
+        if out and t - out[-1][1] <= 2.0:
+            out[-1][1] = t
+        else:
+            out.append([t, t])
+    return [(round(a - before_s, 1), round(b + after_s, 1)) for a, b in out]
+
+
+def _cut_at(legs: list[Leg], i: int, kmh: float, start, **kw) -> list[Leg]:
+    """Encurta o trecho i (com pedal, em linha reta) para terminar quando a velocidade verdadeira chega a 'kmh':
+    o motorista tira o pé no limite de giro, em vez de seguir com o pé no fundo em velocidade constante."""
+    pre = simulate(legs, start=start, t0=T0, **kw)
+    a = legs[i - 1].to
+    hit = next((s for s in pre.truth if s.get("pedal") and s["v"] >= kmh), None)
+    if hit is None:
+        return legs
+    d = haversine_m(a[0], a[1], hit["lat"], hit["lon"])
+    h = bearing_deg(a[0], a[1], *legs[i].to)
+    out = list(legs)
+    out[i] = Leg(**{**legs[i].__dict__, "to": offset(a[0], a[1], d * math.cos(math.radians(h)), d * math.sin(math.radians(h)))})
+    return out
+
+
+def launch(seed: int = 1, t0: int = T0, rate_hz: float = 5, grade: float = 0.0, acc: float | None = None, **kw) -> SimTrip:
+    """Arrancada (9.8): 15 s parado, pé no fundo trocando a 6.300 rpm até ~130 km/h, depois volta a 60 e para.
+    acc (m/s²): em vez do pé no fundo, aceleração constante (aceleração leve, que não é teste de propósito)."""
+    kw = {**PERF_KW, **kw}
+    start = HOME
+    legs = _legs(start, [(0, 0, 10, 15)])
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, 2500), speed=130, grade=grade, pedal=None if acc else 1.0, acc=acc))
+    p = legs[-1].to
+    legs += [Leg(to=offset(p[0], p[1], 0, 1500), speed=60, grade=grade), Leg(to=offset(p[0], p[1], 0, 2000), speed=40, stop_s=10)]
+    if not acc:
+        legs = _cut_at(legs, 1, 128, start, seed=seed, rate_hz=rate_hz, **kw)
+    trip = simulate(legs, start=start, t0=t0, seed=seed, rate_hz=rate_hz, **kw)
+    trip.meta["bursts"] = _bursts(trip)
+    trip.meta["truth_0_100"] = truth_split(trip, 100)
+    return trip
+
+
+def truth_split(trip: SimTrip, kmh: float, v_from: float = 1.0) -> float | None:
+    """Tempo verdadeiro (s) de v_from a kmh na primeira arrancada da viagem (interpolado nas amostras de 0,1 s)."""
+    def cross(target, after=0.0):
+        prev = None
+        for s in trip.truth:
+            if s["t"] < after:
+                continue
+            if prev is not None and prev["v"] < target <= s["v"]:
+                return prev["t"] + (s["t"] - prev["t"]) * (target - prev["v"]) / (s["v"] - prev["v"])
+            prev = s
+        return None
+    go = next((s["t"] for s in trip.truth if s.get("pedal") or s["v"] > 0.5), 0.0)
+    a = cross(v_from, go - 1.0)
+    b = cross(kmh, go - 1.0) if a is not None else None
+    return round(b - a, 3) if a is not None and b is not None else None
+
+
+def pull(seed: int = 1, t0: int = T0, gear: int = 3, grade: float = 0.0, alt0: float = 760, shift: bool = False, **kw) -> SimTrip:
+    """Puxada de dinamômetro (9.9): em 'gear' a ~1.500 rpm, pé no fundo na mesma marcha até ~6.950 rpm (corte), alivia e para.
+    shift=True: começa em 2ª e troca para a 3ª no meio da puxada (tem de ser recusada)."""
+    kw = {**PERF_KW, **kw}
+    g0 = 2 if shift else gear
+    k = GEAR_KMH_PER_KRPM[g0]
+    start = HOME
+    legs = _legs(start, [(0, 0, 10, 10), (0, 400, round(k * 1.5), 0, grade)])
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, 400), speed=round(k * 1.5), hold_gear=g0, grade=grade))
+    p = legs[-1].to
+    top = GEAR_KMH_PER_KRPM[3 if shift else gear] * 6.95
+    legs.append(Leg(to=offset(p[0], p[1], 0, 4000), speed=top + 5, pedal=1.0, hold_gear=None if shift else gear, grade=grade))
+    p = legs[-1].to
+    legs += [Leg(to=offset(p[0], p[1], 0, 1200), speed=50, grade=grade), Leg(to=offset(p[0], p[1], 0, 1500), speed=30, stop_s=10)]
+    legs = _cut_at(legs, 3, top, start, seed=seed, alt0=alt0, **kw)
+    trip = simulate(legs, start=start, t0=t0, seed=seed, alt0=alt0, **kw)
+    trip.meta["bursts"] = _bursts(trip)
+    return trip
+
+
+def coast(seed: int = 1, t0: int = T0, cda: float = 0.70, crr: float = 0.012, grade: float = 0.5, **kw) -> SimTrip:
+    """Descida em ponto morto nos dois sentidos (calibração, 9.9): a ~95 km/h, ponto morto até ~38 km/h, volta e repete
+    no sentido contrário. A rua tem 'grade' % de subida para o leste (a média dos dois sentidos cancela)."""
+    kw = {**PERF_KW, **kw}
+    start = HOME
+    legs = _legs(start, [(0, 0, 10, 10)])
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, 1500), speed=95, grade=grade))
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, 2600), speed=38, coast=True, grade=grade))
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, 300), speed=30, stop_s=15, grade=grade))
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, -1500), speed=95, grade=-grade))
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, -2600), speed=38, coast=True, grade=-grade))
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, -300), speed=30, stop_s=10, grade=-grade))
+    trip = simulate(legs, start=start, t0=t0, seed=seed, cda=cda, crr=crr, **kw)
+    trip.meta["bursts"] = _bursts(trip)
+    return trip
+
+
+def hill(seed: int = 1, t0: int = T0, pct: float = 6.0, speed: float = 60, **kw) -> SimTrip:
+    """Inclinação (9.12): 500 m plano, 2 km a +pct %, 2 km a −pct %, 500 m plano, em velocidade constante."""
+    kw = {"ect0": 88, **kw}
+    legs = _legs(HOME, [(0, 0, 10, 10), (0, 500, speed, 0, 0.0), (0, 2000, speed, 0, pct), (0, 2000, speed, 0, -pct),
+                        (0, 500, speed, 10, 0.0)])
+    return simulate(legs, start=HOME, t0=t0, seed=seed, **kw)
+
+
+def rollon(seed: int = 1, t0: int = T0, gear: int = 4, v_from: float = 70, v_to: float = 125, shift: bool = False, **kw) -> SimTrip:
+    """Retomada (9.8): em 'gear' a v_from, pé no fundo na mesma marcha até v_to. shift=True: em 2ª a 55 km/h, pé no
+    fundo sem segurar a marcha (troca para a 3ª no meio, a ~93 km/h)."""
+    kw = {**PERF_KW, **kw}
+    g0, v0 = (2, 55) if shift else (gear, v_from)
+    start = HOME
+    legs = _legs(start, [(0, 0, 10, 10), (0, 600, v0, 0)])
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, 500), speed=v0, hold_gear=g0))
+    p = legs[-1].to
+    legs.append(Leg(to=offset(p[0], p[1], 0, 2500), speed=v_to + 3 if not shift else 112, pedal=1.0, hold_gear=None if shift else gear))
+    p = legs[-1].to
+    legs += [Leg(to=offset(p[0], p[1], 0, 1500), speed=60), Leg(to=offset(p[0], p[1], 0, 2000), speed=30, stop_s=10)]
+    legs = _cut_at(legs, 3, v_to if not shift else 110, start, seed=seed, **kw)
+    trip = simulate(legs, start=start, t0=t0, seed=seed, **kw)
+    trip.meta["bursts"] = _bursts(trip)
+    return trip
+
+
+SCENARIOS = {"commute": commute, "tunnel": tunnel, "towed": towed, "straight": straight, "slip": slip,
+             "launch": launch, "pull": pull, "coast": coast, "hill": hill, "rollon": rollon}
 
 
 def _scenario(name: str, seed: int, t0: int) -> list[SimTrip]:
