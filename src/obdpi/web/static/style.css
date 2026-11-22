@@ -337,3 +337,28 @@ input[type=date] { font: 600 14px var(--f-body); color: var(--fg); background: v
   .top, .subnav { position: static }
   .gmap, .gmap.sm { height: calc(100vh - 24px); height: calc(100dvh - 24px); min-height: 220px }
 }
+
+/* Ao vivo: autonomia do tanque, último abastecimento e mapa de onde o carro está (vivo.js) */
+.vgeo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr); gap: 16px; align-items: start }
+.vtank { display: grid; gap: 14px; align-content: start }
+.vt-head { display: flex; justify-content: space-between; align-items: center; gap: 12px }
+.vt-km { font: 700 34px/1.1 var(--f-mono); margin-top: 4px } .vt-km small { font-size: 16px; color: var(--muted); font-weight: 600 }
+.vt-sub { font-size: 13px; margin-top: 2px }
+.vt-gauge { width: 18px; height: 64px; border-radius: 9px; background: var(--panel2); border: 1px solid var(--line); position: relative; overflow: hidden; flex: none }
+.vt-gauge i { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 0 0 8px 8px }
+.vt-fill { display: grid; gap: 2px; background: var(--panel2); border-radius: 12px; padding: 10px 12px }
+.vt-fill b { font-size: 14px }
+.vt-fill .muted { font-size: 12px }
+.gmap.vmap { height: min(46vh, 380px); min-height: 240px }
+.vm-ph { padding: 14px }
+.vmapc [hidden] { display: none }
+.vm-lock { display: grid; gap: 4px }
+.vm-startpin { position: relative }
+.vm-startpin i { position: absolute; inset: 0; border-radius: 50%; background: var(--ok); border: 3px solid #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .5) }
+.vm-start { position: absolute; left: 18px; top: -4px; white-space: nowrap; font: 600 11px var(--f-body); background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; box-shadow: 0 1px 4px rgb(0 0 0 / .3) }
+.vm-sdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); margin-right: 5px; vertical-align: -1px }
+@media (max-width: 900px) { .vgeo { grid-template-columns: 1fr } .vt-km { font-size: 30px } }
+@media (orientation: landscape) and (max-height: 600px) {
+  .vgeo { grid-template-columns: minmax(0, 1fr) minmax(0, 1.9fr) }
+  .gmap.vmap { height: calc(100vh - 110px); height: calc(100dvh - 110px); min-height: 200px }
+}

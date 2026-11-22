@@ -1128,5 +1128,5 @@
     }));
   };
 
-  window.obdGps = { render, trip, openTrip };
+  window.obdGps = { render, trip, openTrip, lock: { html: lockedHtml, bind: bindLock } };   // lock: reaproveitado no mapa do Ao vivo (vivo.js)
 })();

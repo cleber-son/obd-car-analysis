@@ -446,3 +446,41 @@ O VK-172 ainda não chegou e **nada foi publicado** (nem nuvem nem Pi). A F10 fi
 - `obdctl gps check` depois do deploy, sem receptor: o esperado (gpsd ok, receptor falha "nenhum aparelho", NTP ok,
   mapa ok com 1.549 radares, localização liberada na nuvem) e **subtensão agora** (0x50005) — falta o conversor 12→5 V.
 - `systemd-remount-fs` aparece como falho: é efeito da proteção do cartão (raiz em overlay), não do deploy.
+
+## 2026-11-22 — Ao vivo: autonomia do tanque, último abastecimento e mapa de onde estou
+
+Pedido do dono: "no ao vivo deve mostrar autonomia do tanque, data do último abastecimento e mapa de onde estou no
+momento, mostrando de onde saí quando liguei o carro."
+- **`static/vivo.js`** (novo, `window.obdVivo`), logo abaixo do quadro "Carro ligado": cartão **Autonomia do tanque**
+  (mesma conta do quadro "Autonomia" do modo direção: `range_km` do GPS quando existe; senão `tank_l − litros desde o
+  tanque cheio − litros da viagem` × média real/da viagem/do tanque), "≈ N L no tanque", barrinha do nível e o
+  **último abastecimento** (data e hora, litros ou valor, R$/L, combustível e o nome do posto da F8 — o nome só aparece
+  quando a localização está liberada, porque vem de `/api/gps/places`).
+- **Mapa "Onde estou"** (Leaflet do `gpsmap.js`, estilo `.gmap`): seta com o rumo, traçado da viagem aberta desde a
+  partida com o marcador "Saída HH:MM", botões "Seguir o carro" (arrastar o mapa desliga) e "Ver trajeto". O traçado vem
+  uma vez de `/api/gps/share/track?trip=` (já existia, só leitura, um ponto a cada ~20 m, só a viagem aberta) e de 2 em
+  2 min; no meio disso cada posição nova de `/api/gps/live` é acrescentada. Consulta de posição no máximo 1 vez/s com o
+  motor ligado (5 s desligado) e só com a aba Ao vivo aberta e visível. Motor desligado: posição atual ou "Carro
+  estacionado · <lugar>". Sem GPS: "📡 GPS não conectado." e nenhum mapa criado.
+- **Nuvem:** com a localização trancada aparece o mesmo pedido de senha da aba Mapa (exportado do `gps.js` como
+  `obdGps.lock`) e nenhuma rota `/api/gps/*` é chamada. Nenhuma regra `isLoc` mudou.
+- **Trajeto da viagem aberta na nuvem** (o dono usa mais o painel online): documento `/api/gps/current_track`
+  (`{trip, start_ts, pts}`), documento de localização como os outros `/api/gps/*` (401 sem o cookie da
+  `LOC_PASSWORD`). No Pi a mesma rota lê o banco (viagem do `live.json`). O `obd-sync` (`trip_track`, no fio do ao
+  vivo) manda o trajeto completo desde a saída quando a viagem começa (o mesmo `track_points` do link da F9, agora com
+  `start_ts`; rareado até 3.000 pontos mantendo a saída e a ponta) e depois, a cada 30 s, só os pontos novos (até 400
+  por envio, ~1–2 KB) para `POST /api/sync/track`, que acrescenta; `{end}` apaga no fim da viagem; se a nuvem perdeu o
+  documento responde `reset` e o Pi manda tudo de novo. Só com a senha confirmada pelo ping e `gps.cloud = "auto"`; o
+  Worker não guarda nada sem `LOC_PASSWORD`, valida e limita os pontos (3.000, só para a frente no tempo, 200 KB) e o
+  `purge_loc` apaga o documento se a senha sumir. O `/api/live` público continua sem coordenada (o trajeto nunca passa
+  pelo canal ao vivo). O mapa busca o documento ao abrir e a cada 2 min (30 s enquanto ainda não chegou; até lá o
+  traçado começa onde a tela abriu) e acrescenta as posições ao vivo no meio.
+- `app.js` só ganhou dois ganchos (`obdVivo.frame(d)` a cada quadro ao vivo e `obdVivo.load()` ao abrir a aba);
+  `sw.js`: `vivo.js` no SHELL e cache `delfos-v6`. CSS acrescentado no fim do `style.css` (celular em pé: uma coluna;
+  deitado: tanque à esquerda e mapa à direita na altura da tela).
+- Conferido no Chromium (440×956 e 956×440, claro e escuro) com uma viagem aberta simulada: autonomia, abastecimento
+  com o posto, traçado e "Saída", seguir/ver trajeto, sem GPS, estacionado, nuvem trancada (zero pedidos de posição) e
+  nuvem com e sem o trajeto; ao sair da aba as consultas param. Testes novos: `test_current_track_open_trip`,
+  `test_sync_trip_track_only_with_loc_and_incremental` (Python, 3 vezes seguidas sem falha) e, na nuvem, o do trajeto
+  em `cloud/test/loc.test.mjs` (401 sem a senha em qualquer grafia, servido com ela, nunca no `/api/live`, teto e fim
+  da viagem). Publicar: só `npm run deploy` (sem migração) e o `scripts/deploy.sh` do Pi, quando o dono liberar.

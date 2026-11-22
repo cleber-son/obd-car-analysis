@@ -46,6 +46,10 @@ GPS_FILE = Path("/run/obd/gps.json")
 SYNC_CMD = Path("/run/obd/sync_cmd")     # F8: ação "sincronizar" de um lugar (chegou em casa): sincronização completa já
 SHARE_FILE = Path("/data/obd/share.json")        # F9: links criados no painel do Pi (só hashes), até serem enviados
 SHARE_CLOUD = Path("/run/obd/share_cloud.json")  # F9: links ativos na nuvem (resposta do ping), para o painel do Pi listar
+TRACK_KEY = "/api/gps/current_track"   # trajeto da viagem aberta (mapa do Ao vivo no painel online); documento de localização
+TRACK_EVERY = 30.0       # s — pontos novos do trajeto da viagem aberta
+TRACK_CHUNK = 400        # pontos por envio incremental (~20 m cada: 8 km em 30 s nem acontece)
+TRACK_FULL_MAX = 3000    # pontos no envio completo (o mesmo teto de gps/share.py)
 # Localização (seção 7.2): todo /api/gps/* leva posição ou nome de lugar, menos estas rotas só com números.
 # Mesma regra do Worker (cloud/src/index.js isLoc). Documentos de localização só sobem se a nuvem confirmar, no ping,
 # que tem a senha de localização (LOC_PASSWORD) — e o Worker ainda descarta se não tiver.
@@ -102,6 +106,8 @@ class Sync:
         self.share_track_trip = None # viagem cujo trajeto já foi mandado para o link
         self.share_last_trip = None  # última viagem vista no live.json (o fim dela encerra os links "até o fim da viagem")
         self.guard_alarm = False     # F9: vigia do estacionamento disparou (posição sobe a cada 5 s)
+        self.tt: dict | None = None  # trajeto da viagem aberta já na nuvem: {"trip", "last" (ts do último ponto), "at"}
+        self.tt_try = -1e9           # última tentativa (com ou sem sucesso): no máximo uma a cada TRACK_EVERY
 
     # -------------------------------------------------------------- HTTP
     def local(self, path: str, method: str = "GET", body: bytes | None = None) -> tuple[int, bytes]:
@@ -160,12 +166,16 @@ class Sync:
         keys = sorted(k for k in list(self.state["hashes"]) if is_loc(k))
         if self.state.get("gps_live_sent"):                  # a posição ao vivo vai pelo fio do ao vivo, fora de 'hashes'
             keys.append("/api/gps/live")
+        if self.state.get("track_sent"):                     # trajeto da viagem aberta (trip_track), também fora de 'hashes'
+            keys.append(TRACK_KEY)
+            self.tt = None
         for i in range(0, len(keys), 50):
             self.cloud("/api/sync/docs", {"docs": [], "delete": keys[i:i + 50]})
             for k in keys[i:i + 50]:
                 self.state["hashes"].pop(k, None)
         if keys:
             self.state["gps_live_sent"] = False
+            self.state["track_sent"] = False
             self.last_gps_hash = None
             self.save_state()
             log.info("localização desativada na nuvem: %d documento(s) de posição apagados de lá", len(keys))
@@ -396,6 +406,7 @@ class Sync:
                             raw = None
                     if raw:
                         self.share_trip_watch(d)
+                        self.trip_track(d)
                     if raw and fresh and active:
                         last_m = m
                         resp = self.cloud_post("/api/sync/live", self.live_body(raw, d), gz=True)
@@ -440,6 +451,63 @@ class Sync:
             self.cloud("/api/sync/share", {"track": {"trip": int(tid), "pts": trk.get("pts") or []}}, timeout=20)
         except Exception as e:
             log.debug("trajeto do link: %s", e)
+
+    def trip_track(self, d: dict | None, now: float | None = None) -> str | None:
+        """Trajeto da viagem aberta para o mapa do Ao vivo no painel online (documento TRACK_KEY, atrás da senha de
+        localização). Na viagem nova vai o trajeto desde a saída (uma vez, como o do link da F9); depois, a cada ~30 s,
+        só os pontos novos (a nuvem acrescenta). Fim da viagem: a nuvem apaga o documento. Só com a senha confirmada.
+        Devolve o que fez ("full", "append", "end"), para os testes."""
+        now = time.monotonic() if now is None else now
+        if not self.loc_ok():
+            self.tt = None                                   # purge_loc apaga a cópia de lá
+            return None
+        tid = d.get("trip_id") if isinstance(d, dict) else None
+        tt = self.tt
+        if tid is None:
+            if not tt:
+                return None
+            if now - self.tt_try < 5:
+                return None
+            self.tt_try = now
+            try:
+                self.cloud("/api/sync/track", {"end": int(tt["trip"])}, timeout=15)
+            except Exception as e:
+                log.debug("fim do trajeto da viagem: %s", e)
+                return None
+            self.tt = None
+            return "end"
+        same = bool(tt and tt["trip"] == tid)
+        if now - self.tt_try < (TRACK_EVERY if same else 5):
+            return None
+        self.tt_try = now
+        st, raw = self.local(f"/api/gps/share/track?trip={int(tid)}")
+        if st != 200:
+            return None
+        try:
+            j = json.loads(raw)
+            pts = [p for p in (j.get("pts") or []) if isinstance(p, list) and len(p) >= 3]
+            if same:
+                new = [p for p in pts if p[2] > tt["last"]][:TRACK_CHUNK]
+                if not new:
+                    tt["at"] = now
+                    return None
+                r = self.cloud("/api/sync/track", {"trip": int(tid), "append": new}, timeout=20)
+                if r.get("reset"):                           # a nuvem perdeu o documento: manda tudo de novo
+                    self.tt = None
+                    self.tt_try = -1e9
+                    return None
+                tt.update(last=new[-1][2], at=now)
+                return "append"
+            if len(pts) > TRACK_FULL_MAX:                    # rareia mantendo a saída e a ponta atual
+                k = -(-len(pts) // (TRACK_FULL_MAX - 1))
+                pts = pts[:-1:k] + [pts[-1]]
+            self.cloud("/api/sync/track", {"trip": int(tid), "start_ts": j.get("start_ts"), "pts": pts}, timeout=20)
+            self.tt = {"trip": tid, "last": pts[-1][2] if pts else 0, "at": now}
+            self.state["track_sent"] = True
+            return "full"
+        except Exception as e:
+            log.debug("trajeto da viagem aberta: %s", e)
+            return None
 
     def share_trip_watch(self, d: dict | None) -> None:
         """A viagem acabou (o live.json trocou de viagem ou ficou sem): avisa a nuvem, que encerra os links "até o fim

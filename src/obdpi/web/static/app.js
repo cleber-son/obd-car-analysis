@@ -161,6 +161,7 @@
     const sa = d.session_alerts, nb = sa ? sa.n : (d.alerts || []).filter((a) => a.sev !== "info").length;
     for (const id of ["#badge", "#badge2"]) { $(id).hidden = !nb; $(id).textContent = nb; $(id).style.background = sa && !sa.crit ? "var(--warn)" : ""; }
     renderSession(d);
+    window.obdVivo?.frame(d);       // autonomia, último abastecimento e mapa ao vivo (vivo.js)
   }
 
   function renderTrimTiming(d) {
@@ -870,7 +871,7 @@
 
   // ------------------------------------------------------------ roteamento
   window.OBD = { api, esc, nf, dt, tm, dur, md, lineChart, cloud: () => CLOUD, live: () => LIVE_D };
-  const LOAD = { manutencao: async () => window.obdExtras?.maint(), testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs(), loadGps()]), mapa: async () => window.obdGps?.render() };
+  const LOAD = { manutencao: async () => window.obdExtras?.maint(), testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel(), window.obdVivo?.load()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs(), loadGps()]), mapa: async () => window.obdGps?.render() };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });

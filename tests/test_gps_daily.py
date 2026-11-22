@@ -817,6 +817,84 @@ def test_share_track_only_current_trip():
     assert a != b
 
 
+def test_current_track_open_trip():
+    """Ao vivo: /api/gps/current_track devolve o trajeto da viagem aberta do live.json, com a hora da saída; sem viagem, vazio."""
+    try:
+        import fastapi  # noqa: F401
+    except ImportError:
+        return
+    base = Path(tempfile.mkdtemp())
+    con, c = _share_app(base)
+    assert c.get("/api/gps/current_track").json() == {"trip": None, "start_ts": None, "pts": []}
+    t1 = sim.commute(seed=7)
+    b = sim.to_db(con, t1, finalize=False)
+    con.execute("UPDATE trip SET end_ts=NULL WHERE id=?", (b,))
+    con.commit()
+    b0 = con.execute("SELECT start_ts FROM trip WHERE id=?", (b,)).fetchone()[0]
+    (base / "live.json").write_text(json.dumps({"engine_on": True, "trip_id": b}))
+    j = c.get("/api/gps/current_track").json()
+    assert j["trip"] == b and j["start_ts"] == b0 and len(j["pts"]) > 50 and all(p[2] >= b0 for p in j["pts"])
+    (base / "live.json").write_text(json.dumps({"engine_on": False, "trip_id": None}))
+    (base / "gps.json").write_text(json.dumps({"engine_on": False, "trip_id": b}))      # motor desligado: nada
+    assert c.get("/api/gps/current_track").json()["pts"] == []
+
+
+def test_sync_trip_track_only_with_loc_and_incremental():
+    """obd-sync: o trajeto da viagem aberta sobe completo uma vez, depois só os pontos novos (≥ 30 s), apaga no fim, e
+    nunca sobe sem a senha de localização confirmada pela nuvem."""
+    from obdpi import sync as syncmod
+    base = Path(tempfile.mkdtemp())
+    old = syncmod.STATE
+    syncmod.STATE = base / "st.json"
+    try:
+        ts = 1_800_000_000_000
+        pts = [[-23.5 + i * 1e-3, -46.6, ts + i * 1000] for i in range(5000)]
+        trk = {"trip": 7, "start_ts": ts - 5000, "pts": pts[:10]}
+        s = syncmod.Sync({"cloud": {"url": "https://obd.exemplo", "token": "t"}, "gps": {"cloud": "auto"}})
+        calls, local = [], []
+        s.cloud = lambda path, payload=None, method=None, timeout=60: calls.append((path, payload)) or {"ok": True}
+        s.local = lambda path, method="GET", body=None: local.append(path) or (200, json.dumps(trk).encode())
+        d = {"trip_id": 7, "engine_on": True, "state": "coletando"}
+        assert s.trip_track(d, now=100.0) is None and calls == [] and local == []      # sem a senha: nem lê o trajeto
+        s.cfg["gps"]["cloud"] = "off"; s.loc = True
+        assert s.trip_track(d, now=100.0) is None and calls == []                      # gps.cloud = off: também não
+        s.cfg["gps"]["cloud"] = "auto"
+        assert s.trip_track(d, now=100.0) == "full"
+        assert calls == [("/api/sync/track", {"trip": 7, "start_ts": ts - 5000, "pts": pts[:10]})] and local == ["/api/gps/share/track?trip=7"]
+        assert s.state["track_sent"] is True
+        calls.clear()
+        assert s.trip_track(d, now=110.0) is None and calls == []                      # antes de 30 s: nada
+        trk["pts"] = pts[:12]
+        assert s.trip_track(d, now=131.0) == "append"
+        assert calls == [("/api/sync/track", {"trip": 7, "append": pts[10:12]})]       # só o que é novo
+        calls.clear()
+        assert s.trip_track(d, now=162.0) is None and calls == []                      # nada novo: nem chama a nuvem
+        trk["pts"] = pts[:2000]
+        assert s.trip_track(d, now=193.0) == "append" and len(calls[0][1]["append"]) == syncmod.TRACK_CHUNK
+        assert calls[0][1]["append"][0] == pts[12]
+        calls.clear()
+        # a nuvem perdeu o documento: manda tudo de novo (no máximo TRACK_FULL_MAX pontos, a ponta atual fica)
+        trk["pts"] = pts
+        s.cloud = lambda path, payload=None, method=None, timeout=60: calls.append((path, payload)) or ({"ok": False, "reset": True} if "append" in payload else {"ok": True})
+        assert s.trip_track(d, now=224.0) is None and s.tt is None
+        assert s.trip_track(d, now=225.0) == "full"
+        full = calls[-1][1]["pts"]
+        assert len(full) <= syncmod.TRACK_FULL_MAX and full[0] == pts[0] and full[-1] == pts[-1]
+        calls.clear()
+        # fim da viagem: apaga lá; viagem nova: completo de novo
+        assert s.trip_track({**d, "trip_id": None}, now=300.0) == "end" and calls == [("/api/sync/track", {"end": 7})]
+        assert s.trip_track({**d, "trip_id": None}, now=400.0) is None
+        trk.update(trip=8, pts=pts[:3])
+        assert s.trip_track({**d, "trip_id": 8}, now=500.0) == "full"
+        # a nuvem tira a senha de localização: purge_loc apaga o documento de lá
+        calls.clear()
+        s.state["hashes"] = {}
+        assert s.purge_loc() >= 1
+        assert calls and syncmod.TRACK_KEY in calls[0][1]["delete"] and s.tt is None and s.state["track_sent"] is False
+    finally:
+        syncmod.STATE = old
+
+
 def _guard(always_on, **kw):
     con = new_db()
     calls = []

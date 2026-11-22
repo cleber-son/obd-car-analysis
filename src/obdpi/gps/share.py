@@ -204,4 +204,4 @@ def track_points(con, trip_id: int, step_m: float = TRACK_STEP_M, max_n: int = T
         pts = pts[::2]
         if pts[-1] is not last:
             pts.append(last)
-    return {"trip": trip_id, "pts": pts}
+    return {"trip": trip_id, "start_ts": a, "pts": pts}

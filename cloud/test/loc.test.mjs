@@ -196,3 +196,50 @@ test("estado ao vivo público nunca leva posição (defesa extra no Worker)", as
   assert.ok(!JSON.stringify(d).includes("-23.5") && !JSON.stringify(d).includes("Casa"));
   assert.deepEqual(scrubLive({ gps: { state: "ok", latitude: 1, longitude: 2, parked: {}, dest: {} } }), { gps: { state: "ok" } });
 });
+
+// ---------------------------------------------------------------- trajeto da viagem aberta (mapa do Ao vivo)
+const syncTrack = (env, body) => call(env, "/api/sync/track", { method: "POST", headers: { authorization: "Bearer tok-sync", "content-type": "application/json" }, body: JSON.stringify(body) });
+
+test("trajeto da viagem aberta: só com LOC_PASSWORD e token, 401 sem a senha de localização, servido com ela, nunca no /api/live", async () => {
+  const T = 1_800_000_000_000, P = (i) => [-23.5 + i * 1e-4, -46.6, T + i * 1000];
+  // sem LOC_PASSWORD: não guarda nada
+  const env0 = mkEnv();
+  assert.deepEqual(await (await syncTrack(env0, { trip: 7, start_ts: T - 1, pts: [P(0)] })).json(), { ok: false, loc: false });
+  assert.equal(env0.DB.docs.has("/api/gps/current_track"), false);
+  const env = mkEnv({ LOC_PASSWORD: "senha-de-teste-longa" });
+  // sem o token do Pi: recusado
+  assert.equal((await call(env, "/api/sync/track", { method: "POST", body: JSON.stringify({ trip: 7, pts: [P(0)] }) })).status, 401);
+  // viagem nova: completo; depois só acrescenta (pontos velhos, repetidos ou inválidos não entram)
+  assert.equal((await (await syncTrack(env, { trip: 7, start_ts: T - 1, pts: [P(0), P(1), ["x", 1, 2]] })).json()).full, true);
+  assert.equal((await (await syncTrack(env, { trip: 7, append: [P(1), P(2), [91, 0, T + 9e6], P(3)] })).json()).added, 2);
+  assert.deepEqual((await (await syncTrack(env, { trip: 8, append: [P(4)] })).json()), { ok: false, reset: true });   // outra viagem: Pi manda tudo
+  assert.equal((await syncTrack(env, { trip: 7, append: "x" })).status, 400);
+  // GET: trancado sem o cookie (com qualquer grafia), aberto com ele
+  for (const p of ["/api/gps/current_track", "/API/GPS/CURRENT_TRACK", "/api//gps/current_track", "/api/gps/current%5Ftrack"]) {
+    const r = await call(env, p);
+    assert.equal(r.status, 401, p);
+    assert.ok(!(await r.text()).includes("-23.5"), p);
+  }
+  const ok = await call(env, "/loc/unlock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "senha-de-teste-longa" }) });
+  const cookie = ok.headers.get("set-cookie").split(";")[0];
+  const g = await call(env, "/api/gps/current_track", withCookie(cookie));
+  assert.equal(g.status, 200);
+  assert.equal(g.headers.get("cache-control"), "no-store");
+  const j = await g.json();
+  assert.deepEqual(j, { trip: 7, start_ts: T - 1, pts: [P(0), P(1), P(2), P(3)] });
+  // o /api/live público nunca leva o trajeto
+  await sync(env, [{ key: "/api/live", json: JSON.stringify({ state: "coletando", engine_on: true, trip_id: 7, gps: { state: "ok" } }) },
+    { key: "_meta", json: JSON.stringify({ last_sync_ts: Date.now() }) }]);
+  for (const c of [{}, withCookie(cookie)]) {
+    const live = await (await call(env, "/api/live", c)).text();
+    assert.ok(!live.includes("-23.5") && !live.includes("pts") && !live.includes("current_track"), live);
+  }
+  // teto de pontos: rareia mantendo a saída e a ponta atual
+  await syncTrack(env, { trip: 9, start_ts: T, pts: Array.from({ length: 3500 }, (_, i) => P(i)) });
+  const big = JSON.parse(env.DB.docs.get("/api/gps/current_track").json);
+  assert.ok(big.pts.length <= 3000 && big.pts[0][2] === T && big.pts.at(-1)[2] === T + 3499 * 1000);
+  // fim da viagem: apaga
+  assert.equal((await (await syncTrack(env, { end: 9 })).json()).ended, true);
+  assert.equal(env.DB.docs.has("/api/gps/current_track"), false);
+  assert.equal((await call(env, "/api/gps/current_track", withCookie(cookie))).status, 404);
+});

@@ -864,6 +864,19 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
                 x["revoke"] = True
         return {"ok": True}
 
+    @r.get("/api/gps/current_track")
+    def gps_current_track():
+        """Trajeto da viagem aberta agora (a do live.json), desde a partida: o mapa do Ao vivo. Na nuvem é o documento
+        que o obd-sync vai acrescentando a cada ~30 s (sync.py, trip_track), atrás da senha de localização."""
+        live = _read_json(run_dir / "live.json") or {}
+        tid = live.get("trip_id")
+        if tid is None:
+            g = _read_json(run_dir / "gps.json") or {}
+            tid = g.get("trip_id") if g.get("engine_on") else None
+        if tid is None:
+            return {"trip": None, "start_ts": None, "pts": []}
+        return sharemod.track_points(ro(), int(tid))
+
     @r.get("/api/gps/share/track")
     def gps_share_track(trip: int):
         """Trajeto da viagem aberta (para o link que nasce no meio dela). Usado só pelo obd-sync, no próprio Pi:

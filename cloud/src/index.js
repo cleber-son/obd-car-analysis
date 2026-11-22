@@ -265,6 +265,56 @@ async function syncDocs(req, env) {
   return json({ ok: true, stored: stmts.length, dropped: docs.length - stmts.length });
 }
 
+// Trajeto da viagem aberta (mapa do Ao vivo): o Pi manda tudo desde a saída quando a viagem começa ({trip, start_ts,
+// pts}) e depois só os pontos novos a cada ~30 s ({trip, append}); {end: trip} apaga. Documento de localização: só
+// guardado com LOC_PASSWORD e servido por isLoc (GET /api/gps/current_track só com o cookie da senha).
+export const TRACK_KEY = "/api/gps/current_track";
+export const TRACK_MAX = 3000;
+const TRACK_BODY_MAX = 200_000;
+function cleanPts(list) {
+  const out = [];
+  for (const p of Array.isArray(list) ? list : []) {
+    if (!Array.isArray(p) || p.length < 3) continue;
+    const [la, lo, ts] = p.map(Number);
+    if (![la, lo, ts].every(Number.isFinite) || Math.abs(la) > 90 || Math.abs(lo) > 180 || ts <= 0) continue;
+    if (out.length && ts <= out[out.length - 1][2]) continue;            // só para a frente no tempo
+    out.push([Math.round(la * 1e5) / 1e5, Math.round(lo * 1e5) / 1e5, Math.round(ts)]);
+  }
+  return out;
+}
+function capPts(pts) {                                                   // metade dos pontos, mantendo a ponta atual
+  while (pts.length > TRACK_MAX) { const last = pts[pts.length - 1]; pts = pts.filter((_, i) => i % 2 === 0); if (pts[pts.length - 1] !== last) pts.push(last); }
+  return pts;
+}
+async function syncTrack(req, env) {
+  const text = await req.text();
+  if (!locConfigured(env)) return json({ ok: false, loc: false });    // sem senha de localização: nada é guardado
+  if (text.length > TRACK_BODY_MAX) return json({ error: "grande demais" }, 413);
+  let b; try { b = JSON.parse(text); } catch { return json({ error: "dados inválidos" }, 400); }
+  if (!b || typeof b !== "object") return json({ error: "dados inválidos" }, 400);
+  const put = (d) => env.DB.prepare("INSERT INTO doc(key, json, updated_ts) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET json=excluded.json, updated_ts=excluded.updated_ts")
+    .bind(TRACK_KEY, JSON.stringify(d), Date.now()).run();
+  if (b.end !== undefined) {
+    await env.DB.prepare("DELETE FROM doc WHERE key=?").bind(TRACK_KEY).run();
+    return json({ ok: true, ended: true });
+  }
+  const trip = Number(b.trip);
+  if (!Number.isInteger(trip) || trip <= 0) return json({ error: "viagem inválida" }, 400);
+  if (Array.isArray(b.pts)) {                                            // viagem nova: substitui
+    const st = Number(b.start_ts);
+    await put({ trip, start_ts: Number.isFinite(st) && st > 0 ? st : null, pts: capPts(cleanPts(b.pts)) });
+    return json({ ok: true, full: true });
+  }
+  if (!Array.isArray(b.append)) return json({ error: "dados inválidos" }, 400);
+  const cur = await getDoc(env, TRACK_KEY);
+  let d = null; try { d = cur ? JSON.parse(cur.data) : null; } catch { d = null; }
+  if (!d || d.trip !== trip || !Array.isArray(d.pts)) return json({ ok: false, reset: true });   // Pi manda tudo de novo
+  const last = d.pts.length ? d.pts[d.pts.length - 1][2] : 0;
+  const add = cleanPts(b.append).filter((p) => p[2] > last);
+  if (add.length) { d.pts = capPts(d.pts.concat(add)); await put(d); }
+  return json({ ok: true, added: add.length });
+}
+
 // abastecimentos registrados no painel online que o Pi ainda não buscou: aparecem na hora no histórico, marcados
 async function withPendingFills(env, raw) {
   try {
@@ -407,6 +457,7 @@ export default {
       if (p === "/api/sync/live" && req.method === "POST") return syncLive(req, env);
       if (p === "/api/sync/commands") return syncCommands(req, env);
       if (p === "/api/sync/share" && req.method === "POST") return syncShare(req, env, hub(env), locConfigured(env));
+      if (p === "/api/sync/track" && req.method === "POST") return syncTrack(req, env);
       // loc: a nuvem tem senha de localização; o Pi só envia posição se vier true. share: links ativos (F9)
       if (p === "/api/sync/ping") return json({ ok: true, ts: Date.now(), loc: locConfigured(env), ...(locConfigured(env) ? { share: await pingShare(env) } : {}) });
       return json({ error: "rota desconhecida" }, 404);
