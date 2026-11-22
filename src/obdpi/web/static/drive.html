@@ -48,6 +48,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .gear small { display: block; font: 600 10px var(--disp); color: var(--muted); letter-spacing: .1em; margin-top: -14px }
 .rpmnum { text-align: right } .rpmnum b { font: 700 34px var(--mono); color: var(--rpm); font-variant-numeric: tabular-nums } .rpmnum span { display: block; font-size: 12px; color: var(--muted) }
 .hint { font: 700 13px var(--disp); color: var(--ok); text-align: right; min-height: 16px }
+/* F7: selo do limite da via (pelo mapa do OSM; presumido = esmaecido; acima do limite = vermelho) */
+.lim { width: 62px; height: 62px; border-radius: 50%; border: 7px solid #e3182d; background: #fff; color: #000; display: grid; place-items: center; font: 800 24px var(--disp); font-variant-numeric: tabular-nums; line-height: 1 }
+.lim.pres { opacity: .38 } .lim.over { background: #e3182d; color: #fff; animation: shift .7s steps(2) infinite }
+.app.graphmode .lim { width: 44px; height: 44px; border-width: 5px; font-size: 17px }
 
 /* tiles */
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-content: start; min-height: 0 }
@@ -123,6 +127,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   <div class="core">
     <div class="spd"><b id="spd">0</b><span>km/h</span></div>
     <div class="side">
+      <div class="lim" id="lim" hidden aria-live="polite"></div>
       <div class="gear"><div><span id="gear">–</span><small>MARCHA</small></div></div>
       <div class="rpmnum"><b id="rpm">0</b><span>rpm</span></div>
       <div class="hint" id="hint"></div>
@@ -190,6 +195,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     alt: { l: "Altitude", c: "--volt", r: (v, t, g) => [g.state === "ok" ? nf(g.alt) : "—", "m", g.slope != null ? `inclinação ${sgn(g.slope, 1)} %` : g.state === "ok" ? "" : "sem GPS"] },
     power: { l: "Potência agora", c: "--rpm", r: (v, t, g) => [g.power_kw != null ? nf(g.power_kw * 1.36) : "—", "cv",
       [g.power_kw != null ? nf(g.power_kw) + " kW" : "", g.avail_pct != null ? `${nf(g.avail_pct)} % disponível na altitude` : ""].filter(Boolean).join(" · ") || (g.state === "ok" ? "" : "sem GPS")] },
+    // F7: limite da via pelo mapa offline (geo.db, OpenStreetMap): auxílio, a placa vale sempre
+    limit: { l: "Limite da via", c: "--bad", r: (v, t, g) => [g.limit != null ? nf(g.limit) : "—", "km/h",
+      g.limit == null ? (g.state === "ok" ? (g.geo_m ? "via fora do mapa" : "sem mapa de radares") : "sem GPS")
+        : g.limit_src === "osm" ? (g.over ? "acima do limite" : "pelo mapa · confira a placa") : "presumido pela via (sem placa no mapa)"] },
   };
   const GPS_TILES = ["gpsspd", "alt", "power"];
   const DEFAULT = ["kml", "kmlavg", "kmltank", "stft", "timing", "ect", "prev", "auto", "km", "time", "avg", "tps"];
@@ -332,7 +341,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
       const v = { speed: Math.round(spd), rpm: Math.round(rpm), gear, pedal_d: 20 + pedal * .6, tps: 12.5 + pedal * .55, tps_cmd: 1.2 + pedal * .8, stft1: (gear ? 4 : 38) + Math.sin(t / 3000) * 5, o2c1_lambda: (gear ? 1 : 1.09) + Math.sin(t / 2100) * .02,
         lambda_cmd: .99, fuel_lh: +lh.toFixed(2), kml_inst: spd > 3 ? +(spd / lh).toFixed(1) : null, timing: gear ? 22 + Math.sin(t / 4000) * 8 : 8, maf: gear ? 6 + pedal * .5 : 1.5, load: gear ? 35 + pedal : 24, map: gear ? 45 + pedal : 30, ect: 92, iat: 41, batt: 14.1 };
       const cyc = Math.floor(t / 60000), gps = { state: "ok", src: "demo", sats: 9, hz: 5, speed: +(spd * 0.97).toFixed(1), alt: Math.round(760 + Math.sin(t / 50000) * 30),
-        slope: +(Math.cos(t / 50000) * 2.4).toFixed(1), power_kw: gear && acc > 0 ? Math.round(18 + spd * 0.4) : gear ? Math.round(4 + spd * 0.12) : null, avail_pct: 87 };
+        slope: +(Math.cos(t / 50000) * 2.4).toFixed(1), power_kw: gear && acc > 0 ? Math.round(18 + spd * 0.4) : gear ? Math.round(4 + spd * 0.12) : null, avail_pct: 87,
+        limit: 60, limit_src: cyc % 4 === 3 ? "presumido" : "osm", over: cyc % 4 !== 3 && spd > 66, via: "cidade", road_n: cyc, geo_m: "2026-10", say: { radar: true, limit: true } };
+      if (ph >= 2 && ph < 32) gps.warn = { kind: "radar", dist_m: Math.max(0, Math.round((600 - (ph - 2) * 20) / 10) * 10), limit: 50, n: cyc };      // radar de mentira a cada minuto
       if (ph >= 20 && ph < 50) gps.perf = { state: "concluido", kind: cyc % 2 ? "80-120" : "0-100", gear: cyc % 2 ? 4 : null, t_s: +(cyc % 2 ? 7.4 + (cyc % 5) / 10 : 10.4 + (cyc % 7) / 10).toFixed(2), record: cyc % 3 === 0, auto: 1, ts: cyc * 60000 + 18000 };
       const d = { ts: t, state: "coletando", engine_on: true, values: v, value_ts: {}, status: { stft1: [gear ? "ok" : "crit", "", "±10"] }, alerts: [], dtc: {}, mil: false, trip: { km: +km.toFixed(2), elapsed_s: 600, moving_s: 420, fuel_l: .8, kml: 9.4, avg_moving: 31, max_speed: 72 }, gps };
       t += 500; return d; };
@@ -381,6 +392,16 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     const p = g.perf;
     if (p && p.state !== "correndo" && p.ts && Math.abs((d.ts || Date.now()) - p.ts) < 90e3) { const t = perfText(p); if (t) vo.speak(t, { key: "perf:" + p.ts + ":" + p.kind, interrupt: true }); }
     if (g.slip) vo.speak("Embreagem patinando.", { key: "slip", cooldown_s: 60 });
+    // F7: radar e limite pelo mapa offline. Auxílio (o mapa pode estar desatualizado): uma vez por dia a fala lembra disso.
+    const w = g.warn, spd = g.speed ?? d.values?.speed ?? 0;
+    if (w?.kind === "radar" && g.say?.radar !== false) {
+      if (w.dist_m <= 520 && w.dist_m > 200 && spd > 40) {
+        const day = new Date().toDateString(); let pre = ""; try { if (localStorage.getItem("radarAviso") !== day) pre = "Aviso de radar pelo mapa aberto, pode estar desatualizado; vale sempre a placa. "; } catch { }
+        if (vo.speak(`${pre}Radar a ${Math.max(300, Math.round(w.dist_m / 100) * 100)} metros.${w.limit ? ` Limite ${w.limit}.` : ""}`, { key: "radar500:" + w.n, cooldown_s: 300, interrupt: true }) && pre) { try { localStorage.setItem("radarAviso", day); } catch { } }
+      }
+      if (w.dist_m <= 160 && w.limit && spd > w.limit) vo.speak(`Reduza. ${Math.round(spd)}, limite ${w.limit}.`, { key: "radar150:" + w.n, cooldown_s: 300, interrupt: true });
+    }
+    if (g.over && g.limit_src === "osm" && g.limit && g.say?.limit !== false) vo.speak(`Limite ${g.limit}.`, { key: "over:" + g.road_n, cooldown_s: 120 });
   }
 
   let last = 0;
@@ -414,8 +435,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     lastD = d; pushHist(d); if (graphMode) drawGraphs(); else renderTiles(d);
     // alerta recente (10 min)
     const a = (on || coll) ? (d.alerts || []).find((x) => Date.now() - (x.ts_end || x.ts) < 10 * 60e3 && x.sev !== "info") : null;
-    const al = $("alert"); al.classList.toggle("on", !!a);
-    if (a) { al.style.setProperty("--s", a.sev === "crit" ? "var(--bad)" : "var(--warn)"); al.innerHTML = `⚠ ${a.title}<span>${a.detail}</span>`; }
+    const al = $("alert"), g = d.gps || {}, w = g.state === "ok" && g.warn?.kind === "radar" ? g.warn : null;
+    al.classList.toggle("on", !!(a || w));
+    if (w) { al.style.setProperty("--s", "var(--warn)");                    // F7: radar à frente (mesma faixa do alerta)
+      al.innerHTML = `📷 Radar em ${nf(w.dist_m)} m${w.limit ? " · limite " + nf(w.limit) : ""}<span>Pelo mapa do OpenStreetMap${g.geo_m ? " (" + g.geo_m.split("-").reverse().join("/") + ")" : ""}: é um auxílio e pode estar desatualizado. Vale sempre a placa.</span>`; }
+    else if (a) { al.style.setProperty("--s", a.sev === "crit" ? "var(--bad)" : "var(--warn)"); al.innerHTML = `⚠ ${a.title}<span>${a.detail}</span>`; }
+    const lim = $("lim"), showLim = g.state === "ok" && g.limit != null;
+    lim.hidden = !showLim;
+    if (showLim) { lim.textContent = nf(g.limit); lim.classList.toggle("pres", g.limit_src !== "osm"); lim.classList.toggle("over", !!g.over && g.limit_src === "osm");
+      lim.title = g.limit_src === "osm" ? "Limite pelo mapa (OpenStreetMap): confira a placa" : "Limite presumido pela classe da via (o mapa não tem a placa): não gera aviso"; }
     const sa = d.session_alerts, sn = sa ? `${sa.n ? "⚠ " + sa.n + " alerta(s) nesta partida" : "✓ nenhum alerta nesta partida"} · ` : "";
     $("ftrip").textContent = sn + (d.dtc?.confirmed?.length ? "DTC: " + d.dtc.confirmed.join(" ") : d.mil ? "Luz de injeção acesa" : "Sem códigos de falha");
   }

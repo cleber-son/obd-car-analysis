@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from .. import config
 from . import FLAG_BURST, FLAG_STOPPED, Fix, good
-from . import dyno, gears, perf, places, routes, score, segments, speedo, store, terrain, trip
+from . import dyno, gears, perf, places, roads, routes, score, segments, speedo, store, terrain, trip
 from .reader import GpsReader
 
 log = logging.getLogger("gps")
@@ -153,6 +153,10 @@ FINALIZERS[1:1] = [score.finalize]          # logo depois de trip.finalize (que 
 LIVE_ENGINES += [perf.PerfDetector, dyno.DynoLive]
 FINALIZERS[2:2] = [dyno.finalize, terrain.finalize]   # depois da nota (F5); as duas da F4 continuam no fim
 
+# ---- F7: vias (radares, limites, cidade × estrada e nomes de rua pelo geo.db)
+LIVE_ENGINES += [roads.RoadEngine]
+FINALIZERS.insert(FINALIZERS.index(terrain.finalize) + 1, roads.finalize)    # depois da F6; as duas da F4 continuam no fim
+
 
 def vehicle_cfg(cfg: dict) -> dict:
     """Seção [vehicle] com os padrões (massa, CdA, Crr, ocupantes: dinamômetro da F6)."""
@@ -161,9 +165,15 @@ def vehicle_cfg(cfg: dict) -> dict:
 
 
 def make_ctx(con, cfg: dict, **kw) -> SimpleNamespace:
-    """ctx fora do coletor (sim.to_db, obdctl gps reanalyze): mesmos campos de GpsHub.ctx()."""
+    """ctx fora do coletor (sim.to_db, obdctl gps reanalyze): mesmos campos de GpsHub.ctx(). Com a configuração
+    (obdctl), o geo.db de gps.geo_db entra em ctx.geo (F7); sim.to_db passa {} e fica sem (testes determinísticos)."""
     base = dict(fix=None, values={}, value_ts={}, engine_on=False, trip_id=None, ts=int(time.time() * 1000), reader=None,
                 cfg=gps_cfg(cfg), con=con, geo=None, models={}, vehicle=vehicle_cfg(cfg))
+    if cfg and "geo" not in kw:
+        try:
+            base["geo"] = roads.open_geo(base["cfg"].get("geo_db"))
+        except Exception as e:
+            log.warning("gps: geo.db não abriu: %r", e)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -187,6 +197,7 @@ class GpsHub:
         self.latency = int(self.cfg.get("latency_ms", 120))
         self.max_hdop, self.min_sats = float(self.cfg.get("max_hdop", 5.0)), int(self.cfg.get("min_sats", 5))
         self.reader: GpsReader | None = None
+        self.geo = roads.GeoDb(self.cfg.get("geo_db")) if self.enabled else None     # F7: mapa offline (só leitura)
         self.dec = Decimator(self.cfg.get("store_hz", 1), self.cfg.get("stopped_every_s", 30))
         self.desloc: float | None = None
         self._dsamples: list[float] = []
@@ -213,9 +224,16 @@ class GpsHub:
             self._warned[key] = now
             log.warning("gps: %s falhou: %r", key, e)
 
+    def _geo(self):
+        try:
+            return self.geo.get() if self.geo else None
+        except Exception as e:
+            self._warn("geo.db", e)
+            return None
+
     def ctx(self, **kw) -> SimpleNamespace:
         base = dict(fix=None, values={}, value_ts={}, engine_on=False, trip_id=None, ts=self.clock.now(), reader=self.reader,
-                    cfg=self.cfg, con=self.con, geo=None, models={}, vehicle=self.vehicle)
+                    cfg=self.cfg, con=self.con, geo=self._geo(), models={}, vehicle=self.vehicle)
         base.update(kw)
         return SimpleNamespace(**base)
 

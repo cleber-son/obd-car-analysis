@@ -145,13 +145,13 @@
   async function viewMap(body) {
     body.innerHTML = `<div class="card"><div class="row-head"><h2>🗺️ Mapa</h2>
         <div class="gctl"><label class="lbl" for="gLayer">Camada</label><select id="gLayer"><option value="trk">Trajetos recentes</option>${HEAT.map(([k, l]) => `<option value="heat:${k}">Calor: ${l}</option>`).join("")}</select></div></div>
-      <div class="gchecks"><label><input type="checkbox" id="gAl" checked> Alertas</label><label><input type="checkbox" id="gPl" checked> Lugares</label><label><input type="checkbox" id="gPk" checked> Estacionado</label><label><input type="checkbox" id="gLv" checked> Agora</label></div>
+      <div class="gchecks"><label><input type="checkbox" id="gAl" checked> Alertas</label><label><input type="checkbox" id="gPl" checked> Lugares</label><label><input type="checkbox" id="gPk" checked> Estacionado</label><label><input type="checkbox" id="gLv" checked> Agora</label>${!cloud() && status?.geo ? `<label title="Radares do mapa offline (OpenStreetMap): auxílio, pode estar desatualizado"><input type="checkbox" id="gCam"> 📷 Radares</label>` : ""}</div>
       <div class="gmap" id="gMap" style="margin-top:10px"></div><div class="gm-legend" id="gLeg"></div>
       <div id="gAlBox" style="margin-top:12px"></div></div>`;
     const map = M().create($("#gMap"));
     if (!map) return;
     maps.push(map);
-    const L_ = window.L, layers = { base: L_.layerGroup().addTo(map), al: L_.layerGroup().addTo(map), pl: L_.layerGroup().addTo(map), pk: L_.layerGroup().addTo(map) };
+    const L_ = window.L, layers = { base: L_.layerGroup().addTo(map), al: L_.layerGroup().addTo(map), pl: L_.layerGroup().addTo(map), pk: L_.layerGroup().addTo(map), cam: L_.layerGroup().addTo(map) };
     let cur = null, fitted = false;
     const fitTo = (b) => { if (!fitted && b && b.isValid()) { fitted = true; M().fit(map, b); } };
     const [lb, al, pl, pk] = await Promise.all([logbook().catch((e) => { if (e instanceof Locked) throw e; return { items: [] }; }),
@@ -239,6 +239,21 @@
       if (!pk || !pk.known || !$("#gPk").checked) return;
       M().pins(map, [{ lat: pk.lat, lon: pk.lon, label: "🅿️", html: `<b>Estacionado</b>${pk.name ? "<br>" + esc(pk.name) : ""}<br>${dt(pk.ts)}${pk.maps_url ? `<br><a href="${esc(pk.maps_url)}" target="_blank" rel="noopener">Abrir no Mapas</a>` : ""}` }], layers.pk);
     }
+    // F7: radares do geo.db na área vista (só no painel do Pi; o geo.db não vai para a nuvem)
+    let camSeq = 0;
+    async function drawCams() {
+      layers.cam.clearLayers();
+      if (!$("#gCam")?.checked) return;
+      if (map.getZoom() < 11) { $("#gLeg").insertAdjacentHTML("beforeend", `<span class="muted" id="gCamZ">📷 aproxime o mapa para ver os radares</span>`); return; }
+      $("#gCamZ")?.remove();
+      const b = map.getBounds(), seq = ++camSeq;
+      const j = await get(`/api/gps/cameras?bbox=${[b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map((x) => x.toFixed(4)).join(",")}`).catch(() => null);
+      if (map._gone || seq !== camSeq || !j) return;
+      const when = j.osm_ts ? new Date(+j.osm_ts).toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "";
+      M().pins(map, j.items.map((c) => ({ lat: c.lat, lon: c.lon, label: "📷",
+        html: `<b>Radar</b>${c.limit ? ` · limite ${nf(c.limit)} km/h` : ""}${c.dir != null ? `<br>sentido ${nf(c.dir)}°` : ""}<br><span class="muted">OpenStreetMap${when ? " (" + when + ")" : ""}: auxílio, pode estar desatualizado. Vale a placa.</span>` })), layers.cam);
+    }
+    map.on("moveend", () => { if ($("#gCam")?.checked) drawCams().catch(console.error); });
     async function liveTick() {
       if (map._gone || !document.body.contains(map.getContainer()) || location.hash !== "#mapa") { clearInterval(liveTimer); liveTimer = null; return; }
       if (!$("#gLv").checked) { cur = M().cursor(map, null, null, null, cur); return; }
@@ -253,6 +268,7 @@
     $("#gLayer").addEventListener("change", () => redraw().catch(console.error));
     $("#gAl").addEventListener("change", drawAlerts); $("#gPl").addEventListener("change", drawPlaces); $("#gPk").addEventListener("change", drawParked);
     $("#gLv").addEventListener("change", liveTick);
+    $("#gCam")?.addEventListener("change", () => { $("#gCamZ")?.remove(); drawCams().catch(console.error); });
     if (map._gone) return;
     drawPlaces(); drawParked(); drawAlerts();
     if (pk && pk.known) fitTo(L_.latLngBounds([[pk.lat, pk.lon]]).pad(0.5));
@@ -680,7 +696,7 @@
       <div class="tbl" style="margin-top:8px"><table class="cards"><thead><tr><th>Viagem</th><th>Nota</th><th>Freadas</th><th>Arrancadas</th><th>Curvas</th><th>Km</th></tr></thead><tbody id="gScRows">
         ${items.slice().reverse().slice(0, 30).map((x) => `<tr class="click" data-id="${x.trip_id}"><td class="head">${dt(x.start_ts)}</td><td class="num" data-l="Nota"><b style="color:${scoreColor(x.score)}">${x.score}</b></td>
           <td class="num" data-l="Freadas">${x.freadas}</td><td class="num" data-l="Arrancadas">${x.arrancadas}</td><td class="num" data-l="Curvas">${x.curvas}</td><td class="num" data-l="Km">${nf(x.km, 1)}</td></tr>`).join("")}</tbody></table></div>
-      <div class="muted" style="font-size:12px;margin-top:6px">Mede segurança e suavidade pelo GPS (a nota econômica, pelo motor, continua na aba Viagens). Os limites de velocidade de cada rua entram depois; por enquanto conta o tempo acima de 115 km/h.</div>`;
+      <div class="muted" style="font-size:12px;margin-top:6px">Mede segurança e suavidade pelo GPS (a nota econômica, pelo motor, continua na aba Viagens). O excesso de velocidade usa o limite de cada rua quando o mapa offline (OpenStreetMap) tem a placa; sem ele, o tempo acima de 115 km/h.</div>`;
     body.innerHTML = `<div class="card"><h2>⚙️ Marchas e embreagem</h2>${gearsHtml}</div>
       <div class="card"><h2>🧭 Velocímetro e pneus</h2>${spHtml}</div>
       <div class="card"><h2>🏁 Nota de condução</h2>${scHtml}</div>`;
@@ -845,6 +861,65 @@
     box.style.marginTop = "8px";
     box.innerHTML = runs.map((x) => { let lbl = x.kind || "0-100"; try { lbl = JSON.parse(x.json || "{}").label || lbl; } catch { }
       return `<div class="muted" style="font-size:13px">⏱ ${esc(lbl)} ${x.t_s != null ? "em <b>" + secs(x.t_s) + "</b>" : "incompleta"} · ${tm(x.ts)}${x.note ? " · " + esc(x.note) : ""}</div>`; }).join("");
+    card.appendChild(box);
+  });
+
+  // ---- F7: vias — cidade × estrada (seção 9.20), mapa offline de radares e limites (9.17)
+  if (tabs && !$('[data-g="vias"]', tabs)) tabs.insertAdjacentHTML("beforeend", `<button type="button" class="rbtn" data-g="vias">🏙️ Cidade × estrada</button>`);
+  try { sub = localStorage.getItem("gpsSub") || sub; } catch { }
+  if (!["diario", "mapa", "lugares", "rotas", "trechos", "desempenho", "vias"].includes(sub)) sub = "diario";
+  const CLS = { cidade: ["🏙️ Cidade", "--speed"], estrada: ["🛣️ Estrada", "--o2"], misto: ["↔️ Misto", "--muted"] };
+  const mmYY = (ts) => ts ? new Date(+ts).toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—";
+  const gearTxt = (gs) => Object.entries(gs || {}).filter(([, v]) => v >= 1).map(([g, v]) => `${g}ª ${nf(v)} %`).join(" · ") || "—";
+  function geoCard(st) {
+    const g = st?.geo;
+    if (!g) return `<div class="card"><h2>📷 Mapa de radares e limites</h2><div class="muted" style="margin-top:6px">Mapa de radares não instalado. Sem ele, o modo direção não mostra limite nem radar,
+      e "cidade × estrada" é decidido pela velocidade (média e paradas).</div>${cloud() ? "" : `<div class="muted" style="font-size:13px;margin-top:8px">Para instalar, no PC (com internet), escolha a região por onde o carro anda:<br>
+      <code class="k">python3 scripts/geo-build.py --bbox S,W,N,E --out data/geo/geo.db</code><br>e depois <code class="k">scripts/deploy.sh</code>. O arquivo sai do OpenStreetMap (dados abertos).</div>`}</div>`;
+    return `<div class="card"><h2>📷 Mapa de radares e limites</h2><div class="stats" style="margin-top:10px">
+      <div><span class="lbl">Dados de</span><b>${mmYY(g.osm_ts || g.built_ts)}</b><span class="muted" style="font-size:12px">${g.age_d != null ? g.age_d + " dia(s)" : ""}</span></div>
+      <div><span class="lbl">Radares</span><b>${esc(g.cameras ?? "—")}</b><span class="muted" style="font-size:12px">${esc(g.cameras_dir ?? "0")} com sentido</span></div>
+      <div><span class="lbl">Vias</span><b>${esc(g.roads ?? "—")}</b><span class="muted" style="font-size:12px">${esc(g.roads_maxspeed ?? "0")} com placa de limite</span></div>
+      <div><span class="lbl">Tamanho</span><b>${nf(g.mb, 1)} MB</b></div></div>
+      ${g.velho ? `<div class="banner" style="--s:var(--warn);margin-top:8px"><span class="ic">⚠️</span><div>O mapa tem mais de 6 meses: radares e limites podem ter mudado. Gere de novo no PC (scripts/geo-build.py) e envie com o deploy.</div></div>` : ""}
+      <div class="muted" style="font-size:12px;margin-top:8px">É um auxílio, como os aplicativos de navegação: os dados são do OpenStreetMap (© colaboradores do OpenStreetMap, ODbL) e podem estar desatualizados.
+        O Delfos não detecta radar; a placa da via vale sempre. Limite sem placa no mapa é presumido pelo tipo de via, aparece esmaecido e nunca é falado.</div></div>`;
+  }
+  EXTRA.vias = async (body) => {
+    const pi = !cloud();
+    let days = 30; try { days = pi ? +(localStorage.getItem("gpsMixDays") || 30) : 30; } catch { }
+    const rm = await get(`/api/gps/roadmix?days=${days}`);
+    const rows = (rm.classes || []).filter((x) => x.s > 0);
+    body.innerHTML = `<div class="card"><div class="row-head"><div><h2>🏙️ Cidade × estrada</h2><div class="lbl" style="margin-top:4px">O consumo certo para comparar: cidade com cidade, estrada com estrada</div></div>
+        ${pi ? `<select id="gMixD" aria-label="Período">${[30, 90, 365].map((d) => `<option value="${d}"${d === days ? " selected" : ""}>${d} dias</option>`).join("")}</select>` : ""}</div>
+      ${rows.length ? `<div style="font-weight:600;margin-top:10px">${esc(rm.texto)}</div>
+        <div class="tbl" style="margin-top:10px"><table class="cards"><thead><tr><th>Tipo</th><th>Km</th><th>Tempo</th><th>Média</th><th>km/L</th><th>L/100 km</th><th>Rotação</th><th>Carga</th><th>Ajuste curto</th><th>Motor</th><th>Marchas</th></tr></thead><tbody>
+        ${rows.map((x) => `<tr><td class="head"><b>${CLS[x.cls][0]}</b>${x.pct_km != null ? `<br>${nf(x.pct_km)} % dos km` : ""}</td><td class="num" data-l="Km">${nf(x.km, 1)}</td><td class="num" data-l="Tempo">${dur(x.s)}</td>
+          <td class="num" data-l="Média">${nf(x.avg_kmh)} km/h</td><td class="num" data-l="km/L"><b>${nf(x.kml, 1)}</b></td><td class="num" data-l="L/100 km">${nf(x.l100, 1)}</td><td class="num" data-l="Rotação">${nf(x.rpm)}</td>
+          <td class="num" data-l="Carga">${nf(x.load)} %</td><td class="num" data-l="Ajuste curto">${x.stft == null ? "—" : (x.stft > 0 ? "+" : "") + nf(x.stft, 1) + " %"}</td><td class="num" data-l="Motor">${nf(x.ect)} °C</td><td data-l="Marchas" style="font-size:12px">${gearTxt(x.gears)}</td></tr>`).join("")}</tbody></table></div>
+        ${(rm.monthly || []).length >= 2 ? `<h3 class="lbl" style="margin-top:14px">km/L por mês</h3><svg class="chart" id="gMixChart" viewBox="0 0 600 190" preserveAspectRatio="none" style="margin-top:6px"></svg>
+          <div class="gm-legend"><span><i style="background:var(--speed)"></i>cidade</span><span><i style="background:var(--o2)"></i>estrada</span></div>` : ""}
+        <div class="muted" style="font-size:12px;margin-top:6px">${rm.trips} viagem(ns) com GPS. ${rm.geo ? "Tipo de via pelo mapa offline (rodovia, ou limite de 80 km/h ou mais, é estrada)." : "Sem mapa offline: o tipo sai da velocidade em janelas de 1 minuto (média de 70 km/h ou mais sem parar = estrada; abaixo de 45 ou com parada = cidade; entre os dois = misto)."}
+          Km pelo GPS; litros pelo consumo calculado do motor.</div>`
+        : `<div class="empty" style="margin-top:10px">Nenhuma viagem com GPS no período.</div>`}</div>${geoCard(status)}`;
+    $("#gMixD", body)?.addEventListener("change", (e) => { try { localStorage.setItem("gpsMixDays", e.target.value); } catch { } render(); });
+    const mo = rm.monthly || [];
+    if (mo.length >= 2 && U().lineChart) { const t = (m) => new Date(m + "-15T12:00:00").getTime();
+      U().lineChart($("#gMixChart", body), [{ pts: mo.map((m) => [t(m.month), m.cidade]), c: "--speed", dots: false }, { pts: mo.map((m) => [t(m.month), m.estrada]), c: "--o2" }],
+        { xfmt: (x) => new Date(x).toLocaleDateString("pt-BR", { month: "2-digit", year: "2-digit" }) }); }
+  };
+
+  // detalhe da viagem: km e consumo na cidade e na estrada
+  TRIP_EXTRA.push(({ card, det }) => {
+    let d = null; try { d = det?.gps?.road_json ? JSON.parse(det.gps.road_json) : null; } catch { }
+    if (!d?.classes) return;
+    const parts = ["cidade", "estrada", "misto"].map((c) => [c, d.classes[c]]).filter(([, x]) => x && x.km >= 0.1).map(([c, x]) => {
+      const fl = x.fuel_l || 0, kml = fl > 0.05 && x.km > 0.2 ? x.km / fl : null;
+      return `${CLS[c][0]} ${nf(x.km, 1)} km${kml ? ` (${nf(kml, 1)} km/L)` : ""}`; });
+    if (!parts.length) return;
+    const box = document.createElement("div");
+    box.className = "muted"; box.style.cssText = "font-size:13px;margin-top:8px";
+    box.innerHTML = `${parts.join(" · ")} <span style="font-size:12px">· ${d.fonte === "perfil" ? "pela velocidade" : "pelo mapa offline"}</span>`;
     card.appendChild(box);
   });
 

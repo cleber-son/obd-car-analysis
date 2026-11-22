@@ -1,5 +1,6 @@
 """Rotas /api/gps/* (docs/GPS-ARQUITETURA.md, seção 7.1). Posição só sai por aqui; na nuvem este prefixo é protegido
 pela senha de localização (F3), exceto as rotas sem posição (status, gears, speedo, score, perf, dyno, terrain, roadmix).
+Os radares do geo.db (/api/gps/cameras, F7) têm posição: ficam protegidos e não sobem para a nuvem.
 
 Cada fase acrescenta um bloco próprio, com comentário de cabeçalho (# ---- F2: …).
 """
@@ -119,6 +120,39 @@ def alerts_with_position(con, since: int, rule: str | None = None, tol_ms: int =
             "n": len(items), "with_pos": sum(1 for it in items if it["lat"] is not None)}
 
 
+# ---- F7: mapa offline (geo.db) no status, sem a área coberta nem o centro das ruas locais (o status é aberto na nuvem)
+GEO_PRIVATE = ("bbox", "inner")
+GEO_OLD_DAYS = 180
+GEO_HINT = ("Mapa de radares não instalado. No PC: python3 scripts/geo-build.py --bbox S,W,N,E (a região por onde o carro "
+            "anda) e depois scripts/deploy.sh.")
+
+
+def geo_status(gcfg: dict) -> dict | None:
+    """Tamanho, data e contagens do geo.db; 'velho' depois de 6 meses. None sem o arquivo."""
+    gp = Path(gcfg.get("geo_db") or "/data/obd/geo/geo.db")
+    try:
+        stt = gp.stat()
+    except OSError:
+        return None
+    geo = {"mb": round(stt.st_size / 1e6, 1), "mtime": int(stt.st_mtime * 1000)}
+    try:
+        gc = sqlite3.connect(f"file:{gp}?mode=ro&immutable=1", uri=True, timeout=2)
+        try:
+            meta = dict(gc.execute("SELECT key, value FROM meta").fetchall())
+        finally:
+            gc.close()
+        geo.update({k: v for k, v in meta.items() if k not in GEO_PRIVATE})
+    except sqlite3.Error:
+        geo["erro"] = "arquivo ilegível"
+    ref = geo.get("osm_ts") or geo.get("built_ts")
+    try:
+        geo["age_d"] = int((time.time() * 1000 - int(ref)) / 86400_000)
+        geo["velho"] = geo["age_d"] > GEO_OLD_DAYS
+    except (TypeError, ValueError):
+        pass
+    return geo
+
+
 def build(ro, check_admin, cfg, run_dir) -> APIRouter:
     r = APIRouter()
     run_dir = Path(run_dir)
@@ -152,17 +186,9 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
             out["last_fix_ts"] = con.execute("SELECT MAX(ts) FROM gps_fix").fetchone()[0]
         except (HTTPException, sqlite3.Error):
             pass
-        gp = Path(gcfg.get("geo_db") or "/data/obd/geo/geo.db")
-        if gp.exists():
-            geo = {"mb": round(gp.stat().st_size / 1e6, 1), "mtime": int(gp.stat().st_mtime * 1000)}
-            try:
-                gc = sqlite3.connect(f"file:{gp}?mode=ro&immutable=1", uri=True, timeout=2)
-                meta = dict(gc.execute("SELECT key, value FROM meta").fetchall())
-                gc.close()
-                geo.update({k: v for k, v in meta.items() if k != "bbox"})       # sem a área coberta (aberta na nuvem)
-            except sqlite3.Error:
-                pass
-            out["geo"] = geo
+        out["geo"] = geo_status(gcfg)
+        if out["geo"] is None:
+            out["geo_hint"] = GEO_HINT
         return out
 
     @r.get("/api/gps/live")
@@ -650,5 +676,44 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
         g = live.get("gps") or {}
         return {**terrainmod.report(ro(), int(time.time() * 1000) - days * 86400_000), "days": days,
                 "agora": {"avail_pct": g.get("avail_pct"), "slope": g.get("slope")}}
+
+    # ---- F7: vias — cidade × estrada (aberta na nuvem: só números) e radares do geo.db (posição: protegida, só no Pi)
+    from ..gps import roads as roadsmod
+
+    @r.get("/api/gps/roadmix")
+    def gps_roadmix(days: int = 30):
+        """Cidade × estrada: km, tempo, km/L, L/100 km, rotação, carga, ajuste curto, temperatura e marchas por classe,
+        e a tendência mensal do km/L de cada uma. Sem posição nem nome de rua."""
+        days = max(1, min(int(days), 400))
+        out = roadsmod.report(ro(), int(time.time() * 1000) - days * 86400_000)
+        g = geo_status(gcfg)
+        out.update(days=days, geo={k: g.get(k) for k in ("osm_ts", "built_ts", "age_d", "velho")} if g else None)
+        return out
+
+    @r.get("/api/gps/cameras")
+    def gps_cameras(bbox: str):
+        """Radares do geo.db dentro da caixa S,W,N,E (até 1° × 1°, no máximo 2.000): camada do mapa. Auxílio: o mapa
+        do OpenStreetMap pode estar desatualizado."""
+        try:
+            s_, w, n, e = (float(x) for x in bbox.split(","))
+        except ValueError:
+            raise HTTPException(400, "bbox = S,W,N,E") from None
+        if not (s_ < n and w < e) or n - s_ > 1.0 or e - w > 1.0:
+            raise HTTPException(400, "caixa inválida ou maior que 1° × 1°")
+        gp = Path(gcfg.get("geo_db") or "/data/obd/geo/geo.db")
+        if not gp.exists():
+            raise HTTPException(404, "mapa de radares não instalado")
+        try:
+            gc = sqlite3.connect(f"file:{gp}?mode=ro&immutable=1", uri=True, timeout=2)
+            try:
+                rows = gc.execute("SELECT lat, lon, maxspeed, dir FROM camera WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? LIMIT 2000",
+                                  (s_, n, w, e)).fetchall()
+                meta = dict(gc.execute("SELECT key, value FROM meta").fetchall())
+            finally:
+                gc.close()
+        except sqlite3.Error:
+            raise HTTPException(503, "geo.db ilegível") from None
+        return {"items": [{"lat": a, "lon": b, "limit": c, "dir": d} for a, b, c, d in rows], "n": len(rows),
+                "osm_ts": meta.get("osm_ts") or meta.get("built_ts"), "aviso": "auxílio: o mapa pode estar desatualizado; a placa vale sempre"}
 
     return r

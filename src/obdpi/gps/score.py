@@ -3,7 +3,8 @@
 A nota de direção econômica (tripdiag.eco_score, pelo OBD) continua; esta mede freadas, arrancadas e curvas fortes,
 excesso de velocidade, motor frio forçado e giro no limite. `drive_score` é pura (listas → nota e detalhe); `finalize`
 é o item de hub.FINALIZERS: grava trip.drive_score, trip_gps.drive_score/drive_json e um geo_event por acontecimento.
-Os limites de velocidade da via entram na F7 (`limits`); sem eles, o excesso conta acima de 115 km/h.
+Os limites de velocidade da via vêm do geo.db (F7, só os do OSM: o limite presumido pela classe não pesa); nas posições
+sem limite conhecido, o excesso conta acima de 115 km/h.
 """
 from __future__ import annotations
 
@@ -198,7 +199,12 @@ def finalize(con, tid: int, ctx=None) -> dict | None:
     else:
         fast = con.execute("SELECT ts, rpm, load FROM fast_sample WHERE ts BETWEEN ? AND ? ORDER BY ts", (a, b)).fetchall()
         ect = _slow_series(con, a, b).get("ect") or []
-        score, det = drive_score(fixes, fast, None, ect=ect, km=t["distance_km"], dur_s=(b - a) / 1000,
+        limits = None
+        geo = getattr(ctx, "geo", None)
+        if geo is not None:                          # F7: limite do OSM em cada posição de 1 Hz (a mesma lista de one_hz)
+            from .roads import osm_limits
+            limits = osm_limits(geo, one_hz(fixes))
+        score, det = drive_score(fixes, fast, limits, ect=ect, km=t["distance_km"], dur_s=(b - a) / 1000,
                                  coverage=g["coverage"] if g and g["coverage"] is not None else None)
         for e in det.get("eventos") or []:
             store.add_event(con, e["ts"], e["kind"], trip_id=tid, lat=round(e["lat"], 6), lon=round(e["lon"], 6), value=e["value"],

@@ -13,6 +13,15 @@ if [ "$PROT" = 1 ]; then
 fi
 rsync -az --delete --exclude '__pycache__' src deploy config requirements.txt "obd@$HOST:/opt/obd/"
 ssh "obd@$HOST" 'sudo bash /opt/obd/deploy/install.sh'
+# mapa offline do GPS (radares, limites, vias), gerado no PC por scripts/geo-build.py. /data é sempre gravável (não precisa
+# destravar a proteção do cartão). O rsync só manda se mudou e troca o arquivo de uma vez (geo.db.tmp + mv); o coletor
+# reabre sozinho em até 1 min.
+if [ -f data/geo/geo.db ]; then
+  echo "== mapa offline (geo.db)"
+  ssh "obd@$HOST" 'install -d /data/obd/geo && { [ -f /data/obd/geo/geo.db ] && cp -p /data/obd/geo/geo.db /data/obd/geo/geo.db.tmp || true; }'
+  rsync -az --inplace data/geo/geo.db "obd@$HOST:/data/obd/geo/geo.db.tmp"
+  ssh "obd@$HOST" 'mv -f /data/obd/geo/geo.db.tmp /data/obd/geo/geo.db'
+fi
 if [ -f secrets/cloud.txt ]; then
   sed -n 's/^SYNC_TOKEN=//p' secrets/cloud.txt | tr -d '\n' | ssh "obd@$HOST" 'sudo /opt/obd/deploy/set-cloud.sh https://obd.cleberson.social.br'
 fi

@@ -214,10 +214,12 @@ def _num(v, d):
 
 
 def build_track(fixes: list, fast_rows: list | None = None, slow: dict | None = None, tid: int | None = None,
-                eps_m: float = TRACK_EPS_M, max_pts: int = TRACK_MAX_PTS, every_s: float = TRACK_EVERY_S) -> dict | None:
+                eps_m: float = TRACK_EPS_M, max_pts: int = TRACK_MAX_PTS, every_s: float = TRACK_EVERY_S,
+                limits: list | None = None) -> dict | None:
     """Douglas–Peucker (6 m), mantendo ao menos um ponto a cada 5 s em movimento e as pontas dos buracos; até 800
     pontos (a tolerância dobra até caber) e 100 kB. Colunas com o valor mais próximo no tempo (fast_sample ±1,5 s;
-    sample ±6 s; null sem dado). 't' e 'gaps' em segundos desde t0."""
+    sample ±6 s; null sem dado). 't' e 'gaps' em segundos desde t0. limits (F7): limite da via em cada posição
+    (geo.db), vira a coluna "limit"."""
     if not fixes:
         return None
     fast_rows = fast_rows or []
@@ -251,7 +253,7 @@ def build_track(fixes: list, fast_rows: list | None = None, slow: dict | None = 
             if len(forced_gap) + (fixes[-1]["ts"] - t0) / 1000 / every > max_pts:
                 every *= 2
             continue
-        trk = _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps, slope)
+        trk = _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps, slope, limits)
         if len(json.dumps(trk, separators=(",", ":"))) <= TRACK_MAX_BYTES or len(idx) <= 50:
             trk["eps_m"] = eps
             return trk
@@ -259,12 +261,12 @@ def build_track(fixes: list, fast_rows: list | None = None, slow: dict | None = 
         every *= 2
     step = max(1, len(fixes) // 50)                  # caso patológico (centenas de buracos): amostra uniforme
     idx = sorted(set(range(0, len(fixes), step)) | {len(fixes) - 1})
-    trk = _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps[:50], slope)
+    trk = _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps[:50], slope, limits)
     trk["eps_m"] = None
     return trk
 
 
-def _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps, slope=None) -> dict:
+def _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps, slope=None, limits=None) -> dict:
     sel = [fixes[i] for i in idx]
     fts = [r["ts"] for r in fast_rows]
     cols: dict[str, list] = {"speed": [_num(f["speed"], 1) for f in sel]}
@@ -281,6 +283,8 @@ def _assemble(fixes, idx, fast_rows, slow, t0, tid, gaps, slope=None) -> dict:
         cols[name] = [(lambda j: _num(ser[j][1], d) if j is not None else None)(_nearest(sts, f["ts"], SLOW_TOL_MS)) for f in sel]
     if slope and any(x is not None for x in slope):
         cols["slope"] = [_num(slope[i], 1) for i in idx]
+    if limits and any(x is not None for x in limits):
+        cols["limit"] = [limits[i] for i in idx]
     lats, lons = [f["lat"] for f in sel], [f["lon"] for f in sel]
     return {"v": 1, "trip": tid, "t0": t0, "n": len(sel), "bbox": [round(min(lats), 5), round(min(lons), 5), round(max(lats), 5), round(max(lons), 5)],
             "t": [_num((f["ts"] - t0) / 1000, 1) for f in sel], "lat": [round(x, 5) for x in lats], "lon": [round(x, 5) for x in lons],
@@ -402,7 +406,14 @@ def finalize(con, tid: int, ctx=None) -> dict | None:
     cost = round(t["fuel_l"] * price[0], 2) if price and t["fuel_l"] else None
     km = t["distance_km"] or dist["km"]
     cost_km = round(cost / km, 3) if cost is not None and km and km > 0.1 else None
-    trk = build_track(fixes, fast, _slow_series(con, a, b), tid)
+    limits = None
+    if geo is not None:                              # F7: limite da via (geo.db) em cada posição
+        try:
+            from .roads import track_limits
+            limits = track_limits(geo, fixes)
+        except Exception:
+            limits = None
+    trk = build_track(fixes, fast, _slow_series(con, a, b), tid, limits=limits)
     sess = con.execute("SELECT clock_synced FROM session WHERE id=?", (t["session_id"],)).fetchone() if t["session_id"] else None
     if sess is not None and not sess[0]:
         flags.append("hora_aproximada")

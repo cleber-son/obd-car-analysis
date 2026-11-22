@@ -223,6 +223,7 @@ class Sync:
             self.gather(f"/api/advice?rule={urllib.parse.quote(r)}", docs)
         self.gather_gps_open(docs)
         self.gather_gps_perf(docs)
+        self.gather_gps_roads(docs)
         self.gather_gps(docs)
         n = self.push(docs)
         return n
@@ -238,6 +239,10 @@ class Sync:
         sempre, como os da F5."""
         for p in ("/api/gps/perf", "/api/gps/dyno", "/api/gps/terrain?days=90"):
             self.gather(p, docs)
+
+    def gather_gps_roads(self, docs: list) -> None:
+        """F7: cidade × estrada. Só números (aberto na nuvem, LOC_OPEN): sobe sempre. Os radares e o geo.db ficam no Pi."""
+        self.gather("/api/gps/roadmix?days=30", docs)
 
     def gather_gps(self, docs: list) -> None:
         """Documentos do GPS (seção 4.6). Sem posição: sempre. Com posição: só com a senha de localização na nuvem

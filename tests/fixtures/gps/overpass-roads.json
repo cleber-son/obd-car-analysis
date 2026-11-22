@@ -1,0 +1,272 @@
+{
+ "version": 0.6,
+ "generator": "teste feito à mão (não é resposta real)",
+ "osm3s": {
+  "timestamp_osm_base": "2026-10-01T12:00:00Z",
+  "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+ },
+ "elements": [
+  {
+   "type": "way",
+   "id": 10,
+   "bounds": {},
+   "nodes": [
+    1001,
+    1002,
+    1003,
+    1004,
+    1005
+   ],
+   "geometry": [
+    {
+     "lat": -23.5,
+     "lon": -46.6
+    },
+    {
+     "lat": -23.5,
+     "lon": -46.5950967
+    },
+    {
+     "lat": -23.5,
+     "lon": -46.5901934
+    },
+    {
+     "lat": -23.5,
+     "lon": -46.5852902
+    },
+    {
+     "lat": -23.5,
+     "lon": -46.5803869
+    }
+   ],
+   "tags": {
+    "highway": "secondary",
+    "name": "Avenida das Flores",
+    "maxspeed": "60"
+   }
+  },
+  {
+   "type": "way",
+   "id": 11,
+   "bounds": {},
+   "nodes": [
+    1101,
+    1102,
+    1103
+   ],
+   "geometry": [
+    {
+     "lat": -23.4996403,
+     "lon": -46.6
+    },
+    {
+     "lat": -23.4996403,
+     "lon": -46.5901934
+    },
+    {
+     "lat": -23.4996403,
+     "lon": -46.5803869
+    }
+   ],
+   "tags": {
+    "highway": "residential",
+    "name": "Rua Paralela",
+    "oneway": "yes"
+   }
+  },
+  {
+   "type": "way",
+   "id": 12,
+   "bounds": {},
+   "nodes": [
+    1201,
+    1202
+   ],
+   "geometry": [
+    {
+     "lat": -23.5269796,
+     "lon": -46.6
+    },
+    {
+     "lat": -23.5269796,
+     "lon": -46.5607738
+    }
+   ],
+   "tags": {
+    "highway": "trunk",
+    "ref": "BR-999",
+    "maxspeed": "62 mph"
+   }
+  },
+  {
+   "type": "way",
+   "id": 13,
+   "bounds": {},
+   "nodes": [
+    1301,
+    1302
+   ],
+   "geometry": [
+    {
+     "lat": -23.5089932,
+     "lon": -46.6
+    },
+    {
+     "lat": -23.5089932,
+     "lon": -46.5921548
+    }
+   ],
+   "tags": {
+    "highway": "tertiary",
+    "name": "Rua Zona",
+    "maxspeed": "BR:urban"
+   }
+  },
+  {
+   "type": "way",
+   "id": 14,
+   "bounds": {},
+   "nodes": [
+    1401,
+    1402
+   ],
+   "geometry": [
+    {
+     "lat": -23.4190612,
+     "lon": -46.511741
+    },
+    {
+     "lat": -23.4190612,
+     "lon": -46.508799
+    }
+   ],
+   "tags": {
+    "highway": "residential",
+    "name": "Rua Longe"
+   }
+  },
+  {
+   "type": "way",
+   "id": 15,
+   "bounds": {},
+   "nodes": [
+    1501,
+    1502
+   ],
+   "geometry": [
+    {
+     "lat": -23.4999101,
+     "lon": -46.6
+    },
+    {
+     "lat": -23.4999101,
+     "lon": -46.5990193
+    }
+   ],
+   "tags": {
+    "highway": "footway",
+    "name": "Calçada"
+   }
+  },
+  {
+   "type": "node",
+   "id": 3001,
+   "lat": -23.5001799,
+   "lon": -46.5931354,
+   "tags": {
+    "amenity": "fuel",
+    "name": "Posto Teste",
+    "brand": "Marca X"
+   }
+  },
+  {
+   "type": "way",
+   "id": 3002,
+   "bounds": {},
+   "nodes": [
+    1,
+    2,
+    3,
+    4,
+    1
+   ],
+   "geometry": [
+    {
+     "lat": -23.5004497,
+     "lon": -46.5882321
+    },
+    {
+     "lat": -23.5004497,
+     "lon": -46.5877418
+    },
+    {
+     "lat": -23.5008993,
+     "lon": -46.5877418
+    },
+    {
+     "lat": -23.5008993,
+     "lon": -46.5882321
+    },
+    {
+     "lat": -23.5004497,
+     "lon": -46.5882321
+    }
+   ],
+   "tags": {
+    "amenity": "fuel",
+    "name": "Posto Quadrado"
+   }
+  },
+  {
+   "type": "node",
+   "id": 3003,
+   "lat": -23.4997302,
+   "lon": -46.5823482,
+   "tags": {
+    "shop": "car_repair",
+    "name": "Oficina do Zé"
+   }
+  },
+  {
+   "type": "node",
+   "id": 4001,
+   "lat": -23.4991007,
+   "lon": -46.5901934,
+   "tags": {
+    "place": "suburb",
+    "name": "Centro"
+   }
+  },
+  {
+   "type": "node",
+   "id": 4002,
+   "lat": -23.4955034,
+   "lon": -46.5950967,
+   "tags": {
+    "place": "city",
+    "name": "Cidade Teste",
+    "is_in:state_code": "ZZ"
+   }
+  },
+  {
+   "type": "node",
+   "id": 4003,
+   "lat": -23.5,
+   "lon": -46.4038688,
+   "tags": {
+    "place": "town",
+    "name": "Outra Cidade"
+   }
+  },
+  {
+   "type": "node",
+   "id": 4004,
+   "lat": -23.5269796,
+   "lon": -46.5803869,
+   "tags": {
+    "place": "hamlet",
+    "name": "Vila Estrada"
+   }
+  }
+ ]
+}

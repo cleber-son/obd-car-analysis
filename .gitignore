@@ -8,3 +8,5 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+# gerado no PC (scripts/geo-build.py): mapa offline do GPS
+data/

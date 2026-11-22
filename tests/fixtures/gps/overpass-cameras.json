@@ -1,0 +1,97 @@
+{
+ "version": 0.6,
+ "generator": "teste feito à mão (não é resposta real)",
+ "osm3s": {
+  "timestamp_osm_base": "2026-10-01T12:00:00Z"
+ },
+ "elements": [
+  {
+   "type": "node",
+   "id": 1003,
+   "lat": -23.5,
+   "lon": -46.5901934,
+   "tags": {
+    "highway": "speed_camera",
+    "maxspeed": "60",
+    "direction": "forward"
+   }
+  },
+  {
+   "type": "relation",
+   "id": 5001,
+   "members": [
+    {
+     "type": "node",
+     "ref": 2001,
+     "role": "device",
+     "lat": -23.5000719,
+     "lon": -46.5852902
+    },
+    {
+     "type": "node",
+     "ref": 1004,
+     "role": "from",
+     "lat": -23.5,
+     "lon": -46.5852902
+    },
+    {
+     "type": "node",
+     "ref": 1005,
+     "role": "to",
+     "lat": -23.5,
+     "lon": -46.5803869
+    }
+   ],
+   "tags": {
+    "type": "enforcement",
+    "enforcement": "maxspeed",
+    "maxspeed": "50"
+   }
+  },
+  {
+   "type": "relation",
+   "id": 5002,
+   "members": [
+    {
+     "type": "node",
+     "ref": 2002,
+     "role": "device",
+     "lat": -23.5000719,
+     "lon": -46.5950967
+    }
+   ],
+   "tags": {
+    "type": "enforcement",
+    "enforcement": "traffic_signals"
+   }
+  },
+  {
+   "type": "node",
+   "id": 1102,
+   "lat": -23.4996403,
+   "lon": -46.5901934,
+   "tags": {
+    "highway": "speed_camera"
+   }
+  },
+  {
+   "type": "node",
+   "id": 2003,
+   "lat": -23.5269796,
+   "lon": -46.5901934,
+   "tags": {
+    "highway": "speed_camera",
+    "direction": "W"
+   }
+  },
+  {
+   "type": "node",
+   "id": 2004,
+   "lat": -23.544966,
+   "lon": -46.6490328,
+   "tags": {
+    "highway": "speed_camera"
+   }
+  }
+ ]
+}
