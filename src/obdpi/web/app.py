@@ -28,7 +28,7 @@ FAST_COLS = {"rpm", "speed", "map", "tps", "tps_rel", "tps_b", "tps_cmd", "pedal
 DAY = 86400_000
 TZ = time.localtime().tm_gmtoff * 1000   # dias agrupados no fuso local (America/Sao_Paulo)
 
-app = FastAPI(title="OBD Civic", version=__version__)
+app = FastAPI(title="Delfos", version=__version__)
 
 
 def ro():

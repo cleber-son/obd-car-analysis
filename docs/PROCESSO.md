@@ -337,3 +337,15 @@ Plano em `docs/GPS-ARQUITETURA.md` (seção 12, F3, com as "Notas da implementa�
   4. Depois o Pi (deploy normal). **No Pi não há nada novo para configurar:** ele não guarda a senha; descobre pelo `ping` se a nuvem tem `LOC_PASSWORD` e usa o `[cloud] url/token` que já existe. Para nunca enviar posição, mesmo com a senha na nuvem: `[gps] cloud = "off"` em `/etc/obd/obd.toml`.
   5. Conferir: sem desbloquear, `https://…/api/gps/live` responde 401 `{"locked": true, "configured": true}`; a aba Mapa pede a senha; depois de desbloquear, o diário e o mapa aparecem (após a próxima sincronização completa, até 5 min).
 - **Pendente:** ladrilhos reais e Safari do iPhone não conferidos (sem rede no ambiente de teste); `wrangler dev` não rodado (o Worker foi testado com D1 falso). O mapa real aparece com a primeira viagem com o receptor.
+
+## 2026-11-22 — Nome do programa: Delfos
+
+- O painel passa a se chamar **Delfos**, com o slogan **"o motor fala, Delfos traduz."** (escolha do dono).
+- Mudou: cabeçalho do painel (nome + slogan + carro), `manifest.webmanifest` (nome do app no iPhone), títulos de
+  `index.html`, `drive.html` ("Delfos · Dirigir"), `oficina.html` (o resumo diz que foi gerado pelo Delfos), tela de
+  login da nuvem, título da API, `obdctl notify-test` e **todas as notificações do ntfy** (`notify.send` assina
+  "Delfos · …" quando o título ainda não começa com Delfos).
+- O cache do app no iPhone virou `delfos-v3` (o antigo é descartado sozinho). Para o ícone mostrar o nome novo na
+  tela de início, pode ser preciso remover e adicionar o atalho de novo.
+- Não mudou (de propósito): nome do Worker/D1 (`civic-obd`), domínio, User-Agent do sync, nome do repositório e
+  pacote Python — trocar isso quebraria a nuvem sem ganho para quem usa.

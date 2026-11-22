@@ -1,4 +1,4 @@
-// Civic OBD — painel online público (Cloudflare Worker + D1), em https://obd.cleberson.social.br
+// Delfos — painel online público (Cloudflare Worker + D1), em https://obd.cleberson.social.br
 //
 // O Pi monta cada resposta da API e envia como "documento" (POST /api/sync/docs, com token). Este Worker:
 //   • serve o mesmo painel estático do Pi e responde GET /api/* com o documento correspondente (público, só leitura);
@@ -137,7 +137,7 @@ function syncAuthorized(req, env) {
 
 function loginPage(msg = "") {
   return new Response(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Civic OBD · Entrar</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Delfos · Entrar</title>
 <meta name="theme-color" content="#0d1117"><style>
 :root{--bg:#0d1117;--panel:#151b24;--line:#263041;--fg:#e8edf4;--muted:#8592a6;--ok:#2ee59d;--bad:#ff4d5e;color-scheme:dark}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);
@@ -148,8 +148,8 @@ form{width:min(380px,100%);background:var(--panel);border:1px solid var(--line);
 input{font:16px inherit;padding:14px;border-radius:12px;border:1px solid var(--line);background:#1c2430;color:var(--fg)}
 button{font:700 16px inherit;padding:14px;border:0;border-radius:12px;background:var(--ok);color:#06140d;cursor:pointer}
 .err{color:var(--bad);font-size:13px}</style></head><body>
-<form method="post" action="/login"><div class="logo"><i></i></div><h1>Civic 1.8 Flex</h1>
-<p>Painel online do OBD. Digite a senha para ver o histórico.</p>
+<form method="post" action="/login"><div class="logo"><i></i></div><h1>Delfos</h1>
+<p>o motor fala, Delfos traduz.<br>Painel online do Civic. Digite a senha para ver o histórico.</p>
 <input type="password" name="password" placeholder="Senha" autocomplete="current-password" autofocus required aria-label="Senha">
 ${msg ? `<div class="err">${msg}</div>` : ""}<button type="submit">Entrar</button></form></body></html>`,
     { status: msg ? 401 : 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });

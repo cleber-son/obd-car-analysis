@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Civic 1.8 · Resumo para a oficina</title>
+<title>Delfos · Resumo para a oficina</title>
 <meta name="theme-color" content="#f4f6f8">
 <style>
 /* Página para o mecânico: uma coluna, clara, direta, legível no celular e impressa. */
@@ -35,7 +35,7 @@ td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); vertical-align: 
 <div class="wrap">
   <header>
     <h1>Honda Civic 2008 · 1.8 flex (R18A) · manual</h1>
-    <div class="sub" id="meta">Resumo gerado pelo registrador OBD instalado no carro. Carregando…</div>
+    <div class="sub" id="meta">Resumo gerado pelo Delfos, o registrador OBD instalado no carro. Carregando…</div>
   </header>
   <div class="card verdict" id="verdict" style="--s:var(--muted)">Carregando…</div>
   <div class="card" id="hypCard" hidden><h2>Causa mais provável</h2><div id="hyp"></div></div>
@@ -62,7 +62,7 @@ td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); vertical-align: 
   const [diag, alerts, dtc, ann, imp, trips] = await Promise.all([get("/api/diagnostics?days=60"), get("/api/alerts?days=90"), get("/api/dtc"), get("/api/annotations"), get("/api/impact"), get("/api/trips?limit=1000")]);
   const ins = diag?.insight;
   const km = (trips || []).reduce((s, t) => s + (t.distance_km || 0), 0), last = (trips || [])[0];
-  $("meta").textContent = `Resumo gerado pelo registrador OBD instalado no carro · ${(trips || []).length} viagens e ${nf(km, 0)} km registrados${last ? " · última leitura em " + dt(last.end_ts || last.start_ts) : ""}`;
+  $("meta").textContent = `Resumo gerado pelo Delfos (o motor fala, Delfos traduz.) · ${(trips || []).length} viagens e ${nf(km, 0)} km registrados${last ? " · última leitura em " + dt(last.end_ts || last.start_ts) : ""}`;
   if (ins && ins.sistemas) {
     $("verdict").style.setProperty("--s", COL[ins.nivel]);
     $("verdict").innerHTML = `${esc(ins.veredito)}<span>${ins.tendencia ? esc(ins.tendencia) + " " : ""}Base: ${nf(ins.base.motor_ligado_h, 1)} h de motor ligado nos últimos 30 dias (${ins.base.parado} leituras parado, ${ins.base.rodando} rodando).</span>`;

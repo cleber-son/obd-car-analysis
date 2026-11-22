@@ -1,4 +1,6 @@
-# 🚗 obd-car-analysis
+# 🚗 Delfos (obd-car-analysis)
+
+*o motor fala, Delfos traduz.*
 
 **Telemetria contínua do Honda Civic 2008 1.8 flex com Raspberry Pi 3 + ELM327 Bluetooth.**
 

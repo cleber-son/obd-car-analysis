@@ -16,6 +16,8 @@ def send(server: str, topic: str, title: str, body: str, priority: int = 3, tags
     if not topic:
         return False
     req = urllib.request.Request(f"{server.rstrip('/')}/{topic}", data=body.encode("utf-8"), method="POST")
+    if not title.startswith("Delfos"):
+        title = f"Delfos · {title}"                 # toda notificação sai assinada pelo programa
     # cabeçalhos HTTP precisam ser latin-1; o ntfy aceita RFC 2047 para UTF-8
     import base64
     req.add_header("Title", "=?UTF-8?B?" + base64.b64encode(title.encode()).decode() + "?=")

@@ -1,4 +1,4 @@
-/* Painel Civic OBD — JS puro, sem build. Dados: /api/* e SSE /api/stream. */
+/* Painel Delfos — JS puro, sem build. Dados: /api/* e SSE /api/stream. */
 (() => {
   "use strict";
   const $ = (s) => document.querySelector(s);

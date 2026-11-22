@@ -215,7 +215,7 @@ def main():
         gps_reanalyze(cfg, args[2:])
     elif args[0] == "test-push":
         n = cfg["notify"]
-        ok = notify.send(n["ntfy_server"], n["ntfy_topic"], "Teste do Civic OBD ✅", "Se você recebeu isto, as notificações estão funcionando.", 3, "white_check_mark")
+        ok = notify.send(n["ntfy_server"], n["ntfy_topic"], "Teste do Delfos ✅", "Se você recebeu isto, as notificações estão funcionando.", 3, "white_check_mark")
         print("enviado" if ok else "falhou (sem internet ou sem tópico)")
     else:
         print(__doc__)
