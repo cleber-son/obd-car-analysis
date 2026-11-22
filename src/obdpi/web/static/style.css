@@ -189,8 +189,10 @@ details.alert[open] > summary { border-bottom: 1px solid var(--line) }
   .top .in { gap: 8px 10px; padding-top: 8px; padding-bottom: 8px }
   .brand small { display: none } .brand h1 { font-size: 16px } .logo { width: 28px; height: 28px; border-radius: 9px } .logo i { width: 18px; height: 18px; border-radius: 6px }
   .chips { flex: 1; justify-content: flex-end; min-width: 0 } .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis }
-  .chips .chip:nth-child(n+3) { display: none }
-  .acts { flex: 1 1 100% } .btn.act { flex: 1; padding: 11px 10px; font-size: 14px; border-radius: 12px }
+  /* Pi, ignição, motor e GPS numa linha própria, todos visíveis */
+  .chips { order: 3; flex: 1 1 100%; justify-content: flex-start; gap: 5px } .chip { font-size: 11px; padding: 4px 8px; gap: 5px }
+  .chips .chip.rate { display: none }
+  .acts { flex: 1 1 100%; order: 4 } .btn.act { flex: 1; padding: 11px 10px; font-size: 14px; border-radius: 12px }
   .wrap { gap: 12px; padding-top: 12px } .view { gap: 12px } .card { padding: 14px; border-radius: 18px }
   .btn, select, input[type=text], input[type=datetime-local], .rbtn { min-height: 40px; font-size: 14px }
   input[type=text], input[type=number], input[type=datetime-local], select { font-size: 16px }   /* iOS não dá zoom ao focar */
@@ -329,3 +331,9 @@ input[type=date] { font: 600 14px var(--f-body); color: var(--fg); background: v
 .gpform { display: grid; gap: 10px; margin-top: 12px }
 .gps-route { font-size: 12px; color: var(--muted); margin-top: 2px }
 .gpform [hidden], .gtabs [hidden] { display: none }
+
+/* celular deitado (tela baixa): cabeçalho e abas não grudam no topo e o mapa ocupa a altura toda da tela */
+@media (orientation: landscape) and (max-height: 600px) {
+  .top, .subnav { position: static }
+  .gmap, .gmap.sm { height: calc(100vh - 24px); height: calc(100dvh - 24px); min-height: 220px }
+}

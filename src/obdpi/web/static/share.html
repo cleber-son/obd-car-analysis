@@ -59,6 +59,14 @@ header h1 { margin: 0; font-size: 18px; line-height: 1.2 } header p { margin: 0;
 .t.warn .v { color: var(--warn) } .t.bad .v { color: var(--bad) }
 @media (max-width: 380px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)) } .big b { font-size: 48px } }
 .foot { font-size: 12px; color: var(--muted); text-align: center }
+/* celular deitado: mapa à esquerda na altura da tela, dados à direita */
+@media (orientation: landscape) and (max-height: 600px) {
+  .wrap { max-width: none; gap: 8px } header h1 { font-size: 16px } .logo { width: 30px; height: 30px }
+  #main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); column-gap: 12px; row-gap: 8px; align-items: start }
+  #main > .map { grid-column: 1; grid-row: 1 / span 3; height: calc(100vh - 92px); height: calc(100dvh - 92px); min-height: 200px }
+  #main > :not(.map) { grid-column: 2; margin-top: 0 !important }
+  .big b { font-size: 44px } .card { padding: 10px 12px } .grid { gap: 6px } .t { padding: 8px 10px } .t .v { font-size: 18px }
+}
 .gone { text-align: center; padding: 28px 18px } .gone h2 { margin: 6px 0; font-size: 20px } .gone p { margin: 0; color: var(--muted) }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
 </style>

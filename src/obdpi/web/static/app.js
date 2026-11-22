@@ -91,16 +91,26 @@
     <path id="a-${g.k}" fill="none" stroke="var(${g.c})" stroke-width="12" stroke-linecap="round"/></svg>
     <div class="v num" id="g-${g.k}">—</div><div class="u">${g.u}</div><div class="lbl">${g.n}</div><div class="sub" id="gs-${g.k}"></div></div>`).join("");
 
+  // cabeçalho: Pi, ignição, motor e GPS sempre à vista (verde = ligado), mais a luz de injeção quando acesa
+  function statusChips(d, stale) {
+    const chip = (c, txt, cls = "") => `<span class="chip st${cls}"><span class="dot" style="--c:${c}"></span>${esc(txt)}</span>`;
+    const off = d.state === "pi_offline", st = d.state || "";
+    const pi = off ? chip("var(--muted)", "Pi desligado") : stale ? chip("var(--bad)", "Pi sem dados há " + Math.round(d.age_s) + " s") : chip("var(--ok)", "Pi ligado");
+    const ign = off || stale ? chip("var(--muted)", "Ignição —") : st === "coletando" || d.engine_on ? chip("var(--ok)", "Ignição ligada")
+      : st === "ecu_silenciosa" ? chip("var(--muted)", "Ignição desligada") : chip("var(--warn)", (STATE[st] || ["", st])[1]);
+    const mot = off || stale ? chip("var(--muted)", "Motor —") : d.engine_on ? chip("var(--ok)", "Motor ligado" + (d.trip_start ? " · " + dur((d.ts - d.trip_start) / 1000) : ""))
+      : chip("var(--muted)", "Motor desligado");
+    const g = d.gps, gs = g?.state;
+    const gps = off || stale ? chip("var(--muted)", "GPS —") : !g || gs === "desligado" ? chip("var(--muted)", "GPS desligado") : gs === "ok" ? chip("var(--ok)", "GPS ligado" + (g.sats != null ? " · " + g.sats + " sat" : ""))
+      : chip((GPS_ST[gs] || GPS_ST.desconectado)[0], "GPS " + (GPS_ST[gs] || [0, gs])[1].toLowerCase());
+    return pi + ign + mot + gps + (d.mil ? chip("var(--bad)", "Luz de injeção acesa") : "") + (d.rates?.fast_hz ? `<span class="chip num rate">${nf(d.rates.fast_hz, 1)} leit/s</span>` : "");
+  }
   function renderLive(d) {
     live = d;
     const v = d.values || {};
     const [sc, sl] = STATE[d.state] || ["var(--muted)", d.state];
     const stale = d.state !== "pi_offline" && d.age_s != null && d.age_s > 15;
-    $("#chips").innerHTML = `<span class="chip"><span class="dot" style="--c:${stale ? "var(--bad)" : sc}"></span>${esc(stale ? "Sem dados há " + Math.round(d.age_s) + " s" : sl)}</span>
-      ${d.engine_on ? `<span class="chip"><span class="dot" style="--c:var(--ok)"></span>Motor ligado${d.trip_start ? " · " + dur((d.ts - d.trip_start) / 1000) : ""}</span>` : ""}
-      ${d.mil ? `<span class="chip"><span class="dot" style="--c:var(--bad)"></span>Luz de injeção acesa</span>` : ""}
-      ${d.rates?.fast_hz ? `<span class="chip num">${nf(d.rates.fast_hz, 1)} leit/s</span>` : ""}
-      ${d.gps && d.gps.state !== "desligado" ? `<span class="chip"><span class="dot" style="--c:${(GPS_ST[d.gps.state] || GPS_ST.desconectado)[0]}"></span>GPS${d.gps.state === "ok" ? (d.gps.sats != null ? " · " + d.gps.sats + " sat" : "") : " · " + (GPS_ST[d.gps.state] || [0, d.gps.state])[1].toLowerCase()}</span>` : ""}`;
+    $("#chips").innerHTML = statusChips(d, stale);
     for (const g of GAUGES) {
       const x = v[g.k]; const p = Math.max(0.001, Math.min(1, (x ?? 0) / g.max));
       const el = $("#a-" + g.k); el.setAttribute("d", x == null ? "" : `M ${arcPt(0)} A 58 58 0 ${p > 2 / 3 ? 1 : 0} 1 ${arcPt(p)}`);
@@ -213,7 +223,7 @@
     try { es?.close(); } catch { }
     es = new EventSource("/api/stream");
     es.onmessage = (e) => { try { const d = JSON.parse(e.data); if (!staleSSE(d)) { if (d.state === "pi_offline") wsTs = 0; onLive(d); } } catch (err) { console.error(err); } };
-    es.onerror = () => { $("#chips").innerHTML = `<span class="chip"><span class="dot" style="--c:var(--bad)"></span>Sem conexão com o Pi</span>`; };
+    es.onerror = () => { $("#chips").innerHTML = `<span class="chip st"><span class="dot" style="--c:var(--bad)"></span>Sem conexão com o Pi</span>`; };
   }
   document.addEventListener("visibilitychange", () => { if (document.hidden) es?.close(); else connectStream(); });
 

@@ -54,7 +54,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .app.graphmode .lim { width: 44px; height: 44px; border-width: 5px; font-size: 17px }
 
 /* tiles */
-.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-content: start; min-height: 0 }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-content: start; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none }
+.tiles::-webkit-scrollbar { display: none }
 .t { background: var(--tile); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; min-width: 0; border-top: 3px solid var(--c, var(--line)) }
 .t .l { font: 600 10px var(--disp); text-transform: uppercase; letter-spacing: .03em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
 .t .v { font: 700 24px var(--mono); font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap } .t .v small { font: 600 11px var(--disp); color: var(--muted); margin-left: 2px }
@@ -71,10 +72,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 
 /* paisagem (no suporte do carro) */
 @media (orientation: landscape) {
-  .app { grid-template-columns: 1.05fr 1fr; grid-template-rows: auto auto auto 1fr auto; column-gap: 16px }
-  .top, .rpmbar, .alert { grid-column: 1 / -1 } .app > .core { grid-row: 4 } .app > .tiles { grid-row: 4; grid-template-columns: repeat(3, minmax(0, 1fr)) } .app > .foot { grid-row: 5 }
-  .spd b { font-size: clamp(110px, 26vh, 200px) } .foot { grid-column: 1 / -1 }
-  .t .v { font-size: 20px }
+  /* celular deitado: velocidade, marcha e alerta à esquerda; quadros à direita, rolando se não couberem */
+  .app { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); grid-template-rows: auto auto auto 1fr auto; column-gap: 14px; row-gap: 6px }
+  .top, .rpmbar, .foot { grid-column: 1 / -1 } .app > .top { grid-row: 1 } .app > .rpmbar { grid-row: 2 }
+  .app > .core { grid-row: 3; grid-column: 1; align-self: center } .app > .alert { grid-row: 4; grid-column: 1; align-self: start; font-size: 13px; padding: 8px 10px }
+  .app > .tiles { grid-row: 3 / 5; grid-column: 2; gap: 6px } .app > .foot { grid-row: 5 }
+  .spd b { font-size: clamp(84px, 30vh, 190px) } .gear { width: 76px; height: 76px; font-size: 46px; border-radius: 20px } .rpmnum b { font-size: 28px }
+  .side { gap: 6px } .lim { width: 52px; height: 52px; border-width: 6px; font-size: 20px }
+  .t { padding: 7px 10px; border-radius: 13px } .t .v { font-size: 19px } .t .s { font-size: 10px }
+  .rpmbar { height: 14px }
 }
 .acc { position: fixed; inset: 0; z-index: 10; background: color-mix(in srgb, #000 88%, transparent); display: grid; place-items: center; padding: 20px }
 .acc[hidden] { display: none } .accin { display: grid; gap: 14px; justify-items: center; text-align: center; width: 100% }
@@ -112,6 +118,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 @media (orientation: landscape) {
   .app.graphmode { grid-template-columns: 1fr }
   .app.graphmode > .graphs { grid-row: 5; grid-column: 1 } .app.graphmode > .core { grid-row: 4; grid-column: 1 } .app.graphmode > .foot { grid-row: 6 }
+  .app.graphmode > .alert { grid-row: 3; grid-column: 1 }
   .app.graphmode { grid-template-rows: auto auto auto auto 1fr auto }
   .glist { flex-direction: row; flex-wrap: wrap; align-content: flex-start } .g { flex: 1 0 calc(33.3% - 6px); min-height: 78px; height: calc(50% - 3px) }
   .app.graphmode .spd b { font-size: 44px } .app.graphmode .gear { width: 42px; height: 42px; font-size: 24px }
@@ -175,8 +182,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   const sgn = (x, d = 1) => x == null ? "—" : (x > 0 ? "+" : "") + nf(x, d);
   let priv = null, privLocked = false;          // F8: /api/gps/live (destino, chegada, fala dos lugares); privado
   const CAT = {
-    kml: { l: "Consumo", c: "--o2", r: (v) => { const rh = brl(v.fuel_lh, "/h");
-      return v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" + rh : ""] : [nf(v.fuel_lh, 1), "L/h", "parado" + rh]; } },
+    kml: { l: "Consumo", c: "--o2", r: (v, t) => {
+      // R$ gastos na viagem até agora (preço do último abastecimento): primeira coisa da linha de baixo
+      const gasto = t.cost > 0 ? "R$ " + nf(t.cost, 2) + " até agora" : brl(t.fuel_l).replace(/^ \((.*)\)$/, "$1 até agora");
+      return v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", [gasto, v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" : ""].filter(Boolean).join(" · ")]
+        : [nf(v.fuel_lh, 1), "L/h", [gasto, "parado"].filter(Boolean).join(" · ")]; } },
     kmlavg: { l: "Média viagem", c: "--o2", r: (v, t) => [nf(t.kml, 1), "km/L", t.fuel_l ? nf(t.fuel_l, 2) + " L" + (t.cost ? " · R$ " + nf(t.cost, 2) : "") : "calculando…"] },
     kmltank: { l: "Média do tanque", c: "--o2", r: (v, t) => { const sf = fuelInfo?.since_fill; if (!sf) return ["—", "km/L", ""];
       const km = (sf.km || 0) + (t.km || 0), l = (sf.liters_est || 0) + (t.fuel_l || 0);     // viagens fechadas desde o tanque + a viagem de agora
@@ -219,10 +229,14 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
       return [new Date(d.eta_ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), "", `${d.name} · ${nf(d.left_km, 1)} km · ${left} min`]; } },
   };
   const GPS_TILES = ["gpsspd", "alt", "power"];
-  const DEFAULT = ["kml", "kmlavg", "kmltank", "stft", "timing", "ect", "prev", "auto", "km", "time", "avg", "tps"];
+  // ordem pedida pelo dono (2026-11-22): autonomia, consumo, vel. média, média viagem, média do tanque, motor, previsão, ajuste curto, avanço
+  const ORDER = ["auto", "kml", "avg", "kmlavg", "kmltank", "ect", "prev", "stft", "timing"];
+  const DEFAULT = [...ORDER, "km", "time", "tps"];
   let chosen; try { chosen = JSON.parse(localStorage.getItem("driveTiles")) || DEFAULT; } catch { chosen = DEFAULT; }
   try { if (!localStorage.getItem("tilesV2")) { localStorage.setItem("tilesV2", "1");            // quadro novo entra uma vez para quem já tinha personalizado
     if (!chosen.includes("kmltank")) { chosen.splice(chosen.indexOf("kmlavg") + 1, 0, "kmltank"); localStorage.setItem("driveTiles", JSON.stringify(chosen)); } } } catch { }
+  try { if (!localStorage.getItem("tilesV3")) { localStorage.setItem("tilesV3", "1");            // aplica a ordem nova uma vez, sem perder os extras
+    chosen = [...ORDER, ...chosen.filter((k) => !ORDER.includes(k))]; localStorage.setItem("driveTiles", JSON.stringify(chosen)); } } catch { }
   chosen = chosen.filter((k) => CAT[k]);
   function buildTiles() {
     $("tiles").innerHTML = chosen.map((id) => { const t = CAT[id]; return `<div class="t${t.wide ? " wide" : ""}" id="t-${id}" style="--c:var(${t.c})"><div class="l">${t.l}</div><div class="v" id="v-${id}">—</div><div class="s" id="s-${id}"></div>${t.bar ? `<div class="lam trim"><i id="bar-${id}"></i></div>` : ""}</div>`; }).join("");

@@ -3,7 +3,7 @@
    Nunca guarda o fluxo ao vivo nem envios (POST). Nada com posição fica guardado no aparelho: /api/gps/*, /api/share/*,
    /s/* e /loc/* vão direto à rede (sem cópia), para a localização não sobrar depois que a senha vence.
    Os ladrilhos do mapa são de outra origem (tile.openstreetmap.org) e não passam por aqui. */
-const CACHE = "delfos-v4";
+const CACHE = "delfos-v5";
 const SHELL = ["/", "/dirigir", "/oficina", "/static/style.css", "/static/app.js", "/static/tests.js", "/static/extras.js", "/static/icon-192.png",
   "/static/leaflet.js", "/static/leaflet.css", "/static/gpsmap.js", "/static/gps.js", "/static/voice.js"];
 const NO_CACHE = (p) => p === "/api/stream" || p === "/api/ws" || p.startsWith("/api/sync/") || p === "/api/export.csv"
