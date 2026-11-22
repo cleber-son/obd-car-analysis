@@ -339,7 +339,13 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   }
 
   let last = 0;
-  function render(d) {
+  // leitura velha não é "ao vivo" (mesma regra do painel): sem sinal do Pi, nada; senão só o lido nos últimos 45 s
+  const freshLive = (d) => { if (!d || !d.values) return d; if (d.state === "pi_offline") return { ...d, values: {} };
+    const vt = d.value_ts || {}, ref = d.ts || 0; if (!ref || !Object.keys(vt).length) return d;
+    const v = {}; for (const [k, x] of Object.entries(d.values)) if (vt[k] == null || ref - vt[k] <= 45000) v[k] = x;
+    return { ...d, values: v }; };
+  function render(d0) {
+    const d = freshLive(d0);
     renderAcc(d);
     const v = d.values || {}, tr = d.trip || {};
     last = Date.now();

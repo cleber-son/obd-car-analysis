@@ -202,7 +202,12 @@
     open();
   }
   const staleSSE = (d) => d.state !== "pi_offline" && wsTs && (d.ts || 0) <= wsTs;   // o WebSocket já mostrou algo mais novo
-  const onLive = (d) => { LIVE_D = d; window.dispatchEvent(new CustomEvent("obdlive", { detail: d })); renderLive(d); };
+  // leitura velha não é "ao vivo": sem sinal do Pi, nada; com o Pi ligado e a central calada, só o que foi lido nos últimos 45 s
+  const freshLive = (d) => { if (!d || !d.values) return d; if (d.state === "pi_offline") return { ...d, values: {}, pedal_norm: null };
+    const vt = d.value_ts || {}, ref = d.ts || 0; if (!ref || !Object.keys(vt).length) return d;
+    const v = {}; for (const [k, x] of Object.entries(d.values)) if (vt[k] == null || ref - vt[k] <= 45000) v[k] = x;
+    return { ...d, values: v }; };
+  const onLive = (d0) => { const d = freshLive(d0); LIVE_D = d; window.dispatchEvent(new CustomEvent("obdlive", { detail: d })); renderLive(d); };
   function connectStream() {
     try { es?.close(); } catch { }
     es = new EventSource("/api/stream");
@@ -884,7 +889,7 @@
       ${env.readonly ? '<span class="muted" style="margin-left:auto">somente visualização</span>' : '<a href="/logout" style="margin-left:auto">Sair</a>'}`;
     const hide = ["#accGo", "#csvLink", "#resetCard"].concat(env.readonly ? ["#annForm", "#aiRun", "#alertClear", "#askForm", "#fpSave"] : []);
     for (const id of hide) { const el = $(id); if (el) el.hidden = true; }
-    const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
+    const f = $("#aiForm"); if (f) f.innerHTML = `<div class="empty">As chaves de IA são configuradas no painel do Pi (rede local). Aqui o botão <b>Analisar dados</b> (em Diagnóstico) pede a análise ao Pi na próxima conexão e mostra o último laudo.</div>`;
   }
   fetch("/api/env").then((r) => r.ok ? r.json() : null).then((env) => { if (env && env.cloud) { applyCloud(env); liveSocket(onLive); setInterval(() => fetch("/api/env").then((r) => r.json()).then(applyCloud).catch(() => { }), 60000); } }).catch(() => { })
     .finally(() => api("/api/signals").then((s) => { for (const x of s) catalog[x.key] = x; }).catch(() => { }).finally(() => { connectStream(); route(); }));

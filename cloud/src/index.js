@@ -98,6 +98,7 @@ function liveView(raw, meta) {
       d.state = "pi_offline";
       d.engine_on = false;
       d.trip_id = null; d.trip_start = null; d.trip = null;
+      d.values = {}; d.value_ts = {}; d.pedal_norm = null;          // não mostrar a última leitura como se fosse ao vivo
     }
     // idade pela hora em que a nuvem recebeu: o Pi não tem relógio próprio e fica minutos atrasado logo depois de ligar
     const seen = meta.live_updated || d.ts;

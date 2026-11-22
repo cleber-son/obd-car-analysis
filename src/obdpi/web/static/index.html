@@ -18,8 +18,7 @@
 <header class="top"><div class="in">
   <div class="brand"><div class="logo"><i></i></div><div><h1>Civic 1.8 Flex</h1><small>2008 · R18A · Manual</small></div></div>
   <div class="chips" id="chips"><span class="chip"><span class="dot" style="--c:var(--muted)"></span>Conectando ao Pi…</span></div>
-  <div class="acts"><button class="btn act" type="button" id="aiBtn" style="--a:var(--volt);--at:#fff">🤖 Analisar dados</button>
-  <a class="btn act" href="/dirigir" style="--a:var(--speed);--at:#04121a">▶ Modo direção</a></div>
+  <div class="acts"><a class="btn act" href="/dirigir" style="--a:var(--speed);--at:#04121a">▶ Modo direção</a></div>
   <nav class="tabs" id="tabs">
     <a href="#vivo" data-v="vivo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 14l4-4"/><path d="M3.5 18a9 9 0 1 1 17 0"/></svg>Ao vivo</a>
     <a href="#borboleta" data-v="borboleta" class="sub"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M7 17L17 7"/></svg>Borboleta</a>
@@ -164,6 +163,8 @@
   <section class="view" id="v-diagnostico" hidden>
     <div class="card"><h2>🩺 Como está o carro</h2><div class="lbl" style="margin:4px 0 10px" id="insBase">Últimos 30 dias · toque em um item para ver os números</div>
       <div id="insBox"><div class="empty">Carregando…</div></div></div>
+    <div class="card"><div class="row-head"><div><h2>🤖 Laudo da IA</h2><div class="lbl" style="margin-top:4px">Análise completa dos dados e perguntas sobre o carro</div></div>
+      <button class="btn" type="button" id="aiBtn">Analisar dados</button></div></div>
     <div class="card"><div class="row-head"><div><h2>🧬 Impressão digital do motor</h2><div class="lbl" style="margin-top:4px" id="fpSub">O carro de hoje comparado com ele mesmo quando estava saudável</div></div>
       <button class="btn" type="button" id="fpSave" hidden>Gravar referência agora</button></div>
       <div id="fpBox" style="margin-top:10px"><div class="empty">Carregando…</div></div></div>
@@ -263,7 +264,7 @@
       <div class="stats" id="gpsStats" style="margin-top:12px"></div></div>
     <div class="grid2e">
       <div class="card"><h2>Análise por IA</h2><div class="lbl" style="margin:4px 0 10px">Chaves salvas só no Pi; o painel nunca mostra a chave inteira</div>
-        <div class="muted" style="font-size:13px;margin-bottom:10px">Com a chave salva, além do botão <b>Analisar dados</b>, o Pi gera sozinho um laudo curto ao fim de cada viagem (mais de 5 min ou 1 km) e avisa no celular.</div>
+        <div class="muted" style="font-size:13px;margin-bottom:10px">Com a chave salva, além do botão <b>Analisar dados</b> (em Diagnóstico), o Pi gera sozinho um laudo curto ao fim de cada viagem (mais de 5 min ou 1 km) e avisa no celular.</div>
         <form id="aiForm" style="display:grid;gap:10px">
           <div class="seg small" role="radiogroup" aria-label="Provedor">
             <label><input type="radio" name="aiprov" value="anthropic" id="provA"><span>Claude (Anthropic)</span></label>
