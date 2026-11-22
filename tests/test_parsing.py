@@ -54,7 +54,7 @@ def test_throttle_stall_and_hunt():
         rpm = 800 + (200 if (i // 2) % 2 else -200)
         out += t.feed({"rpm": rpm, "speed": 0, "tps": 6, "tps_cmd": 7, "pedal_d": 15}, ts, 90)
     assert any(a.rule == "R4" for a in out), [a.rule for a in out]
-    for rpm in (800, 790, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0):   # ECU continua respondendo com motor parado
+    for rpm in (800, 790, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0):   # ECU continua respondendo com motor parado
         ts += 1000
         out += t.feed({"rpm": rpm, "speed": 0, "tps": 6, "tps_cmd": 7, "pedal_d": 15}, ts, 90)
     assert any(a.rule == "R6" and a.severity == "crit" for a in out)
@@ -107,6 +107,23 @@ def test_keyoff_is_not_stall():
     assert not any(a.rule == "R6" for a in out)
 
 
+def test_keyoff_with_ecu_lingering_is_not_stall():
+    """Desligar a chave: a central ainda responde alguns segundos (rpm 0 e leituras vazias) e depois some."""
+    t = ThrottleEngine(); ts = 0; out = []
+    for rpm in [760] * 10 + [473, 0, 0, None, 0, None, None, None, None, None]:
+        ts += 1000
+        out += t.feed({"rpm": rpm, "speed": 0, "tps": 6, "tps_cmd": 7, "pedal_d": 15}, ts, 90)
+    assert not any(a.rule == "R6" for a in out), [(a.rule, a.detail) for a in out]
+
+
+def test_stall_then_restart_alerts():
+    t = ThrottleEngine(); ts = 0; out = []
+    for rpm in [780] * 10 + [0, 0, 250, 900, 850]:      # morreu, deu partida de novo em seguida
+        ts += 1000
+        out += t.feed({"rpm": rpm, "speed": 0, "tps": 6, "tps_cmd": 7, "pedal_d": 15}, ts, 90)
+    assert any(a.rule == "R6" and a.severity == "crit" for a in out)
+
+
 def test_pegged_stft_still_alerts():
     # STFT cravado no limite da ECU (+46,9 % em marcha lenta) é mistura pobre de verdade: continua alertando
     l = LimitsEngine(period_s=5)
@@ -116,6 +133,20 @@ def test_pegged_stft_still_alerts():
         out += l.evaluate(dict(v), True, i)
     assert any(a.rule.startswith("stft1") and a.severity == "crit" for a in out)
     assert l.status(v, True)["stft1"][0] == "crit"
+
+
+def test_baseline_adopts_new_level_after_repair():
+    """Bicos trocados: o ajuste habitual era +47 % e passa a ficar perto de 0. Avisa no começo e depois aceita o novo patamar."""
+    l = LimitsEngine(period_s=20)
+    base = {"ect": 90, "rpm": 750, "speed": 0, "run_time": 600}
+    for i in range(120):
+        l.evaluate(dict(base, stft1=46.8 + (i % 3 - 1) * 0.4), True, i * 20000)
+    out = []
+    for i in range(120, 220):
+        out += [a for a in l.evaluate(dict(base, stft1=(i % 5) - 2.0), True, i * 20000) if a.rule == "z:stft1@idle_warm"]
+    assert out, "devia avisar logo depois da mudança"
+    assert abs(l.base["stft1@idle_warm"].mean) < 5      # o novo habitual é o patamar de agora
+    assert out[-1].ts < 160 * 20000                    # e parou de avisar
 
 
 def test_report_since_and_trip():

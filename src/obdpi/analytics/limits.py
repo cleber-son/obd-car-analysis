@@ -102,6 +102,7 @@ class LimitsEngine:
         self.seen: set[str] = set()
         self.streak: dict[tuple, int] = defaultdict(int)
         self.z_streak: dict[str, int] = defaultdict(int)
+        self.z_side: dict[str, bool] = {}
         self.base: dict[str, Welford] = {}
         for r in baseline_rows or []:
             self.base[r["key"]] = Welford(r["n"], r["mean"], r["m2"])
@@ -173,12 +174,23 @@ class LimitsEngine:
                     z = (x - w.mean) / max(w.std, abs(w.mean) * 0.02, 0.5)
                     if abs(z) > self.Z_WARN:
                         self.z_streak[bk] += 1
+                        # mudança de patamar que se mantém (ex.: depois de um reparo, o ajuste sai de +47 % para perto de 0):
+                        # após ~10 min seguidos fora, sempre do mesmo lado, o novo valor vira o habitual. Os limites
+                        # absolutos (acima) continuam valendo, então uma falha de verdade segue alertando por eles.
+                        side = self.z_side.get(bk)
+                        if side is not None and side != (z > 0):
+                            self.z_streak[bk] = 1
+                        self.z_side[bk] = z > 0
+                        if self.z_streak[bk] >= self.MIN_BASELINE // 3:
+                            self.base[bk] = Welford(); self.base[bk].add(x)
+                            self.z_streak[bk] = 0; self.z_side.pop(bk, None)
+                            continue
                         if self.z_streak[bk] >= 3 * self.k:
                             alerts.append(Alert("baseline", f"z:{bk}", "warn", "Sensor fora do comportamento habitual",
                                                 f"{sig} = {x:g} (habitual {w.mean:.1f} ± {w.std:.1f} em {'marcha lenta' if c == 'idle_warm' else 'cruzeiro'})",
                                                 sig, x, ts))
                     else:
-                        self.z_streak[bk] = 0
+                        self.z_streak[bk] = 0; self.z_side.pop(bk, None)
                         if learn:
                             w.add(x)
                 elif learn:

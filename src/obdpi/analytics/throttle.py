@@ -197,9 +197,16 @@ class ThrottleEngine:
             if rpm is not None and rpm > 400:                       # religou logo depois: foi estol mesmo
                 out += self._emit("R6", pend["sev"], pend["title"], pend["detail"], pend["ts"], "rpm", 0, 30)
                 self.r6_pending = None
-            elif ts - pend["ts"] >= 8000:                          # ECU seguiu respondendo com o motor parado
-                out += self._emit("R6", pend["sev"], pend["title"], pend["detail"], pend["ts"], "rpm", 0, 30)
-                self.r6_pending = None
+            else:
+                # ECU seguiu respondendo com o motor parado. Só conta resposta de verdade (rpm 0 lido), nunca leitura
+                # vazia; e pede 6 leituras em >= 12 s: ao desligar a chave a central ainda responde uns segundos.
+                if rpm is not None and rpm < 100:
+                    pend["zeros"] = pend.get("zeros", 0) + 1
+                if pend.get("zeros", 0) >= 6 and ts - pend["ts"] >= 12000:
+                    out += self._emit("R6", pend["sev"], pend["title"], pend["detail"], pend["ts"], "rpm", 0, 30)
+                    self.r6_pending = None
+                elif ts - pend["ts"] >= 60000:                     # meio minuto sem confirmar: foi a chave, esquece
+                    self.r6_pending = None
         elif prev and rpm is not None and rpm < 100:
             hist = [x.get("rpm") for x in list(self.win)[-5:-1] if x.get("rpm") is not None]
             if hist and max(hist) > 400:

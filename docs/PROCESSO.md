@@ -358,3 +358,15 @@ Plano em `docs/GPS-ARQUITETURA.md` (seção 12, F4, com as "Notas da implementa�
 - **API** (`web/gps_api.py`, bloco F4): `/api/gps/routes`, `/api/gps/routes/{id}` (+ renomear), `/api/gps/segments` (+ criar), `/api/gps/segments/{id}` (+ renomear, ativar/desativar, reprocessar, apagar). `obd-sync` envia rotas e trechos só com a senha de localização.
 - **Testes:** `tests/test_gps_routes.py` (8 testes: agrupamento, variante e volta, estatística por combustível e atípica, sentido e validade das passagens, busca idempotente, antes/depois do conserto, integração com o `extras.impact()`, sincronização). Suíte inteira 61 testes, 7 vezes seguidas (uma com outro fuso), sem falha; `npm test` da nuvem passa (Worker não mudou). Conferido no Chromium (celular, claro e escuro, banco simulado de 6 dias): criar trecho tocando no traçado, rotas, histórico e "antes e depois", sem erro de JavaScript.
 - **Pendente para o dia do hardware:** o dono escolher o trecho real (item 10 da lista 10.5) — de preferência 0,5–3 km sem semáforo, feito sempre no mesmo sentido; conferir com o VK-172 o raio de 35 m dos portões e a tolerância de ±15 % no comprimento; ver se a leitura lenta a cada ~20 s dá amostras de ajuste curto suficientes em trechos curtos.
+
+## 2026-11-22 — Dois falsos alarmes depois da troca dos bicos
+
+- **"Motor morreu em marcha lenta" ao desligar a chave.** O estol era confirmado 8 s depois da queda de rotação
+  mesmo sem resposta da central (leitura vazia contava como "central respondendo"). Agora só conta rpm 0 lido de
+  verdade: precisa de 6 leituras em pelo menos 12 s, ou de uma nova partida logo em seguida. Depois de 60 s sem
+  confirmar, entende que foi a chave e esquece. Testes: `test_keyoff_with_ecu_lingering_is_not_stall`,
+  `test_stall_then_restart_alerts`.
+- **"Sensor fora do comportamento habitual" sem fim.** A linha de base só aprendia valores dentro do habitual, então
+  depois de um reparo (ajuste de +47 % → perto de 0) ela nunca se atualizava e avisava para sempre. Agora, depois de
+  ~10 min seguidos fora e sempre do mesmo lado, o novo valor vira o habitual e ela reaprende. Os limites absolutos
+  (ajuste fora de ±15 % etc.) continuam valendo. Teste: `test_baseline_adopts_new_level_after_repair`.
