@@ -1,0 +1,6 @@
+# /etc/default/gpsd — instalado pelo deploy/install.sh (GPS VK-172 na USB)
+# -n: lê o receptor mesmo sem cliente (mantém o chrony alimentado com a hora do GPS)
+START_DAEMON="true"
+USBAUTO="true"
+DEVICES=""
+GPSD_OPTIONS="-n"

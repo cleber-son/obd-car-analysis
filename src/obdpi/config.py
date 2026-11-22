@@ -32,6 +32,20 @@ DEFAULTS: dict = {
     "web": {"bind": "0.0.0.0", "port": 80, "admin_token": ""},
     "notify": {"ntfy_server": "https://ntfy.sh", "ntfy_topic": "", "min_severity": "warn"},
     "runtime": {"live_sock": "/run/obd/live.sock", "control_sock": "/run/obd/control.sock"},
+    # GPS (docs/GPS-ARQUITETURA.md). Sem receptor nada muda: o painel mostra "GPS não conectado".
+    "gps": {
+        "enabled": True, "source": "auto",            # auto | gpsd | nmea | replay | off
+        "gpsd_host": "127.0.0.1", "gpsd_port": 2947, "device": "/dev/gps0",
+        "rate_hz": 5, "store_hz": 1, "stopped_every_s": 30, "latency_ms": 120,
+        "min_sats": 5, "max_hdop": 5.0,
+        "replay_file": "", "replay_speed": 1.0, "replay_loop": False,
+        "geo_db": "/data/obd/geo/geo.db",
+        "moved_m": 300,                               # distância que caracteriza "mudou de lugar desligado"
+        "cloud": "auto",                              # auto (envia posição só se a nuvem tiver senha de localização) | off
+        "voice_radar": True, "voice_limit": True,
+    },
+    "vehicle": {"mass_kg": 1350, "cda": 0.63, "crr": 0.011, "drivetrain_eff": 0.88, "tank_l": 50},
+    "power": {"always_on": False, "min_batt_v": 12.0},
 }
 
 CONFIG_PATH = Path(os.environ.get("OBD_CONFIG", "/etc/obd/obd.toml"))

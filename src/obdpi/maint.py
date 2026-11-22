@@ -47,11 +47,16 @@ def main():
             tmp.unlink(missing_ok=True)
             print("backup descartado (cópia não passou na conferência):", ok)
     # guarda-corpo de espaço: se o disco ficar com < 15% livre, apaga amostras rápidas com mais de 12 meses
+    # e posições do GPS com mais de 24 meses (o trajeto reduzido de cada viagem, trip_gps.track_json, fica)
     du = shutil.disk_usage(Path(dbp).parent)
     if du.free / du.total < 0.15:
         con = sqlite3.connect(dbp, timeout=30)
         cut = int((time.time() - 365 * 86400) * 1000)
         con.execute("DELETE FROM fast_sample WHERE ts < ?", (cut,))
+        try:
+            con.execute("DELETE FROM gps_fix WHERE ts < ?", (int((time.time() - 2 * 365 * 86400) * 1000),))
+        except sqlite3.OperationalError:          # banco ainda sem as tabelas do GPS
+            pass
         con.commit()
         con.execute("PRAGMA incremental_vacuum")
         con.close()

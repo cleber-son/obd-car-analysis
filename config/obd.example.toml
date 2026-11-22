@@ -11,3 +11,9 @@ fast_period_s = 0.5      # sensores principais o mais rápido possível (~2 Hz)
 
 [notify]
 min_severity = "warn"    # info | warn | crit
+
+[gps]
+enabled = true           # sem receptor nada muda: o painel mostra "GPS não conectado"
+source = "auto"          # auto (gpsd; serial direta se o gpsd não existir) | gpsd | nmea | replay | off
+rate_hz = 5              # taxa pedida ao receptor; grava 1 Hz andando e 1 a cada 30 s parado
+# replay_file = "/tmp/commute.nmea"   # com source = "replay" (obdctl gps sim --out …)

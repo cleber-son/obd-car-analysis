@@ -4,7 +4,7 @@
 # Com a proteção ativa, tudo o que o sistema grava fora de /data vai para a memória RAM e some no próximo boot;
 # os arquivos do sistema no cartão nunca são reescritos. Foi a reescrita no meio de um corte de energia que apagou as
 # redes WiFi em 20/11. /data (banco, backups, diários) continua gravando direto no cartão, assim como as chaves do
-# Bluetooth e o relógio salvo. É o mesmo mecanismo do raspi-config (pacote overlayroot + "overlayroot=tmpfs" no
+# Bluetooth, o relógio salvo e a deriva do chrony (GPS). É o mesmo mecanismo do raspi-config (pacote overlayroot + "overlayroot=tmpfs" no
 # cmdline.txt), sem travar a partição de boot (o install.sh edita o cmdline.txt).
 #
 # Uso (root):  overlay.sh status | on | off | mount-data | persist <arquivo>...
@@ -15,7 +15,7 @@ set -euo pipefail
 CMD=/boot/firmware/cmdline.txt; [ -f "$CMD" ] || CMD=/boot/cmdline.txt
 LOWER=/media/root-ro                 # o cartão de verdade, montado pelo overlayroot no boot
 MARK=/etc/obd/protegido              # "a proteção deve ficar ligada": o deploy desliga, atualiza e religa
-KEEP=(/data /var/lib/bluetooth /var/lib/systemd/timesync)
+KEEP=(/data /var/lib/bluetooth /var/lib/systemd/timesync /var/lib/chrony)
 
 active() { grep -q '\boverlayroot=tmpfs\b' /proc/cmdline && mountpoint -q "$LOWER"; }
 configured() { grep -q '\boverlayroot=tmpfs\b' "$CMD"; }

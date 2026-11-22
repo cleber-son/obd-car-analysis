@@ -16,7 +16,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import __version__, config, db
+from .. import __version__, config, db, timesrc
 from ..obd import dtc as dtcmod
 from ..obd.pids import SIGNALS
 
@@ -699,7 +699,7 @@ def system():
         "throttled_now": bool(flags & 0x4), "disk_free_gb": round(du.free / 1e9, 1), "disk_total_gb": round(du.total / 1e9, 1),
         "db_mb": round(os.path.getsize(DB) / 1e6, 1) if Path(DB).exists() else 0,
         "uptime_s": int(up), "ips": ips, "ssid": ssid, "mem_mb": mem, "load": os.getloadavg(),
-        "clock_synced": Path("/run/systemd/timesync/synchronized").exists(), "events": events,
+        "clock_synced": timesrc.system_synced(), "clock_source": timesrc.source(), "events": events,
         "ntfy_topic": CFG["notify"].get("ntfy_topic", ""),
     }
 
@@ -760,6 +760,8 @@ def drive():
     return FileResponse(STATIC / "drive.html", headers={"Cache-Control": "no-cache"})
 
 
+from . import gps_api  # noqa: E402  (rotas /api/gps/*; recebe os utilitários daqui para evitar importação circular)
+app.include_router(gps_api.build(ro, check_admin, CFG, LIVE.parent))
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 

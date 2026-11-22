@@ -7,9 +7,21 @@ dpkg -s bluez-tools python3-venv sqlite3 >/dev/null 2>&1 || { apt-get update -qq
 [ -x venv/bin/python ] || python3 -m venv venv
 venv/bin/pip install -q -r requirements.txt
 
+echo "== GPS: gpsd + relógio pelo GPS (chrony; substitui o systemd-timesyncd)"
+dpkg -s gpsd chrony >/dev/null 2>&1 || { apt-get update -qq; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gpsd gpsd-tools chrony || \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gpsd gpsd-clients chrony || echo "AVISO: gpsd/chrony não instalados (sem internet?)"; }
+install -m 644 deploy/gpsd.default /etc/default/gpsd
+install -m 644 deploy/70-obd-gps.rules /etc/udev/rules.d/70-obd-gps.rules
+udevadm control --reload && udevadm trigger --subsystem-match=tty || true
+install -D -m 644 deploy/chrony-obd-gps.conf /etc/chrony/conf.d/obd-gps.conf
+[ -f /etc/chrony/chrony.conf ] && sed -i 's/^makestep .*/makestep 1.0 -1/' /etc/chrony/chrony.conf || true
+install -d /etc/systemd/system/chrony.service.d
+printf '[Unit]\nAfter=obd-data.service obd-clock.service\n' > /etc/systemd/system/chrony.service.d/obd.conf
+chmod 755 deploy/obd-clock.sh
+
 echo "== usuário e diretórios"
 usermod -aG bluetooth,dialout obd || true
-install -d -o obd -g obd /data/obd /data/obd/backup /data/obd/repair
+install -d -o obd -g obd /data/obd /data/obd/backup /data/obd/repair /data/obd/geo
 install -d /etc/obd
 [ -f /etc/obd/obd.toml ] || install -m 644 config/obd.example.toml /etc/obd/obd.toml
 install -m 600 deploy/bt-pins.txt /etc/obd/bt-pins.txt
@@ -59,7 +71,10 @@ echo "== serviços"
 install -m 644 deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl restart systemd-journald
-systemctl enable obd-data.service obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service obd-sync.service obd-doctor.timer
+systemctl enable obd-data.service obd-clock.service obd-btagent.service obd-collector.service obd-web.service obd-maint.timer obd-netprefer.service obd-sync.service obd-doctor.timer
+# GPS: o coletor não depende do gpsd (reconecta sozinho); sem receptor o painel mostra "GPS não conectado"
+for u in gpsd.socket gpsd.service chrony.service; do systemctl cat "$u" >/dev/null 2>&1 && systemctl enable "$u" || true; done
+systemctl restart gpsd chrony 2>/dev/null || true
 for u in obd-btagent obd-collector obd-web obd-maint.timer obd-netprefer obd-sync obd-doctor.timer; do
   systemctl restart "$u" || echo "AVISO: $u não iniciou (veja journalctl -u $u)"   # um serviço com problema não impede o resto
 done

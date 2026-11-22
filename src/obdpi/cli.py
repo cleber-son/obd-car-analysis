@@ -7,6 +7,9 @@
                            detalhados (modo 06, falha de ignição por cilindro), quadro congelado e identificação
   obdctl status            mostra /run/obd/live.json resumido
   obdctl test-push         envia notificação de teste ao iPhone
+  obdctl gps status        estado do GPS: receptor, satélites, taxa, hora, posições gravadas
+  obdctl gps sim ...       viagem simulada (GPS + OBD): --scenario commute|tunnel|towed, --out arquivo.nmea|.jsonl,
+                           --to-db banco --days N, --serve PORTA (finge ser o gpsd); veja obdctl gps sim --help
 """
 from __future__ import annotations
 
@@ -126,6 +129,28 @@ def probe_extra(cfg, out_path: str = "/data/obd/probe-extra.txt"):
         print(f"\n(não consegui salvar em {out_path}: {ex})")
 
 
+def gps_status(cfg):
+    from pathlib import Path
+    run = Path(cfg["runtime"]["live_sock"]).parent
+    try:
+        g = json.loads((run / "gps.json").read_text())
+    except (OSError, ValueError):
+        sys.exit("coletor não está rodando (sem /run/obd/gps.json)")
+    st = g.get("status") or {}
+    print(f"estado={st.get('state') or g.get('state')} fonte={st.get('src')} receptor={st.get('device') or '—'} driver={st.get('driver') or '—'}")
+    print(f"modo={st.get('mode')} satélites={st.get('sats')} hdop={st.get('hdop')} taxa={st.get('hz')} Hz (pedida {st.get('rate_hz')})")
+    print(f"idade={st.get('age_s')} s  1ª posição={st.get('ttff_s')} s  reconexões={st.get('reconnects')}  relógio={g.get('clock')}")
+    if g.get("lat") is not None:
+        print(f"posição={g['lat']:.6f}, {g['lon']:.6f}  alt={g.get('alt')} m  vel={g.get('speed')} km/h")
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{cfg['storage']['db_path']}?mode=ro", uri=True, timeout=5)
+        n, last = con.execute("SELECT COUNT(*), MAX(ts) FROM gps_fix").fetchone()
+        print(f"posições gravadas={n}" + (f" (última {time.strftime('%d/%m %H:%M:%S', time.localtime(last / 1000))})" if last else ""))
+    except Exception as e:
+        print(f"banco: {e}")
+
+
 def main():
     cfg = config.load()
     args = sys.argv[1:] or ["help"]
@@ -147,6 +172,11 @@ def main():
         print(f"taxa={d['rates']} DTC={d['dtc']} MIL={d['mil']}")
         for k, v in sorted(d["values"].items()):
             print(f"  {k:16s} {v}")
+    elif args[0] == "gps" and len(args) > 1 and args[1] == "status":
+        gps_status(cfg)
+    elif args[0] == "gps" and len(args) > 1 and args[1] == "sim":
+        from .gps import sim
+        sim.main(args[2:])
     elif args[0] == "test-push":
         n = cfg["notify"]
         ok = notify.send(n["ntfy_server"], n["ntfy_topic"], "Teste do Civic OBD ✅", "Se você recebeu isto, as notificações estão funcionando.", 3, "white_check_mark")

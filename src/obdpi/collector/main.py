@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from .. import __version__, config, db, notify
+from .. import __version__, config, db, notify, timesrc
 from ..analytics import SEV_ORDER, Alert
 from ..analytics import fuel as fuelmod
 from ..analytics import tripdiag
@@ -23,6 +23,7 @@ from ..analytics.limits import LimitsEngine
 from ..analytics.throttle import ThrottleEngine, trip_score
 from ..elm.elm327 import ELM327, EcuSilent, ElmError, ElmNeedsReset
 from ..elm.transport import RfcommTransport, TcpTransport, TransportError
+from ..gps.hub import GpsHub
 from ..obd import dtc as dtcmod
 from ..obd.pids import INFO_ONLY, PID_LEN, SIGNALS, decode, decode_status, parse_supported
 from . import bt
@@ -46,14 +47,15 @@ def sd_notify(msg: str) -> None:
 
 
 def clock_synced() -> bool:
-    return Path("/run/systemd/timesync/synchronized").exists()
+    return timesrc.system_synced()            # timesyncd ou chrony (com o GPS)
 
 
 class Clock:
-    """Timestamps monotônicos ancorados; corrigidos retroativamente quando o NTP sincroniza."""
+    """Timestamps monotônicos ancorados; corrigidos retroativamente quando o NTP (ou o GPS) sincroniza."""
 
     def __init__(self, last_db_ts: int):
         self.synced = clock_synced()
+        self.source = "sistema" if self.synced else "nenhuma"      # sistema | gps | nenhuma
         wall = time.time() * 1000
         self.anchor_wall = wall if self.synced else max(wall, last_db_ts + 1000)
         self.anchor_mono = time.monotonic() * 1000
@@ -66,7 +68,19 @@ class Clock:
         if self.synced or not clock_synced():
             return 0
         self.synced = True
+        self.source = "sistema"
         off = int(time.time() * 1000 - self.now())
+        self.anchor_wall += off
+        return off if abs(off) > 2000 else 0
+
+    def sync_from_gps(self, utc_ms: int) -> int:
+        """Hora do GPS (já descontado gps.latency_ms). Marca como sincronizado e devolve o offset a aplicar (0 se |off| <= 2 s).
+        Reserva para quando o sistema não sincroniza (sem internet e sem chrony): só os dados gravados ficam certos."""
+        if self.synced:
+            return 0
+        self.synced = True
+        self.source = "gps"
+        off = int(utc_ms - self.now())
         self.anchor_wall += off
         return off if abs(off) > 2000 else 0
 
@@ -94,6 +108,11 @@ class Collector:
         last = self.con.execute("SELECT MAX(ts) FROM sample").fetchone()[0] or 0
         self.clock = Clock(last)
         self.boot_ts = self.clock.now()            # tudo gravado por este processo é >= boot_ts
+        try:
+            self.gps = GpsHub(cfg, self.con, self.clock, self.state, self.event, self.queue_push, self.run_dir)
+        except Exception as e:                      # sem GPS o coletor segue igual
+            log.warning("GPS desativado: %r", e)
+            self.gps = None
         self.sig_ids = {r["key"]: r["id"] for r in self.con.execute("SELECT id, key FROM signal")}
         self.limits = LimitsEngine([dict(r) for r in self.con.execute("SELECT * FROM baseline")], period_s=c["full_period_s"])
         if was_reset:
@@ -139,6 +158,7 @@ class Collector:
         self.pending_crank: dict | None = None
         self.load_fuel()
         self.finalize_open_trips()
+        self._gps("start")
         self._load_dtc_state()
         threading.Thread(target=self._notifier_loop, daemon=True).start()
 
@@ -147,6 +167,24 @@ class Collector:
         log.log(logging.WARNING if level != "info" else logging.INFO, "%s: %s", kind, detail)
         self.con.execute("INSERT INTO system_event(ts, level, kind, detail) VALUES (?,?,?,?)",
                          (self.clock.now(), level, kind, detail))
+
+    def _gps(self, name: str, *args, default=None):
+        """Toda chamada ao GPS passa por aqui: erro do GPS vira aviso no log, nunca derruba o coletor."""
+        if self.gps is None:
+            return default
+        try:
+            return getattr(self.gps, name)(*args)
+        except Exception as e:
+            log.warning("gps.%s falhou: %r", name, e)
+            return default
+
+    def gps_pump(self, ts: int | None = None) -> None:
+        if self.gps is None:
+            return
+        try:
+            self.handle_alerts(self.gps.pump(ts or self.clock.now(), self.values, self.value_ts, self.engine_on, self.trip_id) or [])
+        except Exception as e:
+            log.warning("gps.pump falhou: %r", e)
 
     def set_state(self, name: str, detail: str = "") -> None:
         if name != self.state_name:
@@ -167,13 +205,15 @@ class Collector:
     def maybe_commit(self, force: bool = False) -> None:
         if force or time.monotonic() - self.last_commit >= self.commit_every:
             off = self.clock.check_sync()
+            if not off and not self.clock.synced:
+                off = self._gps("clock_offset", default=0)     # reserva: hora direto do GPS (seção 3.3)
             if off:
                 self.apply_clock_offset(off)
             if self.trip_id:
                 self.con.execute("UPDATE trip SET end_ts=? WHERE id=?", (self.clock.now(), self.trip_id))
             if self.session_id:
-                self.con.execute("UPDATE session SET last_ts=?, clock_synced=? WHERE id=?",
-                                 (self.clock.now(), int(self.clock.synced), self.session_id))
+                self.con.execute("UPDATE session SET last_ts=?, clock_synced=?, clock_source=? WHERE id=?",
+                                 (self.clock.now(), int(self.clock.synced), self.clock.source, self.session_id))
             self.con.commit()
             self.last_commit = time.monotonic()
 
@@ -189,6 +229,7 @@ class Collector:
             c.execute(f"UPDATE {t} SET {col} = {col} + ? WHERE {col} >= ?", (off, start))
         c.execute("UPDATE trip SET start_ts = start_ts + ?, end_ts = end_ts + ? WHERE start_ts >= ?", (off, off, start))
         c.execute("UPDATE session SET started_ts = started_ts + ? WHERE id=?", (off, self.session_id))
+        self._gps("shift_clock", off, start)          # gps_fix, geo_event, dyno_run, accel_run e o estado do GPS em memória
         self.session_start += off if self.session_start else 0
         self.boot_ts += off
         self.trip_start += off if self.trip_start else 0
@@ -352,7 +393,7 @@ class Collector:
             return
         last = t.get("last_ts")
         dt = min((ts - last) / 1000, 5) if last else 0
-        spd = vals.get("speed") or 0
+        spd = self._gps("best_speed", vals.get("speed"), default=vals.get("speed")) or 0
         t["km"] += spd * dt / 3600
         t["fuel_l"] += (vals.get("fuel_lh") or 0) * dt / 3600
         if spd > 2:
@@ -392,6 +433,7 @@ class Collector:
         self.trip_alerts = []
         self.notified = {}
         self.load_session_alerts()
+        self._gps("on_trip_start", self.trip_id, ts, self.trip_merged)
         self.con.commit()
 
     def load_session_alerts(self) -> None:
@@ -465,6 +507,11 @@ class Collector:
                 if (prev["speed"] or 0) == 0 and (prev["rpm"] or 0) > 400:
                     idle += dt
             prev = r
+        obd_km = dist
+        g = self._gps("trip_distance", tid, a, b, dist)
+        if g:                                          # distância híbrida GPS + OBD (a partir da F2)
+            dist = g["km"]
+            c.execute("UPDATE trip SET gps_km=?, obd_km=? WHERE id=?", (g.get("gps_km"), round(obd_km, 2), tid))
         agg = c.execute("SELECT AVG(speed) av, MAX(speed) ms, MAX(rpm) mr FROM fast_sample WHERE ts BETWEEN ? AND ? AND rpm > 400", (a, b)).fetchone()
 
         def sagg(key, fn):
@@ -488,6 +535,7 @@ class Collector:
         c.execute("UPDATE trip SET fuel_l=?, km_l=? WHERE id=?",
                   (round(fuel_l, 3) if fuel_l else None, round(dist / fuel_l, 1) if fuel_l > 0.05 else None, tid))
         self.trip_diagnostics(tid, a, b)
+        self._gps("finalize_trip", tid)
         self.trip_summary_push(tid)
 
     def trip_summary_push(self, tid: int) -> None:
@@ -507,8 +555,10 @@ class Collector:
                 parts.append(f"R$ {br(t['fuel_l'] * price[0], 2)}")
             if (t["duration_s"] or 0) > 0 and (t["idle_s"] or 0) / t["duration_s"] > 0.35:
                 parts.append(f"{int(t['idle_s'] / t['duration_s'] * 100)}% parado ligado")
+            x = self._gps("summary", tid, default=None) or {}
+            parts += x.get("parts") or []
             parts.append(f"{n} alerta(s)" if n else "sem alertas")
-            self.queue_push("Viagem encerrada", " · ".join(parts), "warn" if crit else "info")
+            self.queue_push("Viagem encerrada" + (f": {x['route']}" if x.get("route") else ""), " · ".join(parts), "warn" if crit else "info")
             self.state.set("trip_pushed", tid)
         except Exception as e:                                # o resumo nunca atrapalha o fechamento da viagem
             log.debug("resumo da viagem: %s", e)
@@ -690,6 +740,7 @@ class Collector:
             "readiness": self.readiness,
             "accel": {k: v for k, v in self.accel.items() if k != "pts"} if self.accel else None,
             "supported": len(self.supported), "clock_synced": self.clock.synced, "version": __version__,
+            "gps": self._gps("live", default={"state": "desconectado"}),
         }
         p = self.run_dir / "live.json"
         tmp = p.with_suffix(".tmp")
@@ -767,6 +818,7 @@ class Collector:
 
     def fast_cycle(self) -> None:
         ts = self.clock.now()
+        self.gps_pump(ts)
         self.accel_poll_cmd()
         if self.accel and self.accel["state"] in ("aguardando_parar", "pronto", "correndo"):
             raw = self.read_pids([0x0D, 0x0C])       # só velocidade e rpm: máxima taxa durante o teste
@@ -923,7 +975,9 @@ class Collector:
                     return
             except EcuSilent:
                 pass
-            time.sleep(5)
+            for _ in range(5):                     # o GPS segue gravando com a ignição desligada e o Pi ligado
+                self.gps_pump()
+                time.sleep(1)
 
     def run(self) -> None:
         sd_notify("READY=1")
@@ -963,6 +1017,12 @@ class Collector:
                 while time.monotonic() < end:
                     sd_notify("WATCHDOG=1")
                     time.sleep(1)
+                    self.gps_pump()                    # o GPS segue gravando com o Bluetooth fora
+                    try:
+                        self.write_live()
+                        self.maybe_commit()
+                    except Exception as e2:
+                        log.warning("espera da reconexão: %r", e2)
                 backoff = min(backoff * 2, 15)
 
 
@@ -977,6 +1037,7 @@ def main() -> None:
     def stop(*_):
         # fecha o RFCOMM e grava antes de sair: evita o adaptador ficar "preso" na conexão antiga
         try:
+            col._gps("stop")
             col.maybe_commit(force=True)
             if col.elm:
                 col.elm.t.close()

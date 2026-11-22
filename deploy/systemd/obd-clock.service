@@ -1,0 +1,12 @@
+[Unit]
+Description=OBD: relógio do sistema pela última gravação do banco (Pi sem RTC)
+DefaultDependencies=no
+After=obd-data.service local-fs.target
+Before=chrony.service gpsd.service obd-collector.service obd-web.service obd-sync.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/obd/deploy/obd-clock.sh
+
+[Install]
+WantedBy=multi-user.target

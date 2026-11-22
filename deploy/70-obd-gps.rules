@@ -1,0 +1,3 @@
+# Apelido estável /dev/gps0 para o VK-172 (u-blox 7). O hotplug em si é das regras do próprio gpsd.
+# Usado só pela fonte de reserva (gps.source = "nmea"). [HW: conferir o código USB com lsusb]
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1546", ATTRS{idProduct}=="01a[78]", SYMLINK+="gps0", GROUP="dialout", MODE="0660"

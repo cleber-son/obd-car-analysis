@@ -31,6 +31,7 @@ SRC = APP / "src"
 REPAIR_DIR = Path("/data/obd/repair")
 STATE = REPAIR_DIR / "doctor_state.json"
 SERVICES = ["obd-collector", "obd-web", "obd-sync", "obd-btagent", "obd-netprefer"]
+OPTIONAL = ["gpsd", "chrony"]          # GPS: só vigiados se instalados (Pi sem GPS não registra falha à toa)
 FIX_MODEL = "claude-fable-5-2"
 MAX_AI_PER_DAY = 3
 TRACE_RE = re.compile(r"Traceback \(most recent call last\):(?:\n.*?)+?\n(\w[\w.]*(?:Error|Exception|Exit)\b.*)", re.M)
@@ -80,12 +81,14 @@ class Doctor:
     # -------------------------------------------------------------- nível 1
     def check_services(self) -> list[str]:
         broken = []
-        for u in SERVICES:
+        for u in SERVICES + [o for o in OPTIONAL if sh("systemctl", "cat", o, timeout=10)[0] == 0]:
             _, act = sh("systemctl", "is-active", u)
             _, nr = sh("systemctl", "show", u, "-p", "NRestarts", "--value")
             act, nr = act.strip(), int((nr.strip() or "0") if nr.strip().isdigit() else 0)
             prev = self.state["restarts"].get(u, nr)
             self.state["restarts"][u] = nr
+            if u == "gpsd" and act == "inactive" and sh("systemctl", "is-active", "gpsd.socket")[1].strip() == "active":
+                continue                               # gpsd por socket: parado à espera de cliente é normal
             if act in ("failed", "inactive"):
                 sh("systemctl", "reset-failed", u)
                 code, _ = sh("systemctl", "restart", u, timeout=60)

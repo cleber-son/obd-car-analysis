@@ -99,7 +99,8 @@
     $("#chips").innerHTML = `<span class="chip"><span class="dot" style="--c:${stale ? "var(--bad)" : sc}"></span>${esc(stale ? "Sem dados há " + Math.round(d.age_s) + " s" : sl)}</span>
       ${d.engine_on ? `<span class="chip"><span class="dot" style="--c:var(--ok)"></span>Motor ligado${d.trip_start ? " · " + dur((d.ts - d.trip_start) / 1000) : ""}</span>` : ""}
       ${d.mil ? `<span class="chip"><span class="dot" style="--c:var(--bad)"></span>Luz de injeção acesa</span>` : ""}
-      ${d.rates?.fast_hz ? `<span class="chip num">${nf(d.rates.fast_hz, 1)} leit/s</span>` : ""}`;
+      ${d.rates?.fast_hz ? `<span class="chip num">${nf(d.rates.fast_hz, 1)} leit/s</span>` : ""}
+      ${d.gps && d.gps.state !== "desligado" ? `<span class="chip"><span class="dot" style="--c:${(GPS_ST[d.gps.state] || GPS_ST.desconectado)[0]}"></span>GPS${d.gps.state === "ok" ? (d.gps.sats != null ? " · " + d.gps.sats + " sat" : "") : " · " + (GPS_ST[d.gps.state] || [0, d.gps.state])[1].toLowerCase()}</span>` : ""}`;
     for (const g of GAUGES) {
       const x = v[g.k]; const p = Math.max(0.001, Math.min(1, (x ?? 0) / g.max));
       const el = $("#a-" + g.k); el.setAttribute("d", x == null ? "" : `M ${arcPt(0)} A 58 58 0 ${p > 2 / 3 ? 1 : 0} 1 ${arcPt(p)}`);
@@ -509,6 +510,27 @@
   }
   $("#repDays").addEventListener("change", () => loadReport().catch(console.error));
 
+  // ------------------------------------------------------------ GPS (cartão do Sistema)
+  const GPS_ST = { ok: ["var(--ok)", "Com sinal"], sem_sinal: ["var(--warn)", "Sem sinal"], desconectado: ["var(--muted)", "Não conectado"], desligado: ["var(--muted)", "Desligado"] };
+  async function loadGps() {
+    const g = await api("/api/gps/status").catch(() => null);
+    if (!g) { $("#gpsChip").innerHTML = ""; $("#gpsStats").innerHTML = `<div class="empty" style="grid-column:1/-1">Estado do GPS ainda não disponível aqui.</div>`; return; }
+    const [c, l] = GPS_ST[g.state] || GPS_ST.desconectado;
+    $("#gpsChip").innerHTML = `<span class="chip"><span class="dot" style="--c:${c}"></span>${esc(l)}</span>`;
+    if (g.state === "desconectado" || g.state === "desligado") {
+      $("#gpsStats").innerHTML = `<div class="empty" style="grid-column:1/-1">${g.state === "desligado" ? "GPS desligado na configuração (gps.enabled / gps.source)." : "GPS não conectado. Quando o receptor for ligado na USB do Pi, o mapa começa a ser preenchido sozinho."}</div>`;
+      return;
+    }
+    const CK = { gps: "GPS", ntp: "Internet (NTP)", none: "Aproximado", sistema: "Sistema", nenhuma: "Aproximado" };
+    $("#gpsStats").innerHTML = `<div><span class="lbl">Fonte</span><b style="font-size:14px">${esc(g.src || "—")}${g.driver ? " · " + esc(g.driver) : ""}</b></div>
+      <div><span class="lbl">Satélites</span><b>${g.sats ?? "—"}</b></div><div><span class="lbl">HDOP</span><b>${nf(g.hdop, 1)}</b></div>
+      <div><span class="lbl">Taxa</span><b>${g.hz != null ? nf(g.hz, 1) + " Hz" : "—"}</b></div>
+      <div><span class="lbl">Hora</span><b style="font-size:14px">${esc(CK[g.clock === "gps" ? "gps" : g.clock_source] || "—")}</b></div>
+      <div><span class="lbl">1ª posição</span><b>${g.ttff_s != null ? nf(g.ttff_s, 0) + " s" : "—"}</b></div>
+      <div><span class="lbl">Posições hoje</span><b>${g.fixes_today ?? "—"}</b></div>
+      <div><span class="lbl">Mapa offline</span><b style="font-size:14px">${g.geo ? nf(g.geo.mb, 0) + " MB" : "Não instalado"}</b></div>`;
+  }
+
   // ------------------------------------------------------------ sistema
   async function loadSystem() {
     const [s, ann] = await Promise.all([api("/api/system"), api("/api/annotations").catch(() => [])]);
@@ -830,7 +852,7 @@
 
   // ------------------------------------------------------------ roteamento
   window.OBD = { api, esc, nf, dt, tm, dur, md, lineChart, cloud: () => CLOUD, live: () => LIVE_D };
-  const LOAD = { manutencao: async () => window.obdExtras?.maint(), testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs()]) };
+  const LOAD = { manutencao: async () => window.obdExtras?.maint(), testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs(), loadGps()]) };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });

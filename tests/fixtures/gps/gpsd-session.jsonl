@@ -1,0 +1,15 @@
+{"class":"VERSION","release":"3.25","rev":"3.25","proto_major":3,"proto_minor":15}
+{"class":"DEVICES","devices":[{"class":"DEVICE","path":"/dev/ttyACM0","driver":"u-blox","activated":"2026-11-22T12:00:00.000Z","native":1,"bps":9600,"cycle":1.00}]}
+{"class":"WATCH","enable":true,"json":true,"nmea":false,"raw":0,"scaled":false,"timing":false,"split24":false,"pps":false}
+{"class":"TPV","device":"/dev/ttyACM0","mode":1,"time":"2026-11-22T12:00:01.000Z"}
+{"class":"SKY","device":"/dev/ttyACM0","hdop":0.92,"nSat":12,"uSat":9}
+{"class":"TPV","device":"/dev/ttyACM0","mode":3,"time":"2026-11-22T12:00:02.000Z","lat":-23.500000,"lon":-46.600000,"altMSL":762.1,"speed":8.33,"track":90.0,"climb":0.1}
+{"class":"TPV","device":"/dev/ttyACM0","mode":3,"time":"2026-11-22T12:00:02.200Z","lat":-23.500000,"lon":-46.599984,"altMSL":762.2,"speed":8.35,"track":90.1,"climb":0.1}
+{"class":"TPV","device":"/dev/ttyACM0","mode":2,"time":"2026-11-22T12:00:02.400Z","lat":-23.500000,"lon":-46.599968,"alt":762.0,"speed":8.31,"track":90.0}
+{"class":"SKY","device":"/dev/ttyACM0","satellites":[{"PRN":1,"used":true},{"PRN":2,"used":true},{"PRN":3,"used":true},{"PRN":4,"used":true},{"PRN":5,"used":true},{"PRN":6,"used":true},{"PRN":7,"used":false}],"hdop":1.4}
+{"class":"TPV","device":"/dev/ttyACM0","mode":3,"time":"2026-11-22T12:00:02.600Z","lat":-23.500000,"lon":-46.599952,"altMSL":762.3,"speed":8.30,"track":90.0}
+{"class":"DEVICE","path":"/dev/ttyACM0","activated":0}
+{"class":"DEVICES","devices":[]}
+{"class":"DEVICE","path":"/dev/ttyACM0","driver":"u-blox","activated":"2026-11-22T12:00:10.000Z","native":1,"bps":9600,"cycle":1.00}
+{"class":"SKY","device":"/dev/ttyACM0","hdop":1.1,"nSat":10,"uSat":8}
+{"class":"TPV","device":"/dev/ttyACM0","mode":3,"time":"2026-11-22T12:00:11.000Z","lat":-23.500100,"lon":-46.599900,"altMSL":761.9,"speed":0.05,"climb":0.0}
