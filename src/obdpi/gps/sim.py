@@ -616,6 +616,30 @@ def slip(seed: int = 1, t0: int = T0, frac: float = 0.08, dur_s: float = 3.0, **
     return trip
 
 
+# -------------------------------------------------------------- cenários da rotina (F8, seções 9.14, 9.18 e 9.19)
+def commute_alt(seed: int = 1, t0: int = T0, extra_stop_s: float = 0.0, detour: bool = False, **kw) -> SimTrip:
+    """Casa → Trabalho com trânsito: extra_stop_s segundos a mais divididos pelos 6 semáforos do commute() (mesmo
+    caminho). detour=True: outro caminho com as mesmas pontas (todo o leste primeiro, depois todo o norte)."""
+    if detour:
+        return simulate(_legs(HOME, [(0, 0, 10, 20), (0, 7400, 60, 30), (5200, 0, 60, 10)]), start=HOME, t0=t0, seed=seed, **kw)
+    lights = [i for i, m in enumerate(COMMUTE) if i and m[3] >= 30]
+    add = extra_stop_s / len(lights) if lights else 0.0
+    moves = [(m[0], m[1], m[2], m[3] + (add if i in lights else 0)) for i, m in enumerate(COMMUTE)]
+    return simulate(_legs(HOME, moves), start=HOME, t0=t0, seed=seed, **kw)
+
+
+def refuel(seed: int = 1, t0: int = T0, gap_s: float = 360, at_station: bool = True, **kw) -> list[SimTrip]:
+    """Parada em posto (9.14): vai de casa até o posto (~2,3 km), desliga, fica gap_s segundos e sai de novo do mesmo
+    ponto. meta["station"] = (lat, lon) do posto. at_station=False: a mesma parada, mas o "posto" fica 400 m adiante."""
+    a = simulate(_legs(HOME, [(0, 0, 10, 15), (0, 1500, 50, 30), (800, 0, 40, 15)]), start=HOME, t0=t0, seed=seed, **kw)
+    end = a.meta["end"]
+    t1 = a.obd[-1]["ts"] + int(gap_s * 1000)
+    b = simulate(_legs(end, [(0, 0, 10, 15), (1200, 0, 50, 20)]), start=end, t0=t1, seed=seed + 1, **kw)
+    st = end if at_station else offset(end[0], end[1], 0, 400)
+    a.meta["station"] = b.meta["station"] = st
+    return [a, b]
+
+
 # -------------------------------------------------------------- cenários de desempenho (F6, seções 9.8, 9.9, 9.12 e 9.23)
 PERF_KW = dict(full_physics=True, ect0=88)
 
@@ -755,7 +779,7 @@ def rollon(seed: int = 1, t0: int = T0, gear: int = 4, v_from: float = 70, v_to:
 
 
 SCENARIOS = {"commute": commute, "tunnel": tunnel, "towed": towed, "straight": straight, "slip": slip,
-             "launch": launch, "pull": pull, "coast": coast, "hill": hill, "rollon": rollon}
+             "commute_alt": commute_alt, "refuel": refuel, "launch": launch, "pull": pull, "coast": coast, "hill": hill, "rollon": rollon}
 
 
 def _scenario(name: str, seed: int, t0: int) -> list[SimTrip]:

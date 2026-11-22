@@ -162,6 +162,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
   const brl = (liters, suf = "") => { const pr = fuelInfo?.fills?.find((f) => f.price_l)?.price_l;
     return pr && liters != null && liters > 0 ? ` (R$ ${nf(liters * pr, 2)}${suf})` : ""; };
   const sgn = (x, d = 1) => x == null ? "—" : (x > 0 ? "+" : "") + nf(x, d);
+  let priv = null, privLocked = false;          // F8: /api/gps/live (destino, chegada, fala dos lugares); privado
   const CAT = {
     kml: { l: "Consumo", c: "--o2", r: (v) => { const rh = brl(v.fuel_lh, "/h");
       return v.kml_inst != null ? [nf(v.kml_inst, 1), "km/L", v.fuel_lh != null ? nf(v.fuel_lh, 2) + " L/h" + rh : ""] : [nf(v.fuel_lh, 1), "L/h", "parado" + rh]; } },
@@ -173,7 +174,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
       const el = t.elapsed_s || 0, lh = el > 60 ? t.fuel_l / (el / 3600) : v.fuel_lh;   // média de L/h desde que ligou
       const kml = t.kml ?? fuelInfo?.avg_real_kml ?? fuelInfo?.since_fill?.kml_est;
       return [nf(kml, 1), "km/L", `${nf(lh, 2)} L/h${brl(lh, "/h")} desde que ligou · ${nf((t.fuel_l || 0), 2)} L${brl(t.fuel_l)} até agora`]; } },
-    auto: { l: "Autonomia", c: "--o2", r: (v, t) => { const f = fuelInfo; if (!f?.fills?.length) return ["—", "", "registre um tanque cheio"];
+    auto: { l: "Autonomia", c: "--o2", r: (v, t, g) => { if (g?.range_km != null) return [nf(g.range_km), "km", "pelo GPS: consumo desde o tanque cheio" + (priv?.dest ? " e da rota" : "")];
+      const f = fuelInfo; if (!f?.fills?.length) return ["—", "", "registre um tanque cheio"];
       const rest = Math.max(0, f.tank_l - (f.since_fill?.liters_est || 0) - (t.fuel_l || 0)); const kml = f.avg_real_kml ?? t.kml ?? f.since_fill?.kml_est;
       return [kml ? nf(rest * kml, 0) : "—", "km", `≈ ${nf(rest, 0)} L no tanque`]; } },
     avg: { l: "Vel. média", c: "--speed", r: (v, t) => [nf(t.avg_moving ?? t.avg_speed), "km/h", t.max_speed ? "máx " + nf(t.max_speed) : ""] },
@@ -199,6 +201,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     limit: { l: "Limite da via", c: "--bad", r: (v, t, g) => [g.limit != null ? nf(g.limit) : "—", "km/h",
       g.limit == null ? (g.state === "ok" ? (g.geo_m ? "via fora do mapa" : "sem mapa de radares") : "sem GPS")
         : g.limit_src === "osm" ? (g.over ? "acima do limite" : "pelo mapa · confira a placa") : "presumido pela via (sem placa no mapa)"] },
+    // F8: destino provável e chegada (de /api/gps/live, privado: só com a localização liberada)
+    eta: { l: "Chegada prevista", c: "--speed", wide: true, r: (v, t, g) => { const d = priv?.dest;
+      if (!d) return ["—", "", g.state !== "ok" ? "sem GPS" : privLocked ? "localização protegida" : "sem destino previsto"];
+      const left = Math.max(0, Math.round((d.eta_ts - Date.now()) / 60000));
+      return [new Date(d.eta_ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), "", `${d.name} · ${nf(d.left_km, 1)} km · ${left} min`]; } },
   };
   const GPS_TILES = ["gpsspd", "alt", "power"];
   const DEFAULT = ["kml", "kmlavg", "kmltank", "stft", "timing", "ect", "prev", "auto", "km", "time", "avg", "tps"];
@@ -344,6 +351,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
         slope: +(Math.cos(t / 50000) * 2.4).toFixed(1), power_kw: gear && acc > 0 ? Math.round(18 + spd * 0.4) : gear ? Math.round(4 + spd * 0.12) : null, avail_pct: 87,
         limit: 60, limit_src: cyc % 4 === 3 ? "presumido" : "osm", over: cyc % 4 !== 3 && spd > 66, via: "cidade", road_n: cyc, geo_m: "2026-10", say: { radar: true, limit: true } };
       if (ph >= 2 && ph < 32) gps.warn = { kind: "radar", dist_m: Math.max(0, Math.round((600 - (ph - 2) * 20) / 10) * 10), limit: 50, n: cyc };      // radar de mentira a cada minuto
+      gps.range_km = cyc % 4 === 1 ? 55 : 310;                                                  // F8: autonomia (baixa a cada 4 min)
+      priv = { dest: { name: "Trabalho", conf: 0.9, eta_ts: Date.now() + (60 - ph) * 10000, left_km: +((60 - ph) / 10).toFixed(1) }, say: ph >= 50 && ph < 52 ? { id: cyc, ts: cyc, text: "Chegando em Trabalho." } : null };
       if (ph >= 20 && ph < 50) gps.perf = { state: "concluido", kind: cyc % 2 ? "80-120" : "0-100", gear: cyc % 2 ? 4 : null, t_s: +(cyc % 2 ? 7.4 + (cyc % 5) / 10 : 10.4 + (cyc % 7) / 10).toFixed(2), record: cyc % 3 === 0, auto: 1, ts: cyc * 60000 + 18000 };
       const d = { ts: t, state: "coletando", engine_on: true, values: v, value_ts: {}, status: { stft1: [gear ? "ok" : "crit", "", "±10"] }, alerts: [], dtc: {}, mil: false, trip: { km: +km.toFixed(2), elapsed_s: 600, moving_s: 420, fuel_l: .8, kml: 9.4, avg_moving: 31, max_speed: 72 }, gps };
       t += 500; return d; };
@@ -402,7 +411,30 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
       if (w.dist_m <= 160 && w.limit && spd > w.limit) vo.speak(`Reduza. ${Math.round(spd)}, limite ${w.limit}.`, { key: "radar150:" + w.n, cooldown_s: 300, interrupt: true });
     }
     if (g.over && g.limit_src === "osm" && g.limit && g.say?.limit !== false) vo.speak(`Limite ${g.limit}.`, { key: "over:" + g.road_n, cooldown_s: 120 });
+    // F8: autonomia baixa, uma vez por viagem (a chave é o início da viagem, arredondado)
+    if (g.range_km != null && g.range_km < 60 && d.engine_on) {
+      const trip0 = Math.round(((d.ts || Date.now()) - (d.trip?.elapsed_s || 0) * 1000) / 600000);
+      vo.speak(`Autonomia de ${Math.max(10, Math.round(g.range_km / 10) * 10)} quilômetros.`, { key: "range:" + trip0, cooldown_s: 1800 });
+    }
+    // F8: fala de um lugar ("Chegando em Casa."), vinda do gps.json
+    const sy = priv?.say;
+    if (sy?.text && sy.id) vo.speak(sy.text, { key: "say:" + sy.id + ":" + sy.ts, cooldown_s: 600 });
   }
+  // F8: posição privada (destino, chegada, fala dos lugares) a cada 5 s, só com GPS; trancada na nuvem = tenta de novo em 1 min
+  let privNext = 0, etaTileDone = false;
+  async function pollPriv() {
+    if (DEMO || Date.now() < privNext || lastD?.gps?.state !== "ok") return;
+    privNext = Date.now() + 5000;
+    try {
+      const r = await fetch("/api/gps/live", { cache: "no-store" });
+      if (r.status === 401) { privLocked = true; priv = null; privNext = Date.now() + 60000; return; }
+      if (!r.ok) { priv = null; return; }
+      privLocked = false; priv = await r.json();
+      if (priv?.dest && !etaTileDone) { etaTileDone = true;                // o quadro da chegada entra uma vez, no fim (dá para tirar no ⚙)
+        try { if (!localStorage.getItem("tilesEta") && !chosen.includes("eta")) { localStorage.setItem("tilesEta", "1"); chosen = [...chosen, "eta"]; localStorage.setItem("driveTiles", JSON.stringify(chosen)); buildTiles(); } } catch { } }
+    } catch { priv = null; }
+  }
+  setInterval(() => pollPriv().catch(() => { }), 1000);
 
   let last = 0;
   // leitura velha não é "ao vivo" (mesma regra do painel): sem sinal do Pi, nada; senão só o lido nos últimos 45 s

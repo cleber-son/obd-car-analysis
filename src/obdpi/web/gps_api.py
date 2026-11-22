@@ -1,6 +1,7 @@
 """Rotas /api/gps/* (docs/GPS-ARQUITETURA.md, seção 7.1). Posição só sai por aqui; na nuvem este prefixo é protegido
 pela senha de localização (F3), exceto as rotas sem posição (status, gears, speedo, score, perf, dyno, terrain, roadmix).
-Os radares do geo.db (/api/gps/cameras, F7) têm posição: ficam protegidos e não sobem para a nuvem.
+Os radares do geo.db (/api/gps/cameras, F7) têm posição: ficam protegidos e não sobem para a nuvem. Postos e
+trânsito (F8) levam nomes de lugares e posições: protegidos, sobem só com a senha de localização.
 
 Cada fase acrescenta um bloco próprio, com comentário de cabeçalho (# ---- F2: …).
 """
@@ -151,6 +152,11 @@ def geo_status(gcfg: dict) -> dict | None:
     except (TypeError, ValueError):
         pass
     return geo
+
+
+# F8: o app.py põe aqui o seu fuel_fill (registro do "Tanque cheio"), para a confirmação da parada em posto pelo painel
+# online registrar o abastecimento sem importação circular.
+FILL_HOOK = None
 
 
 def build(ro, check_admin, cfg, run_dir) -> APIRouter:
@@ -715,5 +721,66 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
             raise HTTPException(503, "geo.db ilegível") from None
         return {"items": [{"lat": a, "lon": b, "limit": c, "dir": d} for a, b, c, d in rows], "n": len(rows),
                 "osm_ts": meta.get("osm_ts") or meta.get("built_ts"), "aviso": "auxílio: o mapa pode estar desatualizado; a placa vale sempre"}
+
+    # ---- F8: rotina — postos (paradas suspeitas e ranking) e trânsito (protegidas na nuvem: nomes e posições)
+    from ..gps import fuelstop as fuelmod
+    from ..gps import traffic as trafficmod
+
+    def _geo():
+        try:
+            return roadsmod.open_geo(gcfg.get("geo_db"))
+        except Exception:
+            return None
+
+    @r.get("/api/gps/stations")
+    def gps_stations():
+        """Ranking de postos (vezes, preço por combustível, rendimento do combustível comprado ali × a média do dono,
+        ajuste curto depois × antes) e as paradas em posto ainda sem abastecimento registrado (últimos 3 dias)."""
+        con = ro()
+        return {"stations": fuelmod.stations(con), "stops": fuelmod.recent_stops(con, _geo()), "min_tanks": fuelmod.MIN_TANKS}
+
+    @r.post("/api/gps/fuelstop/{sid}")
+    def gps_fuelstop(sid: int, body: dict, x_token: str | None = Header(None)):
+        """{status: "descartado"} (parou e não abasteceu), {status: "suspeito"} (desfaz) ou {status: "confirmado", total,
+        price_l?, liters?, fuel?} (abasteceu: registra o tanque cheio na hora da parada, como POST /api/fuel/fill com
+        stop_id). O painel online usa este caminho: o "Tanque cheio" público não leva a parada nem a hora."""
+        check_admin(x_token)
+        body = body or {}
+        status = str(body.get("status") or "")
+        if status == "confirmado":
+            if FILL_HOOK is None:
+                raise HTTPException(503, "registro de abastecimento indisponível")
+            if body.get("total") in (None, ""):
+                raise HTTPException(400, "Informe o valor pago (R$).")
+            c0 = ro()
+            st = c0.execute("SELECT status, ts_end FROM fuel_stop WHERE id=?", (sid,)).fetchone()
+            if st is None:
+                raise HTTPException(404, "parada não encontrada")
+            if st["status"] == "confirmado":
+                raise HTTPException(400, "parada já confirmada por um abastecimento")
+            fill = {k: body[k] for k in ("total", "price_l", "liters", "fuel") if body.get(k) not in (None, "")}
+            fill.update(stop_id=sid, full=True, ts=(st["ts_end"] or int(time.time() * 1000)) - 60_000)
+            return FILL_HOOK(fill, x_token)
+        con = rw()
+        try:
+            try:
+                fuelmod.set_status(con, sid, status)
+            except LookupError as e:
+                raise HTTPException(404, str(e)) from None
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
+            con.commit()
+        finally:
+            con.close()
+        return {"ok": True}
+
+    @r.get("/api/gps/traffic")
+    def gps_traffic(days: int = 60):
+        """Trânsito por rota e horário de saída, o melhor horário e os pontos onde o carro fica parado (histórico do
+        próprio carro, sem serviço de fora)."""
+        days = max(7, min(int(days), 400))
+        out = trafficmod.report(ro(), int(time.time() * 1000) - days * 86400_000)
+        out["days"] = days
+        return out
 
     return r

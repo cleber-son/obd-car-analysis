@@ -4,8 +4,10 @@
 - `GeofenceEngine`: entrar/sair de lugares salvos, com histerese (3 posições dentro; 5 além do raio + 30 m).
 - Funções de lugar usadas pelo fechamento da viagem, pela API e pelo reset.
 
-As ações dos lugares (avisar, falar, sincronizar, pós-serviço, nota) são executadas a partir da F8; aqui elas só
-são guardadas (com os padrões por tipo).
+Ações dos lugares (F8, seção 9.16): `GeofenceEngine` executa as de "entrou" e "saiu" na mudança de estado e as de
+"partiu_apos" na partida seguinte (o Pi desliga com o carro: "ficou parado no lugar" só se sabe na partida). Avisos no
+celular vão pela fila `outbox` (ntfy) com validade (`expire_ts`); só saem os que o dono configurou ("avisar") e, com
+`gps.notify_routine = true`, o lembrete do pós-serviço da oficina.
 """
 from __future__ import annotations
 
@@ -36,6 +38,11 @@ MOVED_RUN_MPS = 14           # "deu a partida e saiu antes de o Pi subir": 14 m/
 MOVED_MARGIN_M = 150
 GEOFENCE_IN_N, GEOFENCE_OUT_N, GEOFENCE_OUT_M = 3, 5, 30.0
 RELOAD_MS = 30_000
+# F8: ações
+ARRIVE_EXPIRE_MS = 30 * 60_000   # "Chegou em Casa" perde o sentido em 30 min
+SERVICE_EXPIRE_MS = 6 * 3600_000
+DEPART_WAIT_MS = 10 * 60_000     # posição da partida: até 10 min depois do início da viagem
+SAY_KEEP_MS = 120_000            # a fala fica 2 min no gps.json (o modo direção consulta a cada 5 s)
 
 
 # ---------------------------------------------------------------- distância pelo OBD (a conta antiga do coletor)
@@ -149,6 +156,76 @@ def update_place(con, pid: int, fields: dict) -> None:
         vals.append(json.dumps(fields["actions"], ensure_ascii=False))
     if sets:
         con.execute(f"UPDATE place SET {', '.join(sets)} WHERE id=?", (*vals, pid))
+
+
+# ---------------------------------------------------------------- ações (F8, seção 9.16)
+def push(con, title: str, body: str, sev: str = "info", *, ts: int, expire_ms: int | None = None) -> None:
+    """Aviso no celular pela fila de sempre (outbox → ntfy), com validade. O título ganha "Delfos · " no envio."""
+    from .. import notify
+    con.execute("INSERT INTO outbox(ts, title, body, priority, tags, expire_ts) VALUES (?,?,?,?,?,?)",
+                (ts, title, body, notify.PRIO[sev], notify.TAGS[sev] + ",car", ts + expire_ms if expire_ms else None))
+
+
+def fmt_dur(s: float) -> str:
+    """"3 h 10", "45 min"."""
+    m = int(round(s / 60))
+    return f"{m // 60} h {m % 60:02d}" if m >= 60 else f"{m} min"
+
+
+def prev_trip_end(con, tid: int, start_ts: int):
+    """Fim da viagem anterior (linha com end_ts e session_id) ou None."""
+    return con.execute("SELECT id, end_ts, session_id FROM trip WHERE id != ? AND end_ts IS NOT NULL AND end_ts <= ?"
+                       " ORDER BY end_ts DESC LIMIT 1", (tid, start_ts)).fetchone()
+
+
+def session_synced(con, sid) -> bool:
+    if not sid:
+        return False
+    r = con.execute("SELECT clock_synced FROM session WHERE id=?", (sid,)).fetchone()
+    return bool(r and r[0])
+
+
+def departure_gap_s(con, tid: int, start_ts: int, synced_now: bool | None = None) -> float | None:
+    """Segundos desde o fim da viagem anterior, só com os dois relógios sincronizados (senão None)."""
+    t = con.execute("SELECT session_id FROM trip WHERE id=?", (tid,)).fetchone()
+    prev = prev_trip_end(con, tid, start_ts)
+    if not prev:
+        return None
+    ok_now = synced_now if synced_now is not None else session_synced(con, t["session_id"] if t else None)
+    if not (ok_now and session_synced(con, prev["session_id"])):
+        return None
+    return (start_ts - prev["end_ts"]) / 1000
+
+
+START_PARKED_M = 300            # posição de estacionamento vale como ponto de partida se está a até 300 m da 1ª posição
+
+
+def start_place(con, plist: list[dict], start_ts: int, lat: float, lon: float) -> dict | None:
+    """Lugar de onde a viagem saiu: o da posição de estacionamento (se vale e está perto da primeira posição: o GPS
+    pode demorar a pegar e o carro já ter andado) ou o da primeira posição."""
+    pk = parked_before(con, start_ts, max_age_ms=7 * 86400_000)
+    if pk and pk["valid"] and haversine_m(pk["lat"], pk["lon"], lat, lon) <= START_PARKED_M:
+        p = place_at(plist, pk["lat"], pk["lon"])
+        if p:
+            return p
+    return place_at(plist, lat, lon)
+
+
+def due_actions(place: dict, on: str, gap_s: float | None = None) -> list[dict]:
+    """Ações do lugar para o gatilho 'on'. Em partiu_apos, só se o intervalo (relógio sincronizado) passou de arg minutos."""
+    out = []
+    for a in place.get("actions") or []:
+        if a.get("on") != on:
+            continue
+        if on == "partiu_apos":
+            try:
+                need = float(a.get("arg") or 0) * 60
+            except (TypeError, ValueError):
+                need = 0.0
+            if gap_s is None or gap_s < need:
+                continue
+        out.append(a)
+    return out
 
 
 # ---------------------------------------------------------------- estacionamento pelo banco (fechamento e reanálise)
@@ -280,10 +357,18 @@ class GeofenceEngine:
 
     def __init__(self, hub):
         self.con = hub.con
+        self.hub = hub
+        self.cfg = getattr(hub, "cfg", None) or {}
+        self.run_dir = getattr(hub, "run_dir", None)
         self.places: list[dict] = []
         self.st: dict[int, dict] = {}
         self.last_load: int | None = None
         self.current: dict | None = None
+        self.depart: dict | None = None             # F8: partida a avaliar (partiu_apos)
+        self.say: dict | None = None                # F8: fala pendente para o modo direção (gps.json, privado)
+        self._say_n = 0
+        self.last_ts: int | None = None
+        self.done: list[tuple] = []                 # ações executadas neste boot (lugar, gatilho, ação): diagnóstico e testes
 
     def reload(self) -> None:
         self.places = load_places(self.con)
@@ -291,17 +376,28 @@ class GeofenceEngine:
         self.st = {k: v for k, v in self.st.items() if k in ids}
 
     def on_trip_start(self, tid: int, ts: int, merged: bool) -> None:
-        pass
+        self.depart = None if merged else {"tid": tid, "ts": ts}     # viagem retomada (o Pi caiu andando) não é partida
 
     def shift(self, off: int) -> None:
         if self.last_load is not None:
             self.last_load += off
+        if self.depart:
+            self.depart["ts"] += off
+        if self.say:
+            self.say["ts"] += off
 
     def feed(self, ctx) -> list:
         f = ctx.fix
+        self.last_ts = f.ts
         if self.last_load is None or abs(f.ts - self.last_load) >= RELOAD_MS:
             self.reload()
             self.last_load = f.ts
+        if self.depart:
+            try:
+                self._departure(ctx)
+            except Exception as e:
+                self.depart = None
+                log.warning("gps: ações de partida falharam: %r", e)
         inside_now = []
         for p in self.places:
             s = self.st.setdefault(p["id"], {"in": None, "n_in": 0, "n_out": 0})
@@ -330,9 +426,69 @@ class GeofenceEngine:
     def _event(self, ctx, p, kind) -> None:
         f = ctx.fix
         store.add_event(self.con, f.ts, kind, trip_id=ctx.trip_id, place_id=p["id"], lat=round(f.lat, 6), lon=round(f.lon, 6))
+        for a in due_actions(p, kind):
+            self._run(ctx, p, kind, a)
+
+    # ---- F8: ações dos lugares
+    def _departure(self, ctx) -> None:
+        """Na primeira posição boa da viagem: o lugar de onde o carro saiu (onde estava estacionado, se a posição de
+        estacionamento vale; senão a primeira posição) e as ações "partiu_apos" com o intervalo desde a viagem anterior."""
+        d, f = self.depart, ctx.fix
+        if ctx.trip_id != d["tid"] or f.ts - d["ts"] > DEPART_WAIT_MS:
+            self.depart = None
+            return
+        self.depart = None
+        if not self.places:
+            return
+        p = start_place(self.con, self.places, d["ts"], f.lat, f.lon)
+        if not p or not any(a.get("on") == "partiu_apos" for a in p.get("actions") or []):
+            return
+        synced = getattr(getattr(self.hub, "clock", None), "synced", None)
+        gap = departure_gap_s(self.con, d["tid"], d["ts"], synced)
+        for a in due_actions(p, "partiu_apos", gap):
+            self._run(ctx, p, "partiu_apos", a, gap_s=gap, start_ts=d["ts"])
+
+    def _run(self, ctx, p, on: str, a: dict, gap_s: float | None = None, start_ts: int | None = None) -> None:
+        do, name, ts = a.get("do"), p["name"], ctx.fix.ts
+        try:
+            if do == "avisar":
+                nm = name if self.cfg.get("summary_names", True) else "um lugar salvo"     # gps.summary_names: nomes no ntfy
+                title = f"Chegou em {nm}" if on == "entrou" else f"Saiu de {nm}"
+                hhmm = time.strftime("%H:%M", time.localtime(ts / 1000))
+                body = f"Às {hhmm}" + (f", depois de {fmt_dur(gap_s)} parado ali" if on == "partiu_apos" and gap_s else "") + "."
+                push(self.con, title, body, "info", ts=ts, expire_ms=ARRIVE_EXPIRE_MS)
+            elif do == "falar":
+                self._say_n += 1
+                self.say = {"id": self._say_n, "text": f"Chegando em {name}." if on == "entrou" else f"Saindo de {name}.", "ts": ts}
+            elif do == "sincronizar":
+                if self.run_dir:                      # o obd-sync faz a sincronização completa na hora (seção 9.16)
+                    from pathlib import Path
+                    (Path(self.run_dir) / "sync_cmd").write_text(json.dumps({"ts": ts, "why": f"{on}:{p['id']}"}))
+            elif do == "pos_servico":
+                visit = f"Visita à oficina, {fmt_dur(gap_s)}" if gap_s else "Visita à oficina"
+                arrive = (start_ts - int(gap_s * 1000)) if gap_s and start_ts else ts
+                self.con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)", (arrive, "oficina", visit))
+                if self.cfg.get("notify_routine"):
+                    push(self.con, "Saiu da oficina: anote o serviço e rode o teste",
+                         f"{visit}. No painel: Manutenção para anotar o que foi feito e Testes para conferir o motor.",
+                         "info", ts=ts, expire_ms=SERVICE_EXPIRE_MS)
+            elif do == "nota":
+                # em partiu_apos o 'arg' é o tempo mínimo parado; o texto não leva o nome do lugar (anotações são públicas)
+                txt = (f"Partida depois de {fmt_dur(gap_s)} parado" if gap_s else "") if on == "partiu_apos" else str(a.get("arg") or "").strip()
+                if txt:
+                    self.con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)", (ts, "nota", txt[:200]))
+            else:
+                return
+            self.done.append((p["id"], on, do))
+        except Exception as e:
+            log.warning("gps: ação %s do lugar %s falhou: %r", do, p.get("id"), e)
 
     def live(self) -> dict:
         return {}                                   # o nome do lugar é privado: só vai para o gps.json
 
     def private(self) -> dict:
-        return {"place": {"id": self.current["id"], "name": self.current["name"], "kind": self.current["kind"]} if self.current else None}
+        say = self.say
+        if say and self.last_ts is not None and self.last_ts - say["ts"] > SAY_KEEP_MS:
+            self.say = say = None
+        return {"place": {"id": self.current["id"], "name": self.current["name"], "kind": self.current["kind"]} if self.current else None,
+                "say": say}

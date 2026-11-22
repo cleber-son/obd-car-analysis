@@ -468,7 +468,12 @@ def fuel_fill(body: dict, x_token: str | None = Header(None)):
         total = round(liters * price, 2)
     full = bool(body.get("full", True))
     exact = body.get("liters") not in (None, "") or body.get("price_l") not in (None, "")   # litros medidos, não deduzidos do preço antigo
+    stop_id, place_id = _ref_id(body, "stop_id"), _ref_id(body, "place_id")   # F8 (GPS): parada em posto / posto escolhido
     con = db.connect(DB)
+    if stop_id is not None and not con.execute("SELECT 1 FROM fuel_stop WHERE id=?", (stop_id,)).fetchone():
+        raise HTTPException(404, "parada não encontrada")
+    if place_id is not None and not con.execute("SELECT 1 FROM place WHERE id=? AND COALESCE(deleted,0)=0", (place_id,)).fetchone():
+        raise HTTPException(404, "posto não encontrado")
     prev = con.execute("SELECT * FROM fuel_fill WHERE ts < ? ORDER BY ts DESC LIMIT 1", (ts,)).fetchone()
     km = est = kml = calib = None
     if prev:
@@ -481,13 +486,49 @@ def fuel_fill(body: dict, x_token: str | None = Header(None)):
                 old = fm.calib_from([dict(x) for x in con.execute("SELECT calib FROM fuel_fill")])
                 calib = round(liters / (est / old), 3)       # estimativa bruta (sem calibração) × fator = real
     mix = fm.mix_after_fill(prev["mix_after"] if prev else None, fuel, liters)
-    con.execute("""INSERT INTO fuel_fill(ts, fuel, liters, price_l, full, mix_after, km_since_prev, est_l_since_prev, real_kml, calib, note, total)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (ts, fuel, liters, price, int(full), round(mix, 3), km, est, kml, calib, body.get("note"), total))
+    fid = con.execute("""INSERT INTO fuel_fill(ts, fuel, liters, price_l, full, mix_after, km_since_prev, est_l_since_prev, real_kml, calib, note, total)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (ts, fuel, liters, price, int(full), round(mix, 3), km, est, kml, calib, body.get("note"), total)).lastrowid
     con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)",
                 (ts, "abastecimento", f"Tanque cheio: {fuel}" + (f", R$ {total:.2f}" if total else "") + (f", {liters:g} L" if liters else "") + (f" a R$ {price:.2f}/L" if price else "")))
+    posto = _fill_station(con, fid, ts, stop_id, place_id)
     con.commit()
-    return {"ok": True, "real_kml": kml, "km_since_prev": km, "mix_after": mix, "liters": liters, "price_l": price,
-            "cost_km": round(total / km, 2) if total and km and km > 20 and prev and prev["full"] else None}
+    out = {"ok": True, "real_kml": kml, "km_since_prev": km, "mix_after": mix, "liters": liters, "price_l": price,
+           "cost_km": round(total / km, 2) if total and km and km > 20 and prev and prev["full"] else None}
+    if posto:
+        out["posto"] = posto
+    return out
+
+
+def _ref_id(body: dict, key: str) -> int | None:
+    v = body.get(key)
+    if v in (None, ""):
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{key} inválido") from None
+
+
+def _fill_station(con, fid: int, ts: int, stop_id: int | None, place_id: int | None) -> dict | None:
+    """F8 (GPS, seção 9.14): associa o posto ao abastecimento — pela parada ou pelo posto informados, ou sozinho pela
+    parada suspeita a até 30 min / posição daquele instante. Sem GPS não acha nada e não muda nada; um erro aqui
+    nunca impede o registro do abastecimento."""
+    con.execute("SAVEPOINT posto")
+    try:
+        from ..gps import fuelstop, roads
+        try:
+            geo = roads.open_geo((CFG.get("gps") or {}).get("geo_db"))
+        except Exception:
+            geo = None
+        r = fuelstop.link_fill(con, fid, ts, stop_id=stop_id, place_id=place_id, geo=geo)
+        con.execute("RELEASE posto")
+        return r
+    except Exception as e:
+        con.execute("ROLLBACK TO posto")
+        con.execute("RELEASE posto")
+        if stop_id is not None or place_id is not None:
+            raise HTTPException(400, str(e)) from None
+        return None
 
 
 # ---------------------------------------------------------------- análise por IA
@@ -762,6 +803,7 @@ def drive():
 
 from . import gps_api  # noqa: E402  (rotas /api/gps/*; recebe os utilitários daqui para evitar importação circular)
 app.include_router(gps_api.build(ro, check_admin, CFG, LIVE.parent))
+gps_api.FILL_HOOK = fuel_fill            # F8: confirmar parada em posto pelo painel online registra o tanque cheio
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 

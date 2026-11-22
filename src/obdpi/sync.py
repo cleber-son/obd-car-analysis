@@ -43,6 +43,7 @@ KEEP = {
     "/api/gps/traffic": ["days"], "/api/gps/terrain": ["days"], "/api/gps/roadmix": ["days"], "/api/gps/score": ["days"],
 }
 GPS_FILE = Path("/run/obd/gps.json")
+SYNC_CMD = Path("/run/obd/sync_cmd")     # F8: ação "sincronizar" de um lugar (chegou em casa): sincronização completa já
 # Localização (seção 7.2): todo /api/gps/* leva posição ou nome de lugar, menos estas rotas só com números.
 # Mesma regra do Worker (cloud/src/index.js isLoc). Documentos de localização só sobem se a nuvem confirmar, no ping,
 # que tem a senha de localização (LOC_PASSWORD) — e o Worker ainda descarta se não tiver.
@@ -264,6 +265,9 @@ class Sync:
             self.gather(f"/api/gps/routes/{x['id']}", docs)
         for x in (self.gather("/api/gps/segments", docs) or {}).get("segments") or []:
             self.gather(f"/api/gps/segments/{x['id']}", docs)
+        # F8: postos (nomes e posições) e trânsito por rota (nomes de lugares, pontos onde o carro fica parado)
+        for p in ("/api/gps/stations", "/api/gps/traffic?days=60"):
+            self.gather(p, docs)
 
     def live_raw(self) -> bytes | None:
         try:
@@ -411,6 +415,18 @@ class Sync:
         self.last_full = 0
         log.info("reset no Pi: %d documento(s) antigos apagados da nuvem", len(keys))
 
+    def sync_requested(self) -> bool:
+        """F8: o coletor cria /run/obd/sync_cmd quando um lugar com a ação "sincronizar" dispara. Consumido aqui (só
+        com a nuvem respondendo: sem internet o pedido espera)."""
+        try:
+            if not SYNC_CMD.exists():
+                return False
+            SYNC_CMD.unlink()
+        except OSError:
+            return False
+        log.info("sincronização completa pedida por um lugar (ação sincronizar)")
+        return True
+
     # -------------------------------------------------------------- laço
     def run(self) -> None:
         if not self.url or not self.token:
@@ -430,6 +446,8 @@ class Sync:
                 self.purge_after_reset()
                 if not self.loc_ok():
                     self.purge_loc()
+                if self.sync_requested():                # lugar com a ação "sincronizar" (ex.: chegou em casa, no WiFi)
+                    self.last_cmd = self.last_full = 0
                 now = time.monotonic()
                 if now - self.last_cmd >= CMD_EVERY:
                     self.last_cmd = now

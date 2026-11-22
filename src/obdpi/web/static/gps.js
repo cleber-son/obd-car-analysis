@@ -1,4 +1,4 @@
-/* window.obdGps — aba Mapa (Diário, Mapa, Lugares, Rotas, Trechos, Desempenho), trajeto no detalhe da viagem e replay sincronizado.
+/* window.obdGps — aba Mapa (Diário, Mapa, Lugares, Rotas, Trechos, Desempenho, Cidade × estrada, Trânsito), trajeto no detalhe da viagem e replay sincronizado.
    Usa os utilitários do app.js (window.OBD) e o window.obdMap (gpsmap.js). docs/GPS-ARQUITETURA.md, seções 8.1, 9.4,
    9.15, 9.22, 9.24, 9.3 e 9.5. Cada fase acrescenta o seu bloco (// ---- F4: …). Sem GPS: "GPS não conectado" e telas vazias. */
 (() => {
@@ -289,6 +289,7 @@
         <select id="gPKind" aria-label="Tipo">${kinds.map((k) => `<option value="${k}">${esc(KIND[k] || k)}</option>`).join("")}</select>
         <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:13px">Raio <input type="number" id="gPRad" value="80" min="20" max="2000" step="10" style="width:90px" aria-label="Raio em metros"> m</label>
         <span class="muted num" id="gPPos" style="font-size:12px">Sem posição escolhida</span>
+        <div id="gPAct"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" id="gPPick">👆 Tocar no mapa</button><button class="btn" type="button" id="gPHere">📡 Usar a posição atual</button>
           <button class="btn" type="submit" id="gPSave">Salvar</button><button class="btn" type="button" id="gPNew" hidden>Novo</button></div>
         <div class="muted" id="gPMsg" style="font-size:13px" role="status"></div></form>
@@ -308,13 +309,14 @@
       if (pk && pk.known) map.setView([pk.lat, pk.lon], 15);
     }
     $("#gPList").innerHTML = list.length ? list.map((p) => `<div class="alert" style="--s:${p.kind === "auto" ? "var(--warn)" : "var(--volt)"}"><span class="ic">${esc((KIND[p.kind] || "📍").split(" ")[0])}</span>
-        <div><div class="t">${esc(p.name)}${p.kind === "auto" ? ' <span class="pill">dê um nome</span>' : ""}</div><div class="d">raio ${nf(p.radius_m)} m · ${p.visits || 0} visita(s)${p.last_visit_ts ? " · última " + dt(p.last_visit_ts) : ""}</div></div>
+        <div><div class="t">${esc(p.name)}${p.kind === "auto" ? ' <span class="pill">dê um nome</span>' : ""}</div><div class="d">raio ${nf(p.radius_m)} m · ${p.visits || 0} visita(s)${p.last_visit_ts ? " · última " + dt(p.last_visit_ts) : ""}${actText(p.actions)}</div></div>
         <span style="display:flex;gap:6px"><button class="rbtn" type="button" data-edit="${p.id}">Editar</button><button class="rbtn" type="button" data-del="${p.id}">Apagar</button></span></div>`).join("")
       : `<div class="empty">Nenhum lugar salvo. Toque no mapa ou use a posição atual para criar "Casa" e "Trabalho".</div>`;
-    const reset = () => { $("#gPid").value = ""; $("#gPName").value = ""; $("#gPRad").value = 80; $("#gPNew").hidden = true; pos = null; mark = M().cursor(map, null, null, null, mark); $("#gPPos").textContent = "Sem posição escolhida"; };
+    const reset = () => { $("#gPid").value = ""; $("#gPName").value = ""; $("#gPRad").value = 80; $("#gPNew").hidden = true; pos = null; mark = M().cursor(map, null, null, null, mark); $("#gPPos").textContent = "Sem posição escolhida"; actEdit($("#gPAct"), null); };
+    actEdit($("#gPAct"), null);
     $("#gPList").addEventListener("click", async (e) => {
       const ed = e.target.closest("[data-edit]"), del = e.target.closest("[data-del]");
-      if (ed) { const p = list.find((x) => x.id === +ed.dataset.edit); $("#gPid").value = p.id; $("#gPName").value = p.kind === "auto" ? "" : p.name; $("#gPKind").value = kinds.includes(p.kind) ? p.kind : "outro"; $("#gPRad").value = p.radius_m; setPos(p.lat, p.lon); map.setView([p.lat, p.lon], 16); $("#gPNew").hidden = false; $("#gPName").focus(); }
+      if (ed) { const p = list.find((x) => x.id === +ed.dataset.edit); $("#gPid").value = p.id; $("#gPName").value = p.kind === "auto" ? "" : p.name; $("#gPKind").value = kinds.includes(p.kind) ? p.kind : "outro"; $("#gPRad").value = p.radius_m; setPos(p.lat, p.lon); map.setView([p.lat, p.lon], 16); $("#gPNew").hidden = false; actEdit($("#gPAct"), p.actions || []); $("#gPName").focus(); }
       if (del && confirm("Apagar este lugar? O diário continua com o nome antigo.")) {
         try { const j = await post(`/api/gps/places/${del.dataset.del}`, { delete: true }); $("#gPMsg").textContent = j.queued ? "Pedido enviado; o Pi apaga na próxima conexão." : "Apagado."; if (!j.queued) render(); }
         catch (err) { $("#gPMsg").textContent = "Erro: " + err.message; }
@@ -333,6 +335,7 @@
       const id = $("#gPid").value;
       if (!pos) { $("#gPMsg").textContent = "Escolha o ponto: toque no mapa ou use a posição atual."; return; }
       const body = { name: $("#gPName").value.trim(), kind: $("#gPKind").value, radius_m: +$("#gPRad").value || 80, lat: +pos[0].toFixed(6), lon: +pos[1].toFixed(6) };
+      const acts = actGet($("#gPAct")); if (acts) body.actions = acts;          // F8: sem mexer num lugar novo, o Pi usa as ações padrão do tipo
       try {
         const j = await post(id ? `/api/gps/places/${id}` : "/api/gps/places", body);
         $("#gPMsg").textContent = j.queued ? "Salvo; o Pi aplica na próxima conexão." : "Salvo.";
@@ -920,6 +923,136 @@
     const box = document.createElement("div");
     box.className = "muted"; box.style.cssText = "font-size:13px;margin-top:8px";
     box.innerHTML = `${parts.join(" · ")} <span style="font-size:12px">· ${d.fonte === "perfil" ? "pela velocidade" : "pelo mapa offline"}</span>`;
+    card.appendChild(box);
+  });
+
+  // ---- F8: rotina — ações dos lugares (9.16), parada em posto e ranking (9.14), trânsito (9.19)
+  const ACT_ON = { entrou: "Ao chegar", saiu: "Ao sair", partiu_apos: "Ao partir, se ficou parado ali" };
+  const ACT_DO = { avisar: "avisar no celular", falar: "falar no modo direção", sincronizar: "sincronizar com a nuvem", pos_servico: "lembrete do serviço (oficina)", nota: "anotar um texto" };
+  function actText(list) {
+    const a = (list || []).map((x) => `${ACT_ON[x.on] || x.on}${x.on === "partiu_apos" ? ` ${x.arg || 0} min` : ""}: ${ACT_DO[x.do] || x.do}`);
+    return a.length ? `<br>⚡ ${esc(a.join(" · "))}` : "";
+  }
+  // editor de ações dentro do formulário de lugares; null = lugar novo sem mexer (o Pi põe as ações padrão do tipo)
+  function actEdit(box, list) {
+    if (!box) return;
+    box._acts = list == null ? null : list.map((x) => ({ ...x }));
+    const paint = () => {
+      const acts = box._acts;
+      box.innerHTML = `<div class="lbl" style="margin-top:2px">⚡ Ações deste lugar</div>
+        ${acts == null ? `<div class="muted" style="font-size:12px;margin:4px 0">Ao salvar entram as ações padrão do tipo: Casa sincroniza com a nuvem ao chegar; Oficina anota a visita ao sair depois de 20 min parado. Posto e os demais: nenhuma.</div>` : ""}
+        ${(acts || []).map((a, i) => `<div class="gpact" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px" data-i="${i}">
+          <select data-k="on" aria-label="Quando">${Object.entries(ACT_ON).map(([k, l]) => `<option value="${k}"${a.on === k ? " selected" : ""}>${l}</option>`).join("")}</select>
+          <select data-k="do" aria-label="O quê">${Object.entries(ACT_DO).map(([k, l]) => `<option value="${k}"${a.do === k ? " selected" : ""}>${l}</option>`).join("")}</select>
+          ${a.on === "partiu_apos" ? `<label class="muted" style="font-size:13px">depois de <input type="number" data-k="arg" min="0" max="1440" step="5" value="${esc(a.arg ?? 20)}" style="width:72px" aria-label="Minutos parado"> min</label>` : ""}
+          ${a.do === "nota" && a.on !== "partiu_apos" ? `<input type="text" data-k="arg" maxlength="200" placeholder="Texto da anotação" value="${esc(a.arg ?? "")}" style="flex:1 1 160px" aria-label="Texto da anotação">` : ""}
+          <button class="rbtn" type="button" data-rm="${i}" aria-label="Tirar esta ação">✕</button></div>`).join("")}
+        <button class="rbtn" type="button" data-add style="margin-top:6px">➕ Ação</button>
+        <div class="muted" style="font-size:12px;margin-top:4px">"Avisar" manda um aviso pelo ntfy que vale por 30 min. "Falar" só funciona com o modo direção aberto e a localização liberada.</div>`;
+    };
+    paint();
+    box.onclick = (e) => {
+      if (e.target.closest("[data-add]")) { box._acts = [...(box._acts || []), { on: "entrou", do: "avisar" }]; paint(); }
+      const rm = e.target.closest("[data-rm]"); if (rm) { box._acts.splice(+rm.dataset.rm, 1); paint(); }
+    };
+    box.onchange = (e) => {
+      const row = e.target.closest("[data-i]"); if (!row) return;
+      const a = box._acts[+row.dataset.i], k = e.target.dataset.k;
+      if (k === "arg") a.arg = e.target.type === "number" ? +e.target.value : e.target.value;
+      else { a[k] = e.target.value; if (k === "on") a.arg = a.on === "partiu_apos" ? 20 : undefined; paint(); }
+    };
+  }
+  function actGet(box) {
+    if (!box || box._acts == null) return null;
+    return box._acts.map((a) => { const x = { on: a.on, do: a.do };
+      if (a.on === "partiu_apos") x.arg = Math.max(0, +a.arg || 0); else if (a.do === "nota" && a.arg) x.arg = String(a.arg).slice(0, 200);
+      return x; });
+  }
+
+  // Consumo: "Abastecimento detectado" (paradas em posto sem tanque registrado) e o ranking de postos
+  const brl = (v, d = 2) => v == null ? "—" : "R$ " + nf(v, d);
+  async function fuelCard() {
+    const el = $("#gpsFuel"); if (!el) return;
+    if (!locOpen()) { el.innerHTML = ""; return; }
+    let j; try { j = await get("/api/gps/stations"); } catch { el.innerHTML = ""; return; }
+    const stops = j.stops || [], sts = (j.stations || []).filter((s) => !s.deleted && (s.n || s.paradas));
+    if (!stops.length && !sts.length) { el.innerHTML = ""; return; }
+    el.innerHTML = (stops.length ? `<div class="card" style="--s:var(--warn)"><h2>⛽ Abastecimento detectado</h2><div class="lbl" style="margin-top:4px">O carro parou num posto. Abasteceu? Basta o valor pago; o posto fica ligado ao tanque.</div>
+      ${stops.map((s) => `<form data-stop="${s.id}" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line, rgba(127,127,127,.25))">
+        <div style="font-weight:600">Parou em ${esc(s.place_name)} por ${s.min} min</div><div class="muted" style="font-size:13px">${dt(s.ts_start)}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px"><input type="number" inputmode="decimal" step="0.01" min="1" max="5000" placeholder="R$ pago" aria-label="Valor pago (R$)" style="flex:1 1 110px;max-width:160px" required>
+          <button class="btn" type="submit">Registrar</button><button class="rbtn" type="button" data-no="${s.id}">Não abasteci</button></div>
+        <div class="muted" data-msg style="font-size:13px;margin-top:4px" role="status"></div></form>`).join("")}</div>` : "")
+      + (sts.length ? `<div class="card"><h2>🏆 Postos</h2><div class="lbl" style="margin-top:4px">Quanto rende o combustível de cada posto: o km/L medido no tanque seguinte, comparado com a sua média do mesmo combustível</div>
+      <div class="tbl" style="margin-top:10px"><table class="cards"><thead><tr><th>Posto</th><th>Vezes</th><th>Último R$/L</th><th>Rendimento</th><th>Ajuste curto</th></tr></thead><tbody>
+      ${sts.map((s) => `<tr><td class="head"><b>${esc(s.name)}</b><br><span class="muted" style="font-size:12px">${esc(s.opiniao)}</span></td><td class="num" data-l="Vezes">${s.n}</td>
+        <td class="num" data-l="Último R$/L">${s.last_price ? nf(s.last_price, 2) : "—"}</td>
+        <td class="num" data-l="Rendimento">${s.kml.avg != null ? nf(s.kml.avg, 1) + " km/L" : "—"}${s.kml.vs_media_pct != null ? `<br><b style="color:var(${s.kml.vs_media_pct >= 2 ? "--ok" : s.kml.vs_media_pct <= -2 ? "--bad" : "--muted"})">${s.kml.vs_media_pct > 0 ? "+" : ""}${nf(s.kml.vs_media_pct, 1)} %</b>` : ""}</td>
+        <td class="num" data-l="Ajuste curto">${s.stft?.delta != null ? (s.stft.delta > 0 ? "+" : "") + nf(s.stft.delta, 1) + " pts" : "—"}</td></tr>`).join("")}</tbody></table></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">Precisa de ${j.min_tanks || 2} tanques cheios medidos no mesmo posto para opinar. "Ajuste curto": quanto a correção da injeção muda nos 20 km depois de abastecer ali, contra os 20 km antes (combustível ruim mexe nela).</div></div>` : "");
+    el.querySelectorAll("form[data-stop]").forEach((f) => f.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const id = +f.dataset.stop, s = stops.find((x) => x.id === id), total = +f.querySelector("input").value, msg = f.querySelector("[data-msg]");
+      try {
+        // no Pi: o "Tanque cheio" normal com a parada; no painel online o formulário público não leva a parada, então vai pela fila da localização
+        const j2 = cloud() ? await post(`/api/gps/fuelstop/${id}`, { status: "confirmado", total })
+          : await post("/api/fuel/fill", { total, full: true, ts: (s.ts_end || Date.now()) - 60000, stop_id: id });
+        msg.textContent = j2.queued ? "✅ Pedido enviado; o Pi registra o tanque quando conectar." : `✅ Tanque cheio de R$ ${nf(total, 2)} registrado em ${s.place_name}.`;
+        setTimeout(() => window.dispatchEvent(new HashChangeEvent("hashchange")), 1200);
+      } catch (err) { msg.textContent = "Não foi possível salvar: " + err.message; }
+    }));
+    el.querySelectorAll("[data-no]").forEach((b) => b.addEventListener("click", async () => {
+      const msg = b.closest("form").querySelector("[data-msg]");
+      try { const j2 = await post(`/api/gps/fuelstop/${b.dataset.no}`, { status: "descartado" }); msg.textContent = j2.queued ? "Ok; o Pi esquece esta parada quando conectar." : "Ok, esquecida."; if (!j2.queued) setTimeout(fuelCard, 800); }
+      catch (err) { msg.textContent = "Erro: " + err.message; }
+    }));
+  }
+  const fuelHook = () => { if ((location.hash || "") === "#consumo") fuelCard().catch(console.error); };
+  window.addEventListener("hashchange", fuelHook);
+  setTimeout(fuelHook, 600);
+
+  // Trânsito: por rota e horário de saída, melhor horário, onde o carro fica parado
+  if (tabs && !$('[data-g="transito"]', tabs)) tabs.insertAdjacentHTML("beforeend", `<button type="button" class="rbtn" data-g="transito">🚦 Trânsito</button>`);
+  try { sub = localStorage.getItem("gpsSub") || sub; } catch { }
+  if (!["diario", "mapa", "lugares", "rotas", "trechos", "desempenho", "vias", "transito"].includes(sub)) sub = "diario";
+  const mins = (s) => s == null ? "—" : `${nf(s / 60, 0)} min`;
+  const DAYK = { "útil": "Dias úteis", "sábado": "Sábados", "domingo": "Domingos" };
+  EXTRA.transito = async (body) => {
+    const tr = await get("/api/gps/traffic?days=60");
+    const ok = (tr.routes || []).filter((r) => r.status === "ok"), few = (tr.routes || []).filter((r) => r.status !== "ok");
+    const tot = tr.total || {};
+    body.innerHTML = `<div class="card"><h2>🚦 Trânsito</h2><div class="lbl" style="margin-top:4px">Aprendido só com as suas viagens (nenhum serviço de fora): quanto tempo e combustível o trânsito leva, e a melhor hora de sair</div>
+      ${tot.trips ? `<div class="stats" style="margin-top:10px"><div><span class="lbl">Parado no trânsito</span><b>${dur(tot.stopped_s)}</b><span class="muted" style="font-size:12px">motor ligado · ${nf(tot.stopped_l, 1)} L</span></div>
+        <div><span class="lbl">Arrastando (3–15 km/h)</span><b>${dur(tot.crawl_s)}</b><span class="muted" style="font-size:12px">${nf(tot.crawl_l, 1)} L</span></div>
+        <div><span class="lbl">Viagens com GPS</span><b>${tot.trips}</b><span class="muted" style="font-size:12px">últimos ${tr.days} dias</span></div></div>` : `<div class="empty" style="margin-top:10px">Nenhuma viagem com GPS nos últimos ${tr.days} dias.</div>`}</div>
+      ${ok.map((r) => `<div class="card"><h2>🛣️ ${esc(r.name)}</h2><div style="font-weight:600;margin-top:8px">${esc(r.texto)}</div>
+        <div class="stats" style="margin-top:10px"><div><span class="lbl">Tempo típico</span><b>${mins(r.dur_s)}</b><span class="muted" style="font-size:12px">sem trânsito ${mins(r.free_s)}</span></div>
+          <div><span class="lbl">Atraso típico</span><b>${mins(r.delay_s)}</b></div><div><span class="lbl">Parado por viagem</span><b>${mins(r.stopped_s)}</b><span class="muted" style="font-size:12px">${nf(r.stopped_l, 2)} L</span></div>
+          <div><span class="lbl">Viagens</span><b>${r.n}</b></div></div>
+        ${Object.entries(r.por_dia || {}).map(([k, d]) => `<h3 class="lbl" style="margin-top:12px">${DAYK[k] || k} · ${d.n} viagem(ns)</h3><div class="tbl" style="margin-top:6px"><table class="cards"><thead><tr><th>Saída</th><th>Viagens</th><th>Tempo</th><th>Atraso</th><th>Litros</th></tr></thead><tbody>
+          ${d.faixas.map((f) => `<tr><td class="head">${esc(f.faixa)}<br><span class="muted" style="font-size:12px">em geral às ${esc(f.saida)}</span></td><td class="num" data-l="Viagens">${f.n}</td><td class="num" data-l="Tempo">${mins(f.dur_s)}</td><td class="num" data-l="Atraso">${mins(f.delay_s)}</td><td class="num" data-l="Litros">${nf(f.fuel_l, 2)}</td></tr>`).join("")}</tbody></table></div>`).join("")}</div>`).join("")}
+      ${few.length ? `<div class="card"><h2>Rotas com poucos dados</h2><div class="muted" style="font-size:13px;margin-top:6px">${few.map((r) => `${esc(r.name)}: ${r.n} viagem(ns)`).join(" · ")}. A análise começa com 6 viagens na mesma rota.</div></div>` : ""}
+      <div class="card"><h2>📍 Onde o carro fica parado</h2><div class="lbl" style="margin-top:4px">Pontos em que a velocidade costuma ficar bem abaixo do normal daquele lugar (semáforo, retorno, gargalo)</div>
+        ${(tr.hotspots || []).length ? `<div class="gmap sm" id="gTMap" style="margin-top:10px"></div>` : `<div class="empty" style="margin-top:10px">Ainda sem pontos repetidos (precisa de 3 viagens passando no mesmo lugar).</div>`}</div>`;
+    const hs = tr.hotspots || [];
+    if (!hs.length) return;
+    const map = M().create($("#gTMap", body)); if (!map) return;
+    maps.push(map);
+    const L_ = window.L, b = L_.latLngBounds([]);
+    for (const [la, lo, med, p85, n] of hs) {
+      L_.circleMarker([la, lo], { radius: 7, color: "#ff4d5e", weight: 1, fillOpacity: 0.55 }).bindTooltip(`${nf(med)} km/h em geral (normal ali: ${nf(p85)} km/h) · ${n} passagens`).addTo(map);
+      b.extend([la, lo]);
+    }
+    M().fit(map, b);
+  };
+
+  // detalhe da viagem: tempo parado e arrastando no trânsito
+  TRIP_EXTRA.push(({ card, det }) => {
+    let x = null; try { x = det?.gps?.traffic_json ? JSON.parse(det.gps.traffic_json) : null; } catch { }
+    if (!x || !(x.stopped_s >= 30 || x.crawl_s >= 30)) return;
+    const box = document.createElement("div");
+    box.className = "muted"; box.style.cssText = "font-size:13px;margin-top:8px";
+    box.textContent = `🚦 Parado com o motor ligado ${dur(x.stopped_s)} (${nf(x.stopped_l, 2)} L)` + (x.crawl_s >= 20 ? ` · arrastando ${dur(x.crawl_s)} (${nf(x.crawl_l, 2)} L)` : "");
     card.appendChild(box);
   });
 

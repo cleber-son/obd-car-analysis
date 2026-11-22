@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from .. import config
 from . import FLAG_BURST, FLAG_STOPPED, Fix, good
-from . import dyno, gears, perf, places, roads, routes, score, segments, speedo, store, terrain, trip
+from . import dyno, eta, fuelstop, gears, perf, places, roads, routes, score, segments, speedo, store, terrain, traffic, trip
 from .reader import GpsReader
 
 log = logging.getLogger("gps")
@@ -156,6 +156,11 @@ FINALIZERS[2:2] = [dyno.finalize, terrain.finalize]   # depois da nota (F5); as 
 # ---- F7: vias (radares, limites, cidade × estrada e nomes de rua pelo geo.db)
 LIVE_ENGINES += [roads.RoadEngine]
 FINALIZERS.insert(FINALIZERS.index(terrain.finalize) + 1, roads.finalize)    # depois da F6; as duas da F4 continuam no fim
+
+# ---- F8: rotina — parada em posto, ações dos lugares (no GeofenceEngine da F2), chegada, autonomia e trânsito
+LIVE_ENGINES += [fuelstop.FuelStopEngine, eta.EtaEngine]     # fuelstop.detect roda no on_trip_start (e na 1ª posição)
+FINALIZERS.insert(FINALIZERS.index(routes.assign_trip), traffic.finalize)    # antes das rotas: as duas da F4 continuam no fim
+PRIVATE_KEYS = ("place", "parked", "dest", "say")             # chaves de private() que vão para o gps.json (privado)
 
 
 def vehicle_cfg(cfg: dict) -> dict:
@@ -411,11 +416,11 @@ class GpsHub:
                  "status": {k: st.get(k) for k in ("state", "src", "device", "driver", "mode", "sats", "hdop", "hz", "age_s",
                                                    "ttff_s", "reconnects", "rate_hz")},
                  "clock": getattr(self.clock, "source", None)}
-            for e in self.engines:                   # lugar atual e estacionamento (privados: levam posição e nome)
+            for e in self.engines:                   # lugar atual, estacionamento, destino e fala (privados: posição e nomes)
                 fn = getattr(e, "private", None)
                 if fn:
                     try:
-                        d.update({k: v for k, v in (fn() or {}).items() if k in ("place", "parked")})
+                        d.update({k: v for k, v in (fn() or {}).items() if k in PRIVATE_KEYS})
                     except Exception as ex:
                         self._warn(type(e).__name__, ex)
             p = self.run_dir / "gps.json"
