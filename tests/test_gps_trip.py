@@ -604,6 +604,242 @@ def test_api_gps_routes_smoke():
     assert c.get("/api/gps/status").status_code == 200
 
 
+
+# ---------------------------------------------------------------- F3: alertas no mapa, calor, GPX/KML, nuvem
+def test_alerts_with_position():
+    from obdpi.web.gps_api import alerts_with_position
+    t = sim.commute()
+    con = new_db()
+    tid = sim.to_db(con, t, finalize=True)
+    truth = {round(x["t"] * 10): x for x in t.truth}
+    want = {}
+    for i, sec in enumerate((240.0, 610.3, 905.7)):            # instantes conhecidos da viagem (andando e parado)
+        ts = T0 + int(sec * 1000)
+        aid = con.execute("INSERT INTO alert(ts, trip_id, source, rule, severity, title) VALUES (?, ?, 'x', ?, 'warn', ?)",
+                          (ts, tid, f"r{i}", f"Teste {i}")).lastrowid
+        want[aid] = truth[round(sec * 10)]
+    far = con.execute("INSERT INTO alert(ts, source, rule, severity, title) VALUES (?, 'x', 'longe', 'crit', 'Sem GPS')", (T0 - 5 * DAY,)).lastrowid
+    con.execute("INSERT INTO dtc_event(ts, trip_id, code, kind, event, mil) VALUES (?, ?, 'P0171', 'confirmed', 'apareceu', 1)", (T0 + 400_000, tid))
+    con.commit()
+    out = alerts_with_position(con, T0 - 30 * DAY)
+    by = {(x["kind"], x["id"]): x for x in out["items"]}
+    for aid, tr in want.items():
+        it = by[("alerta", aid)]
+        assert it["lat"] is not None and abs(it["fix_dt_s"]) <= 1.0
+        assert geo.haversine_m(it["lat"], it["lon"], tr["lat"], tr["lon"]) <= 15, (aid, geo.haversine_m(it["lat"], it["lon"], tr["lat"], tr["lon"]))
+        assert it["speed"] is not None and it["alt"] is not None and it["trip_id"] == tid
+    x = by[("alerta", far)]
+    assert x["lat"] is None and x["lon"] is None and x["fix_dt_s"] is None             # fora de viagem com GPS: sem posição, sem erro
+    d = [v for v in out["items"] if v["kind"] == "dtc"]
+    assert len(d) == 1 and d[0]["rule"] == "dtc:P0171" and d[0]["lat"] is not None and d[0]["severity"] == "crit"
+    assert out["n"] == 5 and out["with_pos"] == 4 and out["hotspots"] == []
+    assert [x["ts"] for x in out["items"]] == sorted((x["ts"] for x in out["items"]), reverse=True)
+    assert [x["id"] for x in alerts_with_position(con, T0 - 30 * DAY, rule="r1")["items"]] == [list(want)[1]]
+    # ponto repetido: a mesma regra 3 vezes a até ~100 m (o mesmo lugar em dias diferentes)
+    stop_ts = T0 + 5_000                                       # parado antes de sair (20 s)
+    for k in range(3):
+        con.execute("INSERT INTO alert(ts, trip_id, source, rule, severity, title) VALUES (?, ?, 'x', 'sempre', 'warn', 'Aqui de novo')",
+                    (stop_ts + k * 2000, tid))
+    con.commit()
+    out = alerts_with_position(con, T0 - 30 * DAY)
+    assert len(out["hotspots"]) == 1 and out["hotspots"][0]["rule"] == "sempre" and out["hotspots"][0]["n"] == 3
+    assert all(x.get("repeat") == 3 for x in out["items"] if x["rule"] == "sempre")
+
+
+def test_heat_cells():
+    from obdpi.web.gps_api import heat_cells
+    a = {"lat": [-23.50010, -23.50012, -23.51010], "lon": [-46.60010, -46.60012, -46.61010], "cols": {"stft1": [10.0, 20.0, 5.0], "load": [1, 2, 3]}}
+    b = {"lat": [-23.50011, -23.52010], "lon": [-46.60011, -46.62010], "cols": {"stft1": [60.0, None]}}
+    h = heat_cells([a, b], "stft1")
+    assert h["n_points"] == 4 and h["cell_deg"] == 0.0005
+    cells = {(round(c[0], 4), round(c[1], 4)): c for c in h["cells"]}
+    common = [c for c in h["cells"] if c[3] == 3]
+    assert len(common) == 1 and common[0][2] == 30.0                          # (10 + 20 + 60) / 3: n somado, média ponderada
+    assert abs(common[0][0] - -23.50025) < 1e-6 and abs(common[0][1] - -46.60025) < 1e-6   # centro da célula de 0,0005°
+    assert len(cells) == 2 and h["min"] == 5.0 and h["max"] == 30.0
+    assert heat_cells([a, b], "rpm")["cells"] == [] and heat_cells([], "stft1")["min"] is None
+    # mais de 5.000 células: a célula dobra até caber
+    many = {"lat": [-23.5 - i * 0.0006 for i in range(6000)], "lon": [-46.6] * 6000, "cols": {"speed": [50.0] * 6000}}
+    hm = heat_cells([many], "speed")
+    assert len(hm["cells"]) <= 5000 and hm["cell_deg"] == 0.001 and sum(c[3] for c in hm["cells"]) == 6000
+
+
+def test_gpx_kml_valid():
+    import xml.etree.ElementTree as ET
+    from obdpi.gps import export
+    con = new_db()
+    sim.add_places(con)
+    tid = sim.to_db(con, sim.commute(), finalize=True)
+    con.execute("INSERT INTO alert(ts, trip_id, source, rule, severity, title) VALUES (?, ?, 'x', 'r', 'warn', 'Ajuste <alto> & \"x\"')", (T0 + 300_000, tid))
+    con.commit()
+    t = dict(con.execute("SELECT id, start_ts, end_ts, title FROM trip WHERE id=?", (tid,)).fetchone())
+    g = con.execute("SELECT start_name, end_name, stops_json FROM trip_gps WHERE trip_id=?", (tid,)).fetchone()
+    t.update(start_name=g["start_name"], end_name=g["end_name"], route="Casa → Trabalho & <cia>")
+    fixes = tripmod.good_fixes(con, t["start_ts"], t["end_ts"])
+    txt = "".join(export.gpx([t], lambda x: tripmod.good_fixes(con, x["start_ts"], x["end_ts"])))
+    root = ET.fromstring(txt.encode())
+    ns = {"g": export.GPX_NS, "o": export.OBD_NS}
+    pts = root.findall(".//g:trkpt", ns)
+    assert len(root.findall("g:trk", ns)) == 1 and len(pts) == len(fixes) > 500
+    times = [p.find("g:time", ns).text for p in pts]
+    assert times == sorted(times) and len(set(times)) == len(times) and times[0].endswith("Z")
+    assert times[0] == export.iso_utc(fixes[0]["ts"])
+    for p, f in zip(pts, fixes):
+        assert p.get("lat") == f"{f['lat']:.7f}" and p.get("lon") == f"{f['lon']:.7f}"
+        assert round(float(p.get("lat")), 6) == round(f["lat"], 6) and round(float(p.get("lon")), 6) == round(f["lon"], 6)
+    assert pts[10].find("o:extensions/o:speed_kmh", ns) is None and pts[10].find("g:extensions/o:speed_kmh", ns) is not None
+    assert "&amp; &lt;cia&gt;" in txt
+    stops = json.loads(g["stops_json"])
+    al = [{"ts": T0 + 300_000, "title": 'Ajuste <alto> & "x"', "severity": "warn", "lat": -23.51, "lon": -46.59},
+          {"ts": T0, "title": "sem posição", "lat": None, "lon": None}]
+    k = ET.fromstring("".join(export.kml(t, fixes, al, stops)).encode())
+    kn = {"k": export.KML_NS}
+    assert len(k.findall(".//k:LineString", kn)) == 1
+    coords = k.find(".//k:LineString/k:coordinates", kn).text.split()
+    assert len(coords) == len(fixes) and coords[0].split(",")[:2] == [f"{fixes[0]['lon']:.7f}", f"{fixes[0]['lat']:.7f}"]
+    names = [p.find("k:name", kn).text for p in k.findall(".//k:Placemark", kn)]
+    assert names[0] == "Trajeto" and names[1].startswith("Início: Casa") and names[2].startswith("Fim: Trabalho")
+    assert sum(n.startswith("Parada") for n in names) == len(stops) == 6
+    assert names[-1] == 'Ajuste <alto> & "x"' and "sem posição" not in names                # alfinete do alerta; o sem posição fica de fora
+    # duas viagens num arquivo
+    t2 = dict(t, id=99)
+    root = ET.fromstring("".join(export.gpx([t, t2], lambda x: fixes[:5])).encode())
+    assert len(root.findall("g:trk", ns)) == 2 and len(root.findall(".//g:trkpt", ns)) == 10
+
+
+def test_api_gps_f3_routes():
+    try:
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+    except Exception:                                    # sem FastAPI/httpx: as funções puras já foram testadas acima
+        return
+    from obdpi.web import gps_api
+    import xml.etree.ElementTree as ET
+    base = Path(tempfile.mkdtemp())
+    cfg = make_cfg(base)
+    dbp = cfg["storage"]["db_path"]
+    con = db.init(dbp)
+    sim.add_places(con)
+    tid = sim.to_db(con, sim.commute(t0=int(time.time() * 1000) - DAY), finalize=True)
+    old = sim.to_db(con, sim.commute(t0=T0, seed=2), with_gps=False, finalize=True)       # viagem sem GPS
+    a = con.execute("SELECT start_ts FROM trip WHERE id=?", (tid,)).fetchone()[0]
+    con.execute("INSERT INTO alert(ts, trip_id, source, rule, severity, title) VALUES (?, ?, 'x', 'r1', 'warn', 'Teste')", (a + 300_000, tid))
+    con.commit()
+    app = FastAPI()
+    app.include_router(gps_api.build(lambda: db.connect(dbp, readonly=True), lambda t: None, cfg, base))
+    c = TestClient(app)
+    al = c.get("/api/gps/alerts?days=7").json()
+    assert al["n"] == 1 and al["items"][0]["lat"] is not None
+    h = c.get("/api/gps/heat?signal=stft1&days=7").json()
+    assert h["trips"] == 1 and h["cells"] and h["min"] <= h["max"]
+    for sgn in gps_api.HEAT_SIGNALS:
+        assert c.get(f"/api/gps/heat?signal={sgn}&days=30").status_code == 200
+    assert c.get("/api/gps/heat?signal=xyz").status_code == 400
+    r = c.get(f"/api/gps/trips/{tid}/export.gpx")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/gpx+xml")
+    assert "attachment" in r.headers["content-disposition"] and ET.fromstring(r.content).tag.endswith("gpx")
+    r = c.get(f"/api/gps/trips/{tid}/export.kml")
+    assert r.status_code == 200 and "LineString" in r.text and "Teste" in r.text
+    assert c.get(f"/api/gps/trips/{old}/export.gpx").status_code == 404 and c.get("/api/gps/trips/999/export.kml").status_code == 404
+    r = c.get("/api/gps/export.gpx?from=0")
+    assert r.status_code == 200 and r.text.count("<trk>") == 1
+
+
+def test_live_json_no_position_with_places():
+    """live.json (público) sem coordenada nem nome de lugar, mesmo com o carro dentro de um lugar salvo e estacionado."""
+    base = Path(tempfile.mkdtemp())
+    col = collector(make_cfg(base))
+    placesmod.create_place(col.con, "Casa Secreta", "casa", -23.5, -46.6)
+    col.con.commit()
+    for e in col.gps.engines:
+        if hasattr(e, "reload"):
+            e.reload()
+    fr = FakeReader()
+    col.gps.reader = fr
+    fr.push(fixes_at(-23.5, -46.6, 40, speed=0.0, end_age=0.1))
+    col.trip_id = 1
+    col.gps_pump()
+    col.write_live()
+    live = json.loads((base / "run" / "live.json").read_text())
+    txt = json.dumps(live, ensure_ascii=False)
+    assert live["gps"]["state"] == "ok"
+    assert "Casa Secreta" not in txt and "-23.5" not in txt and "-46.6" not in txt
+    assert not ({"lat", "lon", "place", "parked", "dest"} & set(live["gps"]))
+    g = json.loads((base / "run" / "gps.json").read_text())
+    assert g["place"] and g["place"]["name"] == "Casa Secreta" and g["lat"] is not None    # o privado tem
+
+
+def test_sync_sends_location_only_when_cloud_confirms():
+    """O obd-sync só envia posição depois de a nuvem confirmar a senha de localização (ping loc=true); senão, nem a
+    posição ao vivo nem diário/trajetos sobem, e o que já tinha subido é apagado de lá."""
+    from obdpi import sync as syncmod
+    base = Path(tempfile.mkdtemp())
+    gps_file = base / "gps.json"
+    gps_file.write_text(json.dumps({"ts": int(time.time() * 1000), "state": "ok", "lat": -23.5, "lon": -46.6, "status": {"x": 1}}))
+    old_state, old_gps = syncmod.STATE, syncmod.GPS_FILE
+    syncmod.STATE, syncmod.GPS_FILE = base / "sync_state.json", gps_file
+    try:
+        s = syncmod.Sync({"cloud": {"url": "https://nuvem.invalid", "token": "t"}, "gps": {"cloud": "auto"}})
+        sent, deleted, posts = [], [], []
+        ping = {"ok": True}
+
+        def cloud(path, payload=None, method=None, timeout=60):
+            if path == "/api/sync/ping":
+                return dict(ping)
+            if path == "/api/sync/docs":
+                sent.extend(d["key"] for d in payload.get("docs", []))
+                deleted.extend(payload.get("delete", []))
+            return {"ok": True}
+        s.cloud = cloud
+        s.cloud_post = lambda path, body, gz=False: posts.append(json.loads(body))
+        local = {"/api/gps/status": {"state": "ok"}, "/api/gps/logbook?limit=1000": {"items": [{"id": 4, "has_track": True}]},
+                 "/api/gps/places": {"places": []}, "/api/gps/parked": {"known": False}, "/api/gps/alerts?days=90": {"items": []},
+                 "/api/gps/events?days=30": {"events": []}, "/api/gps/trips/4": {"trip": {}}, "/api/gps/trips/4/track": {"lat": [-23.5]}}
+        s.local = lambda path, method="GET", body=None: (200, json.dumps(local.get(path, {"p": path})).encode())
+
+        def push_gps():
+            docs = []
+            s.gather_gps(docs)
+            return s.push(docs)
+        # 1) Worker antigo (sem 'loc') e Worker sem senha: nada de posição
+        for p in ({"ok": True}, {"ok": True, "loc": False}, {"ok": True, "loc": "true"}):
+            ping.clear(); ping.update(p)
+            assert s.online() and not s.loc_ok()
+            push_gps()
+            s.live(b'{"state":"coletando"}')
+            assert all(not syncmod.is_loc(k) for k in sent), sent
+            assert all(not syncmod.is_loc(d["key"]) for b in posts for d in b["docs"])
+        assert "/api/gps/status" in sent                                          # o que não tem posição sobe sempre
+        # push() descarta posição mesmo se alguém montar a lista à mão
+        assert s.push([("/api/gps/live", b'{"lat":1}'), ("/api/gps/trips/4/track", b"{}")]) == 0
+        # 2) nuvem com senha: sobe diário, trajetos, calor e a posição ao vivo
+        ping.clear(); ping.update({"ok": True, "loc": True})
+        assert s.online() and s.loc_ok()
+        sent.clear(); posts.clear()
+        push_gps()
+        assert {"/api/gps/logbook?limit=1000", "/api/gps/trips/4", "/api/gps/trips/4/track", "/api/gps/heat?days=30&signal=stft1"} <= set(sent)
+        s.live(b'{"state":"coletando","n":2}')
+        g = [d for b in posts for d in b["docs"] if d["key"] == "/api/gps/live"]
+        assert len(g) == 1 and json.loads(g[0]["json"])["lat"] == -23.5 and "status" not in json.loads(g[0]["json"])
+        # gps.cloud = "off" no Pi: não sobe, mesmo com a nuvem pronta
+        s.cfg["gps"]["cloud"] = "off"
+        assert not s.loc_ok()
+        s.cfg["gps"]["cloud"] = "auto"
+        # 3) a senha some da nuvem: o Pi para de enviar e apaga o que tinha subido
+        ping.clear(); ping.update({"ok": True, "loc": False})
+        assert s.online() and not s.loc_ok()
+        n = s.purge_loc()
+        assert n >= 5 and "/api/gps/live" in deleted and "/api/gps/trips/4/track" in deleted and "/api/gps/status" not in deleted
+        assert not any(syncmod.is_loc(k) for k in s.state["hashes"]) and s.purge_loc() == 0
+        # mesma regra do Worker
+        for k in ("/api/gps/live", "/API/GPS/live", "/api//gps/places", "/api/%67ps/live", "/api/gps/heat?signal=x&days=1"):
+            assert syncmod.is_loc(k), k
+        for k in ("/api/gps/status", "/api/gps/gears", "/api/live", "/api/trips/3"):
+            assert not syncmod.is_loc(k), k
+        assert syncmod.doc_key("/api/gps/heat?signal=ect&days=30&x=1") == "/api/gps/heat?days=30&signal=ect"
+    finally:
+        syncmod.STATE, syncmod.GPS_FILE = old_state, old_gps
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

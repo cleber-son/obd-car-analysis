@@ -6,16 +6,91 @@
 //   • se DASH_PASSWORD estiver definido, exige senha (desligado por padrão, a pedido do dono);
 //   • a fila de ações (tanque cheio, editar viagem…) só fica ativa com senha; sem senha, o painel online é só leitura.
 //
-// Segredos (wrangler secret put): SYNC_TOKEN (obrigatório); DASH_PASSWORD e SESSION_SECRET (opcionais).
+// Segredos (wrangler secret put): SYNC_TOKEN (obrigatório); DASH_PASSWORD e SESSION_SECRET (opcionais);
+// LOC_PASSWORD (opcional): senha de localização. Sem ela, nada com posição ou nome de lugar é servido nem guardado.
 
 const KEEP = {
   "/api/series": ["signals", "span"], "/api/alerts": ["days", "severity"], "/api/report": ["days"],
   "/api/report/period": ["kind", "offset", "day", "trip"], "/api/summary": ["days"], "/api/throttle": ["days"],
   "/api/diagnostics": ["days"], "/api/trips": ["limit"], "/api/advice": ["rule"], "/api/ai/analysis": ["trip"],
+  // GPS (docs/GPS-ARQUITETURA.md, seção 7.2): igual ao KEEP de src/obdpi/sync.py
+  "/api/gps/logbook": ["limit"], "/api/gps/alerts": ["days"], "/api/gps/events": ["days"], "/api/gps/heat": ["signal", "days"],
+  "/api/gps/traffic": ["days"], "/api/gps/terrain": ["days"], "/api/gps/roadmix": ["days"], "/api/gps/score": ["days"],
 };
 const QUEUEABLE = [/^\/api\/fuel\/fill$/, /^\/api\/annotations$/, /^\/api\/trips\/\d+$/, /^\/api\/ai\/analyze$/];
 const SESSION_DAYS = 30;
 const enc = new TextEncoder();
+
+// ---------------------------------------------------------------- localização (seção 7.2): regra única, falha fechada
+// Todo /api/gps/* leva posição ou nome de lugar, menos estas rotas só com números. O caminho é normalizado antes
+// (minúsculas, %xx decodificado, barras repetidas) para nenhuma grafia alternativa escapar; erro ao decodificar = protegido.
+export const LOC_OPEN = /^\/api\/gps\/(status|gears|speedo|score|perf|dyno|terrain|roadmix)$/;
+export function normPath(p) {
+  let x = String(p || "");
+  for (let i = 0; i < 3 && /%[0-9a-f]{2}/i.test(x); i++) { try { x = decodeURIComponent(x); } catch { return "/api/gps/?"; } }
+  return x.toLowerCase().replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+}
+export function isLoc(p) {
+  const n = normPath(p);
+  return (n === "/api/gps" || n.startsWith("/api/gps/")) && !LOC_OPEN.test(n);
+}
+// ações com localização que entram na fila do Pi (só com a localização liberada)
+export const LOC_QUEUE = [/^\/api\/gps\/places(\/\d+)?$/, /^\/api\/gps\/segments(\/\d+)?$/, /^\/api\/gps\/routes\/\d+$/, /^\/api\/gps\/fuelstop\/\d+$/];
+const LOC_DAYS = 30, LOC_BODY_MAX = 4000, LOC_PENDING_MAX = 30;
+const locConfigured = (env) => typeof env.LOC_PASSWORD === "string" && env.LOC_PASSWORD.length > 0;
+// a assinatura do cookie depende da própria senha: trocar a LOC_PASSWORD invalida todos os cookies emitidos
+const locSecret = (env) => `loc|${env.LOC_PASSWORD}|${env.SESSION_SECRET || env.SYNC_TOKEN || ""}`;
+
+export async function makeLocCookie(env, now = Date.now()) {
+  const exp = now + LOC_DAYS * 86400e3;
+  return `${exp}.${await hmac(locSecret(env), "loc" + exp)}`;
+}
+
+export async function locAuthorized(req, env) {
+  if (!locConfigured(env)) return false;                     // sem senha: localização indisponível para todos
+  const m = (req.headers.get("cookie") || "").match(/(?:^|;\s*)obd_loc=([^;]+)/);
+  if (!m) return false;
+  const [exp, sig] = m[1].split(".");
+  if (!exp || !sig || !/^\d+$/.test(exp) || +exp < Date.now() || +exp > Date.now() + (LOC_DAYS + 1) * 86400e3) return false;
+  return safeEqual(sig, await hmac(locSecret(env), "loc" + exp));
+}
+
+const locLocked = (env) => json({ error: "Localização protegida", locked: true, configured: locConfigured(env) }, 401);
+const LOC_COOKIE = (v, age) => `obd_loc=${v}; Path=/; Max-Age=${age}; HttpOnly; Secure; SameSite=Lax`;
+
+async function locUnlock(req, env) {
+  if (!locConfigured(env)) return json({ error: "Localização desativada: defina LOC_PASSWORD no Worker.", configured: false }, 503);
+  let pw = "";
+  try {
+    const ct = req.headers.get("content-type") || "";
+    if (ct.includes("application/json")) pw = String((JSON.parse((await req.text()).slice(0, 2000)) || {}).password || "");
+    else pw = String((await req.formData()).get("password") || "");
+  } catch { pw = ""; }
+  // comparação de tamanho fixo (HMAC das duas), para o tempo não revelar nada da senha
+  const k = locSecret(env);
+  if (pw && safeEqual(await hmac(k, "pw" + pw), await hmac(k, "pw" + env.LOC_PASSWORD)))
+    return json({ ok: true, loc: "aberta" }, 200, { "set-cookie": LOC_COOKIE(await makeLocCookie(env), LOC_DAYS * 86400) });
+  await new Promise((r) => setTimeout(r, env.LOC_DELAY_MS !== undefined ? +env.LOC_DELAY_MS : 800));   // freia tentativas
+  return json({ error: "Senha incorreta.", locked: true, configured: true }, 401);
+}
+
+async function locQueue(req, env, p) {
+  const body = (await req.text());
+  if (body.length > LOC_BODY_MAX) return json({ error: "conteúdo grande demais" }, 413);
+  try { if (body) JSON.parse(body); } catch { return json({ error: "dados inválidos" }, 400); }
+  const pend = await env.DB.prepare("SELECT COUNT(*) n FROM cmd WHERE done=0").first();
+  if (pend && pend.n >= LOC_PENDING_MAX) return json({ error: "Há muitas ações esperando o Pi conectar. Tente depois." }, 429);
+  await env.DB.prepare("INSERT INTO cmd(ts, method, path, body) VALUES (?,?,?,?)").bind(Date.now(), "POST", p, body || "{}").run();
+  return json({ ok: true, queued: true });
+}
+
+// defesa extra: o estado ao vivo (público) nunca leva posição; se um Pi com defeito mandar, sai daqui sem ela
+export function scrubLive(d) {
+  if (d && typeof d === "object" && d.gps && typeof d.gps === "object") {
+    for (const k of ["lat", "lon", "latitude", "longitude", "place", "parked", "dest"]) delete d.gps[k];
+  }
+  return d;
+}
 
 // mesma normalização que src/obdpi/sync.py (doc_key)
 export function docKey(url) {
@@ -80,6 +155,18 @@ ${msg ? `<div class="err">${msg}</div>` : ""}<button type="submit">Entrar</butto
     { status: msg ? 401 : 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
+// posição atual: a idade conta também o tempo desde que a nuvem recebeu (o Pi pode ter desligado)
+function gpsLiveView(raw, updated) {
+  try {
+    const d = JSON.parse(raw);
+    const since = Math.max(0, (Date.now() - updated) / 1000);
+    d.age_s = Math.round(((+d.age_s || 0) + since) * 10) / 10;
+    d.cloud = true;
+    if (since > OFFLINE_AFTER_MS / 1000) { d.engine_on = false; d.pi_offline = true; }
+    return JSON.stringify(d);
+  } catch { return raw; }
+}
+
 async function getDoc(env, key) {
   const r = await env.DB.prepare("SELECT json, updated_ts FROM doc WHERE key=?").bind(key).first();
   return r ? { data: r.json, updated: r.updated_ts } : null;
@@ -104,7 +191,7 @@ function liveView(raw, meta) {
     const seen = meta.live_updated || d.ts;
     if (seen) d.age_s = Math.max(0, Math.round((Date.now() - seen) / 100) / 10);
     d.cloud = true;
-    return JSON.stringify(d);
+    return JSON.stringify(scrubLive(d));
   } catch { return raw; }
 }
 
@@ -149,11 +236,12 @@ async function meta(env) {
   try { const o = m ? JSON.parse(m.data) : {}; if (o.last_sync_ts) o.last_sync_ts = m.updated; return o; } catch { return {}; }
 }
 
-async function envInfo(env) {
+async function envInfo(req, env) {
   const m = await meta(env);
   const p = await env.DB.prepare("SELECT COUNT(*) n FROM cmd WHERE done=0").first();
+  const loc = !locConfigured(env) ? "desativada" : (await locAuthorized(req, env)) ? "aberta" : "trancada";
   return { cloud: true, readonly: !env.DASH_PASSWORD, last_sync_ts: m.last_sync_ts || null, pi_version: m.version || null,
-           pi_online: !!m.last_sync_ts && Date.now() - m.last_sync_ts < OFFLINE_AFTER_MS, pending_cmds: p ? p.n : 0 };
+           pi_online: !!m.last_sync_ts && Date.now() - m.last_sync_ts < OFFLINE_AFTER_MS, pending_cmds: p ? p.n : 0, loc };
 }
 
 // ---------------------------------------------------------------- sincronização (Pi → nuvem)
@@ -161,13 +249,14 @@ async function syncDocs(req, env) {
   const body = await req.json();
   const docs = Array.isArray(body.docs) ? body.docs : [];
   const now = Date.now();
-  const stmts = docs.filter((d) => typeof d.key === "string" && (d.key.startsWith("/api/") || d.key === "_meta") && d.key.length < 512)
+  const loc = locConfigured(env);       // sem senha de localização: documentos de posição nem são guardados
+  const stmts = docs.filter((d) => typeof d.key === "string" && (d.key.startsWith("/api/") || d.key === "_meta") && d.key.length < 512 && (loc || !isLoc(d.key)))
     .map((d) => env.DB.prepare("INSERT INTO doc(key, json, updated_ts) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET json=excluded.json, updated_ts=excluded.updated_ts")
       .bind(d.key, typeof d.json === "string" ? d.json : JSON.stringify(d.json), now));
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
   if (Array.isArray(body.delete) && body.delete.length)
     await env.DB.batch(body.delete.map((k) => env.DB.prepare("DELETE FROM doc WHERE key=?").bind(k)));
-  return json({ ok: true, stored: stmts.length });
+  return json({ ok: true, stored: stmts.length, dropped: docs.length - stmts.length });
 }
 
 // abastecimentos registrados no painel online que o Pi ainda não buscou: aparecem na hora no histórico, marcados
@@ -234,7 +323,8 @@ async function syncCommands(req, env) {
     // abastecimentos "só com o valor pago" esperam o Pi já atualizado (uma versão antiga gravaria sem o valor)
     const cap = new URL(req.url).searchParams.get("cap") || "";
     return json({ commands: r.results.filter((c) => (cap.includes("total") || !(c.path === "/api/fuel/fill" && /"total"/.test(c.body || "")))
-      && (cap.includes("maint") || !c.path.startsWith("/api/maintenance/"))) });
+      && (cap.includes("maint") || !c.path.startsWith("/api/maintenance/"))
+      && (cap.includes("gps") || !isLoc(c.path))) });
   }
   const { ids = [], results = {} } = await req.json();
   if (ids.length)
@@ -271,7 +361,11 @@ async function syncLive(req, env) {
   const body = req.headers.get("content-encoding") === "gzip" ? req.body.pipeThrough(new DecompressionStream("gzip")) : req.body;
   const text = await new Response(body).text();
   if (text.length > 60_000) return json({ error: "grande demais" }, 413);
-  await hub(env).fetch("https://hub/push", { method: "POST", body: text });
+  let out = text;
+  if (/"(lat|lon|latitude|longitude|parked|dest)"\s*:/.test(text)) {        // raro: só reescreve se aparecer algo suspeito
+    try { out = JSON.stringify(scrubLive(JSON.parse(text))); } catch { return json({ error: "dados inválidos" }, 400); }
+  }
+  await hub(env).fetch("https://hub/push", { method: "POST", body: out });
   return json({ ok: true });
 }
 
@@ -286,7 +380,8 @@ export default {
       if (p === "/api/sync/docs" && req.method === "POST") return syncDocs(req, env);
       if (p === "/api/sync/live" && req.method === "POST") return syncLive(req, env);
       if (p === "/api/sync/commands") return syncCommands(req, env);
-      if (p === "/api/sync/ping") return json({ ok: true, ts: Date.now() });
+      // loc: a nuvem tem senha de localização; o Pi só envia posição se vier true
+      if (p === "/api/sync/ping") return json({ ok: true, ts: Date.now(), loc: locConfigured(env) });
       return json({ error: "rota desconhecida" }, 404);
     }
 
@@ -312,6 +407,22 @@ export default {
       return new Response(null, { status: 303, headers: { location: "/login" } });
     }
 
+    // senha de localização (cookie próprio, 30 dias)
+    if (p === "/loc/unlock" && req.method === "POST") return locUnlock(req, env);
+    if (p === "/loc/lock" && req.method === "POST") return json({ ok: true, loc: locConfigured(env) ? "trancada" : "desativada" }, 200, { "set-cookie": LOC_COOKIE("", 0) });
+    if (p.startsWith("/loc/")) return json({ error: "rota desconhecida" }, 404);
+
+    // localização: antes de qualquer outra rota da API (falha fechada)
+    if (isLoc(p)) {
+      if (!(await locAuthorized(req, env))) return locLocked(env);
+      if (/\/export\.(gpx|kml)$/.test(normPath(p))) return json({ error: "Exportação GPX/KML disponível no painel do Pi (rede local)." }, 404);
+      if (req.method === "POST") {
+        if (LOC_QUEUE.some((re) => re.test(p))) return locQueue(req, env, p);
+        return json({ error: "Faça isso no painel do Pi (rede local)." }, 409);
+      }
+      if (req.method !== "GET" && req.method !== "HEAD") return json({ error: "método não permitido" }, 405);
+    }
+
     // páginas
     if (p === "/" || p === "/index.html") return env.ASSETS.fetch(new Request(new URL("/index.html", url), req));
     if (p === "/dirigir") return env.ASSETS.fetch(new Request(new URL("/drive.html", url), req));
@@ -319,7 +430,7 @@ export default {
     if (!p.startsWith("/api/")) return env.ASSETS.fetch(req);
 
     // API
-    if (p === "/api/env") return json(await envInfo(env));
+    if (p === "/api/env") return json(await envInfo(req, env));
     if (p === "/api/stream") return liveStream(env);
     if (p === "/api/ws") return hub(env).fetch(req);
     if (req.method === "POST" || req.method === "DELETE") {
@@ -338,6 +449,7 @@ export default {
     const d = await getDoc(env, docKey(url));
     if (!d) return json({ error: "ainda não sincronizado pelo Pi" }, 404);
     if (p === "/api/fuel") d.data = await withPendingFills(env, d.data);
+    if (p === "/api/gps/live") d.data = gpsLiveView(d.data, d.updated);
     return new Response(p === "/api/live" ? liveView(d.data, { ...(await meta(env)), live_updated: d.updated }) : d.data,
       { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-synced": String(d.updated) } });
   },

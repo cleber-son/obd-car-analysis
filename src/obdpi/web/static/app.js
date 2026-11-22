@@ -271,6 +271,7 @@
       <td class="num" data-l="Distância">${nf(t.distance_km, 1)}<span class="only-m"> km</span></td><td class="num" data-l="Vel. média">${nf(t.avg_speed)} km/h</td><td class="num" data-l="Consumo">${nf(t.km_l, 1)}<span class="only-m"> km/L</span></td><td class="num" data-l="Temp. máx">${nf(t.max_ect)} °C</td><td class="num no-m" data-l="Alertas">${t.n_alerts ?? 0}</td>
       <td class="num" data-l="Nota eco">${t.eco_score ?? "—"}</td><td data-l="Borboleta"><div class="bar" style="--s:${c}" title="${s ?? "—"}/100"><i style="width:${s ?? 0}%"></i></div></td></tr>`; }).join("")
       : `<tr><td colspan="9"><div class="empty">Nenhuma viagem ainda. A primeira aparece quando o motor ligar com o OBD conectado.</div></td></tr>`;
+    window.dispatchEvent(new CustomEvent("obdtrips"));
   }
   const AIRL = { entrada_de_ar: "Possível entrada falsa de ar", suspeito: "Suspeito (MAF baixo parado)", maf_baixo: "MAF lendo baixo", normal: "Normal" };
   async function showTrip(id) {
@@ -319,6 +320,7 @@
     });
     $("#tripDetail").scrollIntoView({ behavior: "smooth" });
     window.obdExtras?.trip(t);
+    window.obdGps?.trip(t);
     // análise desta viagem: por sistema (regras do Pi) e, se houver, o laudo da IA
     $("#tripDetail").insertAdjacentHTML("beforeend", `<div class="card"><h2>🩺 Como estava o carro nesta viagem</h2><div id="tripIns" style="margin-top:10px"><div class="empty">Carregando…</div></div></div>
       <div class="card"><div class="row-head"><h2>🤖 Análise da IA desta viagem</h2><button class="btn" type="button" id="tripAiRun" hidden>Analisar esta viagem</button></div><div id="tripAi" class="md" style="margin-top:8px"></div></div>`);
@@ -857,7 +859,7 @@
 
   // ------------------------------------------------------------ roteamento
   window.OBD = { api, esc, nf, dt, tm, dur, md, lineChart, cloud: () => CLOUD, live: () => LIVE_D };
-  const LOAD = { manutencao: async () => window.obdExtras?.maint(), testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs(), loadGps()]) };
+  const LOAD = { manutencao: async () => window.obdExtras?.maint(), testes: async () => window.obdTests?.render(), diagnostico: loadDiag, consumo: loadFuel, vivo: () => Promise.all([loadThrottle("live"), loadSummary(), loadAccel()]), borboleta: loadThrottle, viagens: loadTrips, alertas: loadAlerts, sensores: loadSignals, relatorio: () => Promise.all([loadReport(), loadPeriod()]), sistema: () => Promise.all([loadSystem(), loadAiSettings(), loadRepairs(), loadGps()]), mapa: async () => window.obdGps?.render() };
   function route() {
     const v = (location.hash || "#vivo").slice(1); const view = LOAD[v] ? v : "vivo";
     document.querySelectorAll(".view[id^=v-]").forEach((s) => { s.hidden = s.id !== "v-" + view; });

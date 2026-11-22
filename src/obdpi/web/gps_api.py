@@ -6,11 +6,13 @@ Cada fase acrescenta um bloco próprio, com comentário de cabeçalho (# ---- F2
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from .. import db, timesrc
 
@@ -20,6 +22,101 @@ def _read_json(p: Path) -> dict | None:
         return json.loads(p.read_text())
     except Exception:
         return None
+
+
+# ---- F3: alertas com posição e mapa de calor (funções puras; os testes chamam direto)
+HEAT_SIGNALS = ("stft1", "load", "kml", "speed", "ect", "map")     # os oferecidos no painel e sincronizados com a nuvem
+HEAT_CELL_DEG = 0.0005           # ~55 m
+HEAT_MAX_CELLS = 5000            # passou disso, a célula dobra
+HOT_RADIUS_M = 100               # "este alerta acontece sempre aqui": mesma regra a até ~100 m…
+HOT_MIN = 3                      # …3 vezes ou mais
+ALERT_TOL_MS = 10_000            # posição gravada mais próxima a até 10 s
+
+
+def heat_cells(tracks: list[dict], signal: str, size: float = HEAT_CELL_DEG, max_cells: int = HEAT_MAX_CELLS) -> dict:
+    """Média do sinal por célula sobre os trajetos guardados (track_json). A célula comum a duas viagens soma o 'n' e
+    a média é ponderada pelo número de pontos. {"cells": [[lat, lon, média, n], …], "min", "max", "cell_deg"}."""
+    pts = []
+    for trk in tracks:
+        vals = (trk.get("cols") or {}).get(signal) or []
+        for la, lo, v in zip(trk.get("lat") or [], trk.get("lon") or [], vals):
+            if v is not None and la is not None and lo is not None:
+                pts.append((float(la), float(lo), float(v)))
+    while True:
+        acc: dict[tuple[int, int], list] = {}
+        for la, lo, v in pts:
+            k = (math.floor(la / size), math.floor(lo / size))
+            a = acc.get(k)
+            if a is None:
+                acc[k] = [v, 1]
+            else:
+                a[0] += v
+                a[1] += 1
+        if len(acc) <= max_cells or size >= 0.05:
+            break
+        size *= 2
+    cells = sorted([round((i + 0.5) * size, 6), round((j + 0.5) * size, 6), round(sv / n, 3), n] for (i, j), (sv, n) in acc.items())
+    means = [c[2] for c in cells]
+    return {"signal": signal, "cell_deg": size, "cells": cells, "n_points": len(pts),
+            "min": min(means) if means else None, "max": max(means) if means else None}
+
+
+def alerts_with_position(con, since: int, rule: str | None = None, tol_ms: int = ALERT_TOL_MS, limit: int = 2000) -> dict:
+    """Alertas (e códigos de falha que não viraram alerta) com a posição gravada mais próxima (até 10 s), velocidade e
+    altitude naquele ponto, e os pontos repetidos (3+ alertas da mesma regra na mesma célula de ~100 m)."""
+    from ..gps import geo as geomod
+    from ..gps import store as gstore
+    q = "SELECT id, ts, trip_id, source, rule, severity, title, detail, value FROM alert WHERE ts >= ?"
+    args: list = [since]
+    if rule:
+        q += " AND rule = ?"
+        args.append(rule)
+    items = [dict(a, kind="alerta") for a in con.execute(q + " ORDER BY ts DESC LIMIT ?", (*args, limit))]
+    seen = {(a["rule"], a["ts"] // 5000) for a in items}
+    for d in con.execute("SELECT id, ts, trip_id, code, kind, mil FROM dtc_event WHERE ts >= ? AND event = 'apareceu' ORDER BY ts DESC LIMIT ?",
+                         (since, limit)):
+        r = f"dtc:{d['code']}"
+        if rule and rule not in (r, d["code"]):
+            continue
+        if (d["code"], d["ts"] // 5000) in seen:            # o código já gerou um alerta no mesmo instante
+            continue
+        items.append({"id": d["id"], "ts": d["ts"], "trip_id": d["trip_id"], "source": "dtc", "rule": r,
+                      "severity": "crit" if d["kind"] == "confirmed" else "warn", "title": f"Código {d['code']}",
+                      "detail": d["kind"], "value": None, "kind": "dtc"})
+    items.sort(key=lambda x: x["ts"], reverse=True)
+    groups: list[dict] = []          # agrupamento guloso: mesma regra, a até HOT_RADIUS_M do centro do grupo
+    for it in items:
+        f = gstore.nearest_fix(con, it["ts"], tol_ms)
+        if f is None:
+            it.update(lat=None, lon=None, speed=None, alt=None, slope=None, fix_dt_s=None)
+            continue
+        it.update(lat=round(f["lat"], 6), lon=round(f["lon"], 6), speed=f["speed"], alt=f["alt"], slope=None,
+                  fix_dt_s=round((it["ts"] - f["ts"]) / 1000, 1))
+        for g in groups:
+            if g["rule"] == it["rule"] and geomod.haversine_m(g["lat"], g["lon"], it["lat"], it["lon"]) <= HOT_RADIUS_M:
+                g["items"].append(it)
+                n = len(g["items"])
+                g["lat"] += (it["lat"] - g["lat"]) / n
+                g["lon"] += (it["lon"] - g["lon"]) / n
+                break
+        else:
+            groups.append({"rule": it["rule"], "lat": it["lat"], "lon": it["lon"], "items": [it]})
+    hot = []
+    for gr in groups:
+        rl, g = gr["rule"], gr["items"]
+        if len(g) >= HOT_MIN:
+            for it in g:
+                it["repeat"] = len(g)
+            hot.append({"rule": rl, "title": g[0]["title"], "n": len(g), "lat": round(sum(x["lat"] for x in g) / len(g), 6),
+                        "lon": round(sum(x["lon"] for x in g) / len(g), 6), "ids": [x["id"] for x in g]})
+    hot.sort(key=lambda h: -h["n"])
+    rules: dict[str, dict] = {}
+    for it in items:
+        x = rules.setdefault(it["rule"] or "?", {"rule": it["rule"], "title": it["title"], "n": 0, "with_pos": 0})
+        x["n"] += 1
+        x["with_pos"] += it["lat"] is not None
+    return {"items": items, "hotspots": hot, "rules": sorted(rules.values(), key=lambda x: -x["n"]),
+            "n": len(items), "with_pos": sum(1 for it in items if it["lat"] is not None)}
 
 
 def build(ro, check_admin, cfg, run_dir) -> APIRouter:
@@ -226,5 +323,92 @@ def build(ro, check_admin, cfg, run_dir) -> APIRouter:
         return {"events": [dict(e) for e in con.execute(
             "SELECT e.*, p.name AS place_name FROM geo_event e LEFT JOIN place p ON p.id = e.place_id WHERE e.ts >= ? ORDER BY e.ts DESC LIMIT 2000",
             (since,))]}
+
+    # ---- F3: alertas no mapa, mapa de calor e exportação GPX/KML (só no Pi; na nuvem a exportação responde 404)
+    from ..gps import export as exportmod
+
+    heat_ok = {"speed", "kml", *tripmod.FAST_COLS, *(n for n, _ in tripmod.SLOW_COLS)}
+
+    @r.get("/api/gps/alerts")
+    def gps_alerts(days: int = 90, rule: str | None = None):
+        """Cada alerta (e código de falha) com a posição mais próxima (±10 s) e os pontos repetidos."""
+        days = max(1, min(int(days), 400))
+        return alerts_with_position(ro(), int(time.time() * 1000) - days * 86400_000, rule or None)
+
+    @r.get("/api/gps/heat")
+    def gps_heat(signal: str = "stft1", days: int = 30):
+        """Média do sinal por célula de ~55 m sobre os trajetos guardados do período."""
+        if signal not in heat_ok:
+            raise HTTPException(400, f"sinal desconhecido: {signal}")
+        days = max(1, min(int(days), 400))
+        since = int(time.time() * 1000) - days * 86400_000
+        tracks, n = [], 0
+        for g in ro().execute("""SELECT g.track_json FROM trip_gps g JOIN trip t ON t.id = g.trip_id
+                                 WHERE t.start_ts >= ? AND g.track_json IS NOT NULL AND COALESCE(t.hidden, 0) = 0""", (since,)):
+            try:
+                tracks.append(json.loads(g[0]))
+                n += 1
+            except ValueError:
+                pass
+        out = heat_cells(tracks, signal)
+        out.update(days=days, trips=n)
+        return out
+
+    def _trip_for_export(con, tid: int) -> dict:
+        t = con.execute("""SELECT t.id, t.start_ts, t.end_ts, t.title, g.start_name, g.end_name, g.start_place_id, g.end_place_id, g.stops_json
+                           FROM trip t LEFT JOIN trip_gps g ON g.trip_id = t.id WHERE t.id=?""", (tid,)).fetchone()
+        if not t:
+            raise HTTPException(404, "viagem não encontrada")
+        d = dict(t)
+        d["route"] = _route(d)
+        return d
+
+    def _fixes(con, t: dict) -> list:
+        return tripmod.good_fixes(con, t["start_ts"], t["end_ts"] or t["start_ts"], gcfg)
+
+    def _download(gen, name: str, media: str) -> StreamingResponse:
+        return StreamingResponse(gen, media_type=media, headers={"Content-Disposition": f'attachment; filename="{exportmod.safe_filename(name)}"',
+                                                                 "Cache-Control": "no-store"})
+
+    @r.get("/api/gps/trips/{tid}/export.gpx")
+    def gps_trip_gpx(tid: int):
+        con = ro()
+        t = _trip_for_export(con, tid)
+        if not _fixes(con, t):
+            raise HTTPException(404, "viagem sem trajeto")
+        return _download(exportmod.gpx([t], lambda x: _fixes(con, x)), f"viagem-{tid}.gpx", "application/gpx+xml")
+
+    @r.get("/api/gps/trips/{tid}/export.kml")
+    def gps_trip_kml(tid: int):
+        con = ro()
+        t = _trip_for_export(con, tid)
+        fx = _fixes(con, t)
+        if not fx:
+            raise HTTPException(404, "viagem sem trajeto")
+        try:
+            stops = json.loads(t.get("stops_json") or "[]")
+        except ValueError:
+            stops = []
+        al = []
+        for a in con.execute("SELECT id, ts, severity, title, rule FROM alert WHERE trip_id=? ORDER BY ts", (tid,)):
+            f = gstore.nearest_fix(con, a["ts"], ALERT_TOL_MS)
+            al.append(dict(a, lat=f["lat"] if f else None, lon=f["lon"] if f else None))
+        return _download(exportmod.kml(t, fx, al, stops), f"viagem-{tid}.kml", "application/vnd.google-earth.kml+xml")
+
+    @r.get("/api/gps/export.gpx")
+    def gps_export_gpx(frm: int | None = Query(None, alias="from"), to: int | None = None):
+        """Várias viagens num arquivo (padrão: últimos 30 dias; no máximo 500 viagens)."""
+        con = ro()
+        to = to or int(time.time() * 1000)
+        frm = frm or to - 30 * 86400_000
+        trips = []
+        for x in con.execute("""SELECT t.id, t.start_ts, t.end_ts, t.title, g.start_name, g.end_name, g.start_place_id, g.end_place_id
+                                FROM trip t JOIN trip_gps g ON g.trip_id = t.id
+                                WHERE t.start_ts BETWEEN ? AND ? AND COALESCE(g.n_fix, 0) > 0 AND COALESCE(t.hidden, 0) = 0
+                                ORDER BY t.start_ts LIMIT 500""", (frm, to)):
+            d = dict(x)
+            d["route"] = _route(d)
+            trips.append(d)
+        return _download(exportmod.gpx(trips, lambda x: _fixes(con, x)), "viagens.gpx", "application/gpx+xml")
 
     return r

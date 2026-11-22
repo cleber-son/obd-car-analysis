@@ -123,19 +123,31 @@
     if (!(S.rpm || []).length) return "";
     const at = (k, ts) => { const p = S[k]; if (!p || !p.length) return null; let lo = 0, hi = p.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (p[m][0] <= ts) lo = m; else hi = m - 1; } return p[lo][1]; };
     const marks = (t.alerts || []).filter((x) => x.severity !== "info").slice(0, 12);
+    // velocidade do replay: [ms de viagem por passo, intervalo do passo] (o controle anda de 1 em 1 s)
+    const SPEEDS = { 1: [1000, 1000], 10: [2000, 200], 60: [12000, 200] };
+    let speed = 10;
+    try { speed = +localStorage.getItem("replaySpeed") || 10; } catch { }
+    if (!SPEEDS[speed]) speed = 10;
     setTimeout(() => {
       const sl = $("#rpSlider"), box = $("#rpVals"); if (!sl) return;
       const paint = () => { const ts = +sl.value; $("#rpTime").textContent = `${tm(ts)} · ${dur((ts - a) / 1000)} de viagem`;
-        box.innerHTML = RKEYS.filter(([k]) => S[k] && S[k].length).map(([k, l, u, d]) => { const v = at(k, ts); return `<div><span class="lbl">${l}</span><b>${k === "gear" ? (v ? nf(v) : "N") : nf(v, d)}<small> ${u}</small></b></div>`; }).join(""); };
+        box.innerHTML = RKEYS.filter(([k]) => S[k] && S[k].length).map(([k, l, u, d]) => { const v = at(k, ts); return `<div><span class="lbl">${l}</span><b>${k === "gear" ? (v ? nf(v) : "N") : nf(v, d)}<small> ${u}</small></b></div>`; }).join("");
+        window.dispatchEvent(new CustomEvent("obdreplay", { detail: { ts, trip: t.id } })); };       // mapa da viagem (gps.js)
       sl.addEventListener("input", paint); paint();
-      $("#rpPlay").addEventListener("click", () => { const btn = $("#rpPlay");
+      const btn = $("#rpPlay");
+      const tick = () => { if (!document.body.contains(sl)) return clearInterval(playTimer);
+        sl.value = Math.min(b, +sl.value + SPEEDS[speed][0]); paint(); if (+sl.value >= b) { clearInterval(playTimer); playTimer = null; btn.textContent = "▶ Reproduzir"; } };
+      const spd = $("#rpSpeed");
+      if (spd) { spd.value = String(speed); spd.addEventListener("change", () => { speed = +spd.value; try { localStorage.setItem("replaySpeed", speed); } catch { }
+        if (playTimer) { clearInterval(playTimer); playTimer = setInterval(tick, SPEEDS[speed][1]); } }); }
+      btn.addEventListener("click", () => {
         if (playTimer) { clearInterval(playTimer); playTimer = null; btn.textContent = "▶ Reproduzir"; return; }
         if (+sl.value >= b - 1000) sl.value = a;
-        btn.textContent = "⏸ Pausar"; playTimer = setInterval(() => { if (!document.body.contains(sl)) return clearInterval(playTimer);
-          sl.value = Math.min(b, +sl.value + 2000); paint(); if (+sl.value >= b) { clearInterval(playTimer); playTimer = null; btn.textContent = "▶ Reproduzir"; } }, 200); });
+        btn.textContent = "⏸ Pausar"; playTimer = setInterval(tick, SPEEDS[speed][1]); });
       $("#rpMarks")?.addEventListener("click", (e) => { const m = e.target.closest("[data-ts]"); if (m) { sl.value = Math.max(a, +m.dataset.ts - 8000); paint(); } });
     }, 0);
-    return `<div class="card"><div class="row-head"><div><h2>⏯ Replay da viagem</h2><div class="lbl" style="margin-top:4px" id="rpTime"></div></div><button class="btn" type="button" id="rpPlay">▶ Reproduzir</button></div>
+    return `<div class="card"><div class="row-head"><div><h2>⏯ Replay da viagem</h2><div class="lbl" style="margin-top:4px" id="rpTime"></div></div>
+      <span style="display:flex;gap:8px;align-items:center"><select id="rpSpeed" aria-label="Velocidade do replay"><option value="1">×1</option><option value="10">×10</option><option value="60">×60</option></select><button class="btn" type="button" id="rpPlay">▶ Reproduzir</button></span></div>
       <input type="range" id="rpSlider" min="${a}" max="${b}" step="1000" value="${a}" aria-label="Momento da viagem" style="width:100%;margin:12px 0">
       <div class="stats rpv" id="rpVals"></div>
       ${marks.length ? `<h3 class="lbl" style="margin-top:14px">Pular para 8 s antes de um alerta</h3><div id="rpMarks" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${marks.map((m) => `<button type="button" class="rbtn" data-ts="${m.ts}">${tm(m.ts)} · ${esc(m.title)}</button>`).join("")}</div>` : ""}</div>`;
