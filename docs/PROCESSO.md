@@ -433,3 +433,16 @@ O VK-172 ainda não chegou e **nada foi publicado** (nem nuvem nem Pi). A F10 fi
 - **Lembrete:** o Pi marca subtensão (`0x50005`) com a fonte atual; o conversor 12→5 V de 3 A precisa vir antes de avaliar o receptor na partida.
 - Nenhum [HW] da `GPS-ARQUITETURA.md` foi marcado como conferido. A seção F10 ganhou "Notas da preparação da F10", que aponta para a lista.
 
+
+## 2026-11-22 — Deploy (nuvem + Pi) com o dono liberando
+
+- **Nuvem:** cópia do D1 em `secrets/d1-antes-gps.sql`; `schema.sql` e `migrations/0001-share-f9.sql` aplicados (`share`
+  com `opts`); `LOC_PASSWORD` gerada (32 caracteres) e guardada em `secrets/cloud.txt`, enviada ao Worker sem aparecer
+  na tela; `npm run deploy` (versão `7757a0c2`). Conferido: `/api/env` com `"loc":"trancada"`, `/api/gps/*` 401,
+  `/api/share/<falso>` 404, `/s/<falso>` 200, estáticos 200, ping com `"loc":true`, título "Delfos".
+- **Pi:** alcançado pelo WiFi "garagem" (o PC não tem WiFi; o hotspot do iPhone não serve para o deploy daqui). Backup
+  em `/data/obd/backup/opt-antes-gps.tgz` e `obd-antes-gps.db`; `scripts/deploy.sh` terminou com `== OK` (gpsd 3.25,
+  chrony no lugar do timesyncd, `obd-clock`, `geo.db` de 56,5 MB, proteção do cartão religada).
+- `obdctl gps check` depois do deploy, sem receptor: o esperado (gpsd ok, receptor falha "nenhum aparelho", NTP ok,
+  mapa ok com 1.549 radares, localização liberada na nuvem) e **subtensão agora** (0x50005) — falta o conversor 12→5 V.
+- `systemd-remount-fs` aparece como falho: é efeito da proteção do cartão (raiz em overlay), não do deploy.
