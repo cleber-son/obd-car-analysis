@@ -128,12 +128,12 @@ enquanto a fonte for a atual. Qualquer outra falha é problema do deploy.
 No painel do Pi (`http://$PI`): Sistema → cartão "📡 GPS" com "GPS não conectado…" e o mapa offline listado; Ao vivo,
 Viagens e Consumo iguais a antes. Na nuvem: `curl -s $NUVEM/api/env` com `"pi_online":true` e `last_sync_ts` recente.
 
-**Mapa offline: o que vai e o que falta.** O `data/geo/geo.db` de hoje cobre **só a Grande SP** (93 mil vias, 1.287
-radares, ruas locais só num raio de 15 km de casa). O **corredor até Cristais Paulista** (Bandeirantes/Anhanguera,
-Ribeirão Preto, Franca) **ainda não está no arquivo**. O `geo-build.py` gera um arquivo por vez, e o Pi lê um só; para
-incluir o corredor é preciso gerar de novo uma caixa única que cubra os dois, com `--inner` no mesmo centro de casa
-(fora dele vão só as vias principais) e `--force` (passa de 4 graus²; são umas 100 consultas ao Overpass público, de 1 a
-3 horas). Depois basta outro `scripts/deploy.sh`. Decisão do dono (C5).
+**Mapa offline (pronto, 2026-11-22).** O `data/geo/geo.db` (56 MB, fora do git) cobre a **Grande SP** (todas as ruas num
+raio de 15 km de Diadema; fora dele, vias principais) e o **corredor até Cristais Paulista** (Bandeirantes/Anhanguera →
+Campinas → Limeira → Pirassununga → Ribeirão Preto → Cândido Portinari → Batatais → Franca → Cristais, só vias
+principais): 129.930 vias (41.108 com limite), 1.549 radares (1.433 com sentido), 3.715 postos/oficinas. Foi montado
+juntando as respostas guardadas do Overpass (`--from-json`, caixa `-23.80,-47.90,-20.30,-46.35`, `--inner
+-23.686,-46.620,15 --force`). Vai para o Pi no `scripts/deploy.sh`. Refazer a cada ~6 meses (o painel avisa).
 
 **Voltar atrás (se o coletor não subir):** `ssh obd@$PI 'sudo tar xzf /data/obd/backup/opt-antes-gps.tgz -C /opt/obd && sudo systemctl restart obd-collector obd-web obd-sync'`.
 O banco só ganhou tabelas e colunas, e a versão anterior ignora as novas. gpsd e chrony podem ficar instalados.
@@ -310,7 +310,7 @@ Para cada item: **Fazer** · **Esperado** · **Conferir** (comando ou tela) · *
 - Conferir: modo direção (faixa do radar) e `live.gps.warn` (`curl -s http://$PI/api/live`).
 - Se falhar (`src/obdpi/gps/roads.py`): radar não avisado → `RADAR_CONE = 30`, `RADAR_DIR_TOL = 60`, `RADAR_NEAR_WAY_M = 30`;
   via errada → `MATCH_M = 25`, `MATCH_ANG = 35`, `STICKY_M = 8`. Radar ausente no OSM → não tem ajuste no código.
-  **Fora da Grande SP** não há aviso enquanto o `geo.db` não tiver o corredor (C5).
+  Fora da Grande SP e do corredor até Cristais Paulista não há aviso pelo mapa.
 
 **B20. Cidade × estrada**
 - Fazer: uma viagem com trecho de rodovia.
@@ -381,8 +381,8 @@ Para cada item: **Fazer** · **Esperado** · **Conferir** (comando ou tela) · *
 4. **`gps.notify_routine`** (desligado por padrão): ligar ou não os avisos de rotina no iPhone ("Parou em … por N min",
    lembrete do pós-serviço da oficina, "Autonomia baixa"). Desligado, tudo aparece no painel e nada vai para o celular.
    Para ligar: `notify_routine = true` na seção `[gps]` de `/etc/obd/obd.toml` e `sudo systemctl restart obd-collector`.
-5. **Mapa do corredor:** gerar ou não o `geo.db` com o corredor até Cristais Paulista (ver o fim da parte A2). Sem ele,
-   não há radar nem limite pelo mapa fora da Grande SP.
+5. **Mapa do corredor:** feito (Grande SP + corredor até Cristais Paulista). Se usar outro caminho (Washington Luís,
+   Mococa…), gerar o trecho a mais e juntar com `--from-json` (ver a parte A2).
 6. **`power.always_on`** (vigia de estacionamento e corte por bateria baixa): **só** com instalação elétrica permanente
    (relé temporizado ou sensor de ignição, conversor 12→5 V de 3 A, fusível próprio) **e** internet no carro. Antes
    disso fica `false`. Para ligar: `[power] always_on = true` (e `min_batt_v`, padrão 12,0 V) em `/etc/obd/obd.toml` e
