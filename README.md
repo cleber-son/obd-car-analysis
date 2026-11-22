@@ -38,6 +38,7 @@ eletrônico**, que foi trocado recentemente.
 | 🔧 **Antes e depois** | Anote um conserto: o painel compara os dias antes e depois e diz se resolveu. |
 | 🎯 **Testes guiados** | 8 testes caça-problema com o celular ao lado do carro (vazamento de ar, raio-X da mistura, catalisador, bateria, ventoinha…). |
 | 🩺 **Diagnóstico geral** | Passo a passo do carro inteiro em uns 25 min, por voz: você olha óleo, líquidos, bateria, correia e pneus, responde como o carro anda e o painel mede bateria, partida, aquecimento, marcha lenta, mistura, catalisador, alternador e ventoinha (e uma volta curta opcional). No fim, um relatório com o que **provavelmente** está ruim, o que trocar ou verificar, as evidências, a urgência (pode rodar, agende, pare) e o texto para o mecânico. Dá para pular etapas e continuar depois. Botão em **Diagnóstico → Diagnóstico geral**. |
+| 🧾 **Diagnóstico da viagem** | Botão 🩺 em cada viagem e na "Última viagem" do Ao vivo: conta como foi (motor, falsos alarmes do ar, custo, "se tivesse…", direção, mini gráficos, trajeto), lê em voz alta e copia o texto. Regras fixas no Pi (`/api/trips/<id>/story`), também no painel online. |
 | 🛠️ **Manutenção** | Plano pelos km reais, com uso severo detectado pelos dados. |
 | 👨‍🔧 **Página do mecânico** | `/oficina`: problema, evidências e o que já foi testado. |
 | 📱 **Aplicativo** | Instalável na tela inicial e abre sem internet com a última cópia. |

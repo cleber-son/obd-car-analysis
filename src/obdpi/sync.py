@@ -239,6 +239,8 @@ class Sync:
         for t in trips:
             self.gather(f"/api/trips/{t['id']}", docs)
             self.gather(f"/api/report/period?kind=trip&trip={t['id']}", docs)
+            if t.get("start_ts") and t["start_ts"] > time.time() * 1000 - 120 * 86400_000:
+                self.gather(f"/api/trips/{t['id']}/story", docs)          # diagnóstico da viagem (regras fixas; sem posição)
             if (t.get("duration_s") or 0) >= 300 or (t.get("distance_km") or 0) >= 1:
                 self.gather(f"/api/ai/analysis?trip={t['id']}", docs)      # laudo da IA desta viagem (ou {"status":"idle"})
             if t.get("start_ts") and t["start_ts"] > time.time() * 1000 - 120 * 86400_000:

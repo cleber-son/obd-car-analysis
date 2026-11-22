@@ -362,3 +362,54 @@ input[type=date] { font: 600 14px var(--f-body); color: var(--fg); background: v
   .vgeo { grid-template-columns: minmax(0, 1fr) minmax(0, 1.9fr) }
   .gmap.vmap { height: calc(100vh - 110px); height: calc(100dvh - 110px); min-height: 200px }
 }
+
+/* ---------- Diagnóstico da viagem (story.js) ---------- */
+.st-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%) }
+.story-btn { white-space: nowrap; border-color: color-mix(in srgb, var(--speed) 55%, var(--line)); color: var(--speed) }
+.engine .kv .story-btn { display: block; margin-top: 8px; width: 100% }
+.story-big { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; width: 100%; margin-top: 12px; padding: 13px 14px; font-size: 15px; text-align: left; border-radius: 14px;
+  border-color: color-mix(in srgb, var(--speed) 55%, var(--line)); background: color-mix(in srgb, var(--speed) 10%, var(--panel2)) }
+.story-big span { font-weight: 500; font-size: 12.5px; color: var(--muted) }
+html.st-open { overflow: hidden }
+.modal .sheet.story { gap: 0; padding: 0; overscroll-behavior: contain; align-content: start }
+.story .st-top { position: sticky; top: 0; z-index: 3; background: var(--panel); padding: 14px 16px 10px; border-bottom: 1px solid var(--line); border-radius: 20px 20px 0 0 }
+.story #stBody { display: grid; gap: 16px; min-width: 0; padding: 14px 16px calc(18px + env(safe-area-inset-bottom, 0px)) }
+.story section { display: grid; gap: 8px; min-width: 0 } .story [hidden], .story #stMsg:empty, .story #stAiBox:empty { display: none !important }
+.story h3 { font-size: 14px; font-weight: 600 }
+.st-hero { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; padding: 16px; border-radius: 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--s) 20%, var(--panel2)), var(--panel2)); border: 1px solid color-mix(in srgb, var(--s) 40%, var(--line)) }
+.st-emoji { font-size: 44px; line-height: 1; width: 72px; height: 72px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--s) 18%, var(--panel)) }
+.st-head { font: 700 19px/1.25 var(--f-display); text-wrap: balance }
+.st-sub { font-size: 13px; margin-top: 4px }
+.st-flags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px }
+.st-acts { display: flex; gap: 8px; flex-wrap: wrap }
+.st-acts .btn { flex: 1 1 auto; text-align: center }
+.st-s { font-size: 12px; display: block }
+.st-nar p { margin: 0 0 8px; font-size: 15px; line-height: 1.55; max-width: 70ch } .st-nar p:last-child { margin-bottom: 0 }
+.st-cap p:first-child::first-letter { font: 700 1.5em var(--f-display); color: var(--speed) }
+.st-hi b { font-size: 16px } .story .stats b small { font: 500 11px var(--f-body); color: var(--muted) }
+details.alert.st-sys > summary { align-items: start; grid-template-columns: auto 1fr }
+.st-sh { display: flex; gap: 6px 10px; align-items: center; justify-content: space-between; flex-wrap: wrap } .st-sh .t { font-size: 14px }
+.st-sys .d { font-size: 13px; color: var(--fg); opacity: .86; margin-top: 2px; line-height: 1.45 }
+.st-ev { padding: 10px 12px 12px } .st-ev ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; font: 12px/1.45 var(--f-mono); color: var(--muted); overflow-wrap: anywhere }
+.st-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px }
+.st-ch { background: var(--panel2); border-radius: 12px; padding: 10px 10px 4px; min-width: 0 } .st-ch .chart.sm { height: 110px }
+.st-chh { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 11px; margin-bottom: 4px }
+.st-split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--panel2); margin-top: 4px } .st-split i { display: block; height: 100% }
+.st-leg { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted) } .st-leg i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px } .st-leg b { color: var(--fg) }
+.st-tip { align-items: start } .st-tip .d { font-size: 13px; color: var(--fg); opacity: .86; line-height: 1.45 }
+.st-tl { list-style: none; margin: 0; padding: 0; display: grid; gap: 0 }
+.st-tl li { display: grid; grid-template-columns: 44px 26px 1fr; gap: 8px; align-items: start; padding: 7px 0; font-size: 13px; position: relative }
+.st-tl li + li { border-top: 1px dashed var(--line) }
+.st-tl time { font: 600 12px var(--f-mono); color: var(--muted); padding-top: 1px } .st-tl .st-ic { text-align: center }
+.gmap.st-map { height: 220px; min-height: 0 }
+.st-foot { border-top: 1px solid var(--line); padding-top: 10px }
+@media (max-width: 900px) {
+  table.cards td.story-td { grid-column: 1 / -1 } table.cards td.story-td .story-btn { width: 100% }
+  .st-emoji { font-size: 36px; width: 60px; height: 60px } .st-head { font-size: 17px }
+}
+@media (max-width: 560px) { .st-charts { grid-template-columns: 1fr } .st-hero { padding: 14px; gap: 12px } }
+@media (orientation: landscape) and (max-height: 600px) {
+  .modal .sheet.story { max-height: 100vh; max-height: 100dvh; width: min(940px, 100%) }
+  .st-charts { grid-template-columns: repeat(4, minmax(0, 1fr)) } .st-ch .chart.sm { height: 84px }
+}

@@ -178,6 +178,40 @@ def trip(tid: int):
     return t
 
 
+_STORY: dict = {}     # diagnóstico de viagens já fechadas: (id, fim, alertas) -> (quando, documento); poupa o Pi no obd-sync
+
+
+@app.get("/api/trips/{tid}/story")
+def trip_story(tid: int):
+    """Diagnóstico da viagem: como foi, por regras fixas (analytics/tripstory.py). Sem posição nem nome de lugar."""
+    from ..analytics import tripstory
+    con = ro()
+    row = con.execute("SELECT end_ts, finalized, n_alerts, title FROM trip WHERE id=?", (tid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "viagem não encontrada")
+    key = (tid, row["end_ts"], row["n_alerts"], row["title"])
+    hit = _STORY.get(key)
+    if hit and row["finalized"] and time.time() - hit[0] < 6 * 3600:      # viagem fechada não muda: refaz a cada 6 h
+        return hit[1]
+    t = trip(tid)
+    story = tripstory.build(t, tripstory.context(con, t, now_ms(), TZ))
+    if row["finalized"]:
+        if len(_STORY) > 200:
+            _STORY.clear()
+        _STORY[key] = (time.time(), story)
+    return story
+
+
+@app.post("/api/trips/{tid}/story/ai")
+def trip_story_ai(tid: int, x_token: str | None = Header(None)):
+    """Comentário da IA sobre o diagnóstico da viagem (opcional: só com a chave configurada). A resposta sai em /api/ai/chat."""
+    from .. import ai
+    from ..analytics import tripstory
+    check_admin(x_token)
+    question, label = tripstory.ai_question(trip_story(tid))
+    return ai.ask(DB, read_live(), question, label)
+
+
 # ---------------------------------------------------------------- alertas e DTCs
 @app.post("/api/alerts/clear")
 def alerts_clear(body: dict | None = None, x_token: str | None = Header(None)):

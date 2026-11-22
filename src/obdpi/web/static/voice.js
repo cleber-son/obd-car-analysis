@@ -3,13 +3,20 @@
    for coletado (guardamos as falas) e descarta speak() logo depois de cancel() (cancela e fala 150 ms depois).
    speak(texto, {key, cooldown_s, interrupt}): a mesma 'key' não fala de novo antes de cooldown_s (padrão: nunca mais
    nesta página). A escolha 🔊/🔇 fica neste aparelho (a mesma do Testes guiados). Limite conhecido: o Safari só fala
-   com a página aberta e a tela acesa; o modo direção já mantém a tela ligada. */
+   com a página aberta e a tela acesa; o modo direção já mantém a tela ligada.
+   Prioridade (copiloto, copilot.js): speak(texto, {low: true}) é uma fala "de conversa": só sai com a voz livre, com a
+   página visível e 15 s depois da última fala normal (radar, chegada, 0–100…); uma fala normal que chega enquanto uma
+   de conversa está no ar corta a de conversa. busy() diz se há fala no ar (pela estimativa de duração, porque o
+   speechSynthesis.speaking do iPhone às vezes fica preso). */
 (() => {
   "use strict";
   let on = true; try { on = localStorage.getItem("obdVoice") !== "0"; } catch { }
   let unlocked = false, ptVoice = null;
   const said = new Map();                 // key -> instante da última fala
   const talking = [];
+  let lastHigh = 0, until = 0, lowU = null, nLive = 0;            // última fala normal; até quando a fala atual deve durar; fala de conversa no ar
+  const est = (t) => 900 + t.length * 75;               // duração estimada (≈ 13 caracteres por segundo)
+  function busy() { const s = ss(), n = Date.now(); if (n < until) return true; return !!(s && (s.speaking || s.pending) && n < until + 8000); }
   const plain = (t) => String(t ?? "").replace(/<[^>]+>/g, " ").replace(/[\u{1F300}-\u{1FAFF}☀-➿️]/gu, "").replace(/\s+/g, " ").trim();
   const ss = () => window.speechSynthesis;
   function pick() { const vs = ss()?.getVoices() || []; ptVoice = vs.find((v) => /pt[-_]BR/i.test(v.lang)) || vs.find((v) => /^pt/i.test(v.lang)) || null; }
@@ -21,6 +28,7 @@
   }
   function speak(text, o = {}) {
     const t = plain(text), s = ss(); if (!on || !t || !s) return false;
+    if (o.low && (document.hidden || !unlocked || busy() || Date.now() - lastHigh < 15000)) return false;
     if (o.key != null) {
       const last = said.get(o.key);
       if (last != null && (o.cooldown_s == null || Date.now() - last < o.cooldown_s * 1000)) return false;
@@ -30,15 +38,20 @@
       if (!ptVoice) pick();
       const u = new SpeechSynthesisUtterance(t.slice(0, 260)); u.lang = "pt-BR"; u.rate = 1.05; u.volume = 1; if (ptVoice) u.voice = ptVoice;
       talking.push(u); if (talking.length > 12) talking.shift();
-      u.onend = u.onerror = () => { const i = talking.indexOf(u); if (i >= 0) talking.splice(i, 1); };
+      u.onend = u.onerror = () => { const i = talking.indexOf(u); if (i >= 0) talking.splice(i, 1); if (u === lowU) lowU = null; nLive = Math.max(0, nLive - 1); if (!nLive) until = Math.min(until, Date.now() + 300); };
+      nLive++;
+      if (o.low) lowU = u;
+      else { lastHigh = Date.now(); if (lowU && Date.now() < until) { o = { ...o, interrupt: true }; lowU = null; } }
+      until = Math.max(o.interrupt ? 0 : until, Date.now()) + est(t.slice(0, 260));
       s.resume?.();
       if (o.interrupt && (s.speaking || s.pending)) { s.cancel(); setTimeout(() => { s.resume?.(); s.speak(u); }, 150); }
       else s.speak(u);
       return true;
     } catch { return false; }
   }
+  function cancelLow() { if (lowU) { lowU = null; until = 0; try { ss()?.cancel(); } catch { } } }
   function set(v) { on = !!v; try { localStorage.setItem("obdVoice", on ? "1" : "0"); } catch { } if (!on) { try { ss()?.cancel(); } catch { } } }
   const enabled = () => on && !!ss();
   const supported = () => !!ss();
-  window.obdVoice = { unlock, speak, set, enabled, supported, plain };
+  window.obdVoice = { unlock, speak, set, enabled, supported, plain, busy, cancelLow, unlocked: () => unlocked };
 })();

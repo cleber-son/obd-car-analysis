@@ -3,9 +3,9 @@
    Nunca guarda o fluxo ao vivo nem envios (POST). Nada com posição fica guardado no aparelho: /api/gps/*, /api/share/*,
    /s/* e /loc/* vão direto à rede (sem cópia), para a localização não sobrar depois que a senha vence.
    Os ladrilhos do mapa são de outra origem (tile.openstreetmap.org) e não passam por aqui. */
-const CACHE = "delfos-v7";
+const CACHE = "delfos-v9";
 const SHELL = ["/", "/dirigir", "/oficina", "/static/style.css", "/static/app.js", "/static/tests.js", "/static/extras.js", "/static/icon-192.png",
-  "/static/leaflet.js", "/static/leaflet.css", "/static/gpsmap.js", "/static/gps.js", "/static/voice.js", "/static/vivo.js", "/static/checkup.js"];
+  "/static/leaflet.js", "/static/leaflet.css", "/static/gpsmap.js", "/static/gps.js", "/static/voice.js", "/static/copilot.js", "/static/vivo.js", "/static/checkup.js", "/static/story.js"];
 const NO_CACHE = (p) => p === "/api/stream" || p === "/api/ws" || p.startsWith("/api/sync/") || p === "/api/export.csv"
   || p.toLowerCase().startsWith("/api/gps") || p.startsWith("/api/share/") || p.startsWith("/s/") || p.startsWith("/loc/") || /%[0-9a-f]{2}/i.test(p);
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL).catch(() => { })).then(() => self.skipWaiting())); });

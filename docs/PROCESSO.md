@@ -563,3 +563,85 @@ pela fila do painel online) e mostra o selo "❄️ AR LIGADO". O OBD do Civic n
   base da lenta não aprende nem avisa** e a regra **R4 (lenta oscilando)** não dispara — o compressor entrando e saindo
   causa exatamente isso. Os limites absolutos continuam valendo.
 - Teste: `test_ar_condicionado_marcado_pelo_dono`.
+
+## 2026-11-22 — 🗣 Copiloto no modo direção (voz com frases da viagem) e consumo pela média recente
+
+Pedido do dono: "algo falando no modo dirigir com opção de desativar, ela vai falar coisas interessantes" e "pode
+também falar sobre trânsito do trajeto". Novo `static/copilot.js` (no `SHELL` do `sw.js`; subi o cache para `delfos-v8` e o resumo da viagem, junto, para `delfos-v9`).
+- **Controle:** o botão da voz no topo agora aparece sempre (antes só com GPS) e alterna 🗣 copiloto falando →
+  🔊 só avisos (radar, limite, chegada, 0–100, alertas) → 🔇 voz desligada. No ⚙: Calado / Pouco / Normal / Bastante
+  (vale na hora). Tudo salvo no aparelho (`obdCopilot`, `obdCopilotFreq`; `obdVoice` continua o mesmo dos Testes
+  guiados). Na primeira vez, um aviso de uma linha explica o botão.
+- **O que fala:** saudação pela hora com o motor (frio: "vá com calma") e a bateria carregando; "Motor quente, 82
+  graus: pode acelerar à vontade" (só se foi visto frio); alerta real do Pi em palavras simples (uma vez por regra e
+  gravidade; crítico fala até em manobra); ar ligado pelo ❄️; autonomia baixa sem GPS (com GPS continua o F8); parado
+  com o motor ligado ("Parado há 3 minutos: isso custou 28 centavos"); marcos a cada 10 km (5/20 conforme a
+  frequência) com média e R$ falados; comparação com o consumo de costume (tanques medidos > desde o tanque > mediana das
+  viagens); melhor média em N viagens; bom momento de economia (4ª/5ª, giro baixo, média recente bem acima do normal);
+  injeção cortada descendo engrenado; duas horas ao volante; fim da viagem; curiosidades curtas e conferidas (R18A,
+  i-VTEC, flex 70 %, etanol ~30 % menos km/L, pneus, arrasto), em rodízio entre viagens.
+- **Trânsito:** sem serviço de fora. Pela velocidade do carro (funciona sem GPS): "Trânsito parado: 3 minutos andando
+  a menos de 10 por hora" e "Anda e para há 5 minutos: média de 12 por hora" (no máximo a cada 15 min). Com GPS e a
+  localização liberada: destino de `/api/gps/live` + `/api/gps/traffic` (F8) → "Neste horário, esse trajeto até X
+  costuma levar 25 minutos; hoje está 4 minutos mais lento" e, no começo da viagem e só se saiu no horário de costume,
+  "Saindo às 7h10 em vez de 7h40, você costuma ganhar 8 minutos". Trancado (401) ou sem dados: simplesmente não fala.
+- **Regras:** fala "de conversa" no `voice.js` (`speak(t, {low: true})`): só com a voz livre, a página visível e 15 s
+  depois de qualquer aviso; um aviso que chega corta a conversa. Calado com rotação ≥ 3.300, carga ≥ 80 %, velocidade
+  mudando > 10 km/h em 6 s, radar à frente, teste de 0–100. Intervalo mínimo 90 s no Normal (240/45 s em Pouco/
+  Bastante); eventos (motor quente, parado, ar, alerta) esperam um terço disso. Nenhuma frase se repete na viagem.
+- **Consumo (pedido junto):** o quadro "Consumo recente" mostra a média do último 1 km ou 2 min (o que tiver mais
+  dados), integrando velocidade e L/h entre leituras; buraco > 10 s não é integrado; paradas curtas entram; parado há
+  1 min mostra L/h "parado" como antes. Embaixo: "R$ X até agora" e "agora 21,4" (o instantâneo).
+- **Teste:** Chromium headless com `speechSynthesis` falso e relógio acelerado: demo de 22 min (saudação, motor quente,
+  trânsito do trajeto, marcos, comparação, melhor média; nunca dentro de 15 s de um aviso; intervalo mínimo respeitado;
+  sem repetição), 🔊 e 🔇 realmente calam, ⚙ salva e volta após recarregar; cenários sintéticos (parada com custo,
+  alerta crítico em manobra, marco segurado com rpm alto, anda e para sem GPS, ar, página escondida, fim da viagem,
+  desligado). Janela do consumo conferida em separado (cruzeiro, buraco de 60 s, parada curta e longa). Pytest ok.
+- **Não conferido:** iPhone de verdade (voz pt-BR lendo os números e "R$" por extenso, desbloqueio pelo 1º toque).
+
+## 2026-11-22 — 🩺 Diagnóstico da viagem (botão em Viagens e na "Última viagem" do Ao vivo)
+
+Pedido do dono: *"em viagem histórico e no Dashboard 'última viagem' quero botão diagnóstico, que vai me falar como foi
+a viagem... seja criativo"*.
+- **Onde aparece:** botão **🩺 Diagnóstico** em cada linha de Viagens, botão grande no topo do detalhe da viagem e no
+  cartão do Ao vivo, que agora mostra **Última viagem** (km, hora, duração) com o motor desligado e **Esta viagem** com
+  ele ligado. Qualquer elemento com `data-story="<id>"` abre a folha (`static/story.js`).
+- **O que a folha conta:** manchete com humor (😎 redonda, 🙂 tranquila com observações, 🤔 atenção, 🚨 alerta,
+  ⏳ em andamento, 🤏 curtinha); **Como foi** (história em frases: saída e aquecimento, percurso, motor, sustos,
+  bolso, dica, comparação); **Destaques**; **Como estava o carro** (mistura, temperatura, bateria/alternador, marcha
+  lenta, avisos e códigos; cada linha abre "os números por trás"); **quatro mini gráficos** (velocidade, rotação,
+  temperatura, ajuste) com o `lineChart` do app.js e pontos nos instantes marcados; **O bolso** (custo, km/L contra o
+  seu normal, barra rodando × parado × giro alto, cartões "Se tivesse…" com o valor poupado); **Como você dirigiu**
+  (nota do GPS da F5, freadas/arrancadas/curvas, nota econômica do OBD); **comparação** com viagens do mesmo trajeto
+  (rota da F4) ou de distância parecida; **trajeto** num mapa pequeno; **linha do tempo**; **🔊 Ouvir** (Web Speech,
+  frase a frase, com símbolos trocados por palavras), **📋 Copiar** e **📤 Compartilhar**.
+- **Onde mora a lógica:** `src/obdpi/analytics/tripstory.py`, função pura `build(documento de /api/trips/{id}, contexto)`,
+  sem IA e sem internet. O Pi serve em `GET /api/trips/{id}/story` (viagem fechada fica 6 h em memória) e o `obd-sync`
+  manda o mesmo documento para a nuvem (viagens dos últimos 120 dias; ~10–13 kB cada). Escolhi Python no Pi, e não JS
+  no navegador, porque o contexto (diário, viagens anteriores, GPS) está no banco do Pi, a nuvem só guarda documentos e
+  assim o texto é um só nos dois painéis e testável com pytest. **Sem posição nem nome de lugar** no documento (é
+  público na nuvem): o mapa vem de `/api/gps/trips/{id}/track`, atrás da senha de localização; trancada, a folha mostra
+  o cadeado e o atalho para a aba Mapa.
+- **Falso alarme do ar-condicionado:** com o carro parado e quente, a folha procura os instantes em que a carga do
+  motor salta (≥ 12 pontos) ou o ponto recua (≥ 10°) sem pé no acelerador e sem estar saindo. Queda da lenta ou aviso
+  R4/R5 nesses instantes vira "provável alarme falso (compressor)"; com a nota `ar` do ❄️ na janela, vira "ar ligado,
+  marcado por você". Avisos `z:*` aparecem como "fora do habitual" (comparação com o que o Pi aprendeu), sem virar falha.
+- **Não exagera:** cada veredito leva a evidência; sem leitura suficiente o sistema fica "Sem dados" (nunca OK);
+  mistura e lenta só com motor ≥ 70 °C; alternador em 12,6–13,2 V é tratado como o modo econômico do Civic; a dica de
+  economia nunca passa do que foi gasto parado; viagem não fechada diz "números parciais" e, em andamento, "viagem em
+  andamento" (cópia antiga na nuvem deixa de dizer "em andamento" depois de 6 min).
+- **IA (opcional):** no painel do Pi com chave, **🤖 Pedir comentário da IA** (`POST /api/trips/{id}/story/ai` →
+  `ai.ask` com o diagnóstico e as evidências). Sem chave ou na nuvem o botão não aparece e nada muda.
+- **Calibração com a viagem real de hoje (19:01, `tests/fixtures/trip32.json`):** ajuste +4 % parado / 0 % rodando,
+  λ 0,99, 80 °C em 6 min, máxima 94 °C, 14,1 V, 2 quedas da lenta às 19:06 explicadas pela carga (33 → 100 %, ponto
+  −15°), 2 avisos de lenta como alarme falso + 4 "fora do habitual", 24 % do combustível parado (R$ 1,38 de R$ 5,67)
+  e "8 min parado na saída: ≈ R$ 1,09".
+- **Arquivos:** novos `analytics/tripstory.py`, `static/story.js`, `tests/test_tripstory.py`, `tests/fixtures/trip32.json`,
+  `cloud/test/story.test.mjs`; alterados `web/app.py` (2 rotas), `sync.py` (documento), `app.js` (3 botões),
+  `index.html`, `style.css`, `sw.js` (`story.js` na lista, cache `delfos-v9`).
+- **Testes:** pytest 162 (20 novos); `npm test` 42 (2 novos); `node --check`. Chromium sem tela em retrato 440×956,
+  paisagem 956×440, escuro e claro: viagem real, viagem com GPS (mapa), viagem com problemas, em andamento, nuvem sem o
+  documento e com a localização trancada; voz conferida com um motor de fala falso (11 falas, nenhuma acima de 220 letras).
+- **Não conferido:** iPhone de verdade (voz, compartilhar), a rota da IA com chave e o caminho Pi → nuvem de verdade.
+  **O painel online só mostra o diagnóstico depois do Pi atualizado e sincronizado**; antes disso avisa que o Pi ainda
+  não mandou. Os limites das regras são valores de oficina e desta única viagem real: vale rever com mais viagens.

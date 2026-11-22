@@ -193,9 +193,12 @@
     const c = on ? "var(--ok)" : ign ? "var(--warn)" : "var(--muted)";
     const sub = off ? `Pi visto pela última vez ${d.pi_last_seen ? dt(d.pi_last_seen) : "—"}` + (S.off_since_ts ? ` · último motor desligado ${dt(S.off_since_ts)}` : "")
       : since != null ? (on ? "há " : "desde ") + (on ? dur(since) : (since > 86400 ? dt(S.off_since_ts) : "há " + dur(since))) : "—";
+    // última viagem (ou a atual): abre o Diagnóstico da viagem (story.js)
+    const H = S.history || [], lt = on ? { id: d.trip_id ?? H.filter((t) => !t.finalized).at(-1)?.id } : H.filter((t) => t.finalized).at(-1) || H.at(-1);
+    const sbtn = lt?.id != null ? `<button class="rbtn story-btn" type="button" data-story="${lt.id}">🩺 Diagnóstico</button>` : "";
     $("#engineCard").innerHTML = `<div class="st"><span class="pulse${on ? " on" : ""}" style="--c:${c}"></span><div><div class="big">${on ? "Carro ligado · motor funcionando" : ign ? "Ignição ligada, motor desligado" : "Carro desligado"}</div>
       <div class="muted">${sub}</div></div></div>
-      <div class="kv"><span class="lbl">Esta viagem</span><b>${on ? nf(d.trip?.km ?? S.current_trip_km ?? 0, 1) + " km" : "—"}</b>${on && d.trip?.elapsed_s ? `<span class="muted" style="font-size:12px">${dur(d.trip.elapsed_s)}</span>` : ""}</div>
+      <div class="kv"><span class="lbl">${on ? "Esta viagem" : "Última viagem"}</span><b>${on ? nf(d.trip?.km ?? S.current_trip_km ?? 0, 1) + " km" : lt?.id != null ? nf(lt.distance_km, 1) + " km" : "—"}</b>${on && d.trip?.elapsed_s ? `<span class="muted" style="font-size:12px">${dur(d.trip.elapsed_s)}</span>` : !on && lt?.id != null ? `<span class="muted" style="font-size:12px">${dt(lt.start_ts)} · ${dur(lt.duration_s ?? ((lt.end_ts - lt.start_ts) / 1000))}</span>` : ""}${sbtn}</div>
       <div class="kv" style="${on && d.trip?.kml != null ? "box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent)" : ""}"><span class="lbl">Consumo médio da viagem</span><b>${on && d.trip?.kml != null ? nf(d.trip.kml, 1) + " km/L" : on ? "calculando…" : "—"}</b><span class="muted" style="font-size:12px">${on && d.trip?.fuel_l != null ? nf(d.trip.fuel_l, 2) + " L gastos" + (d.trip.cost ? " · R$ " + nf(d.trip.cost, 2) : "") : ""}</span></div>
       <div class="kv"><span class="lbl">Hoje</span><b>${nf(S.today?.km ?? 0, 1)} km</b><span class="muted" style="font-size:12px">${dur(S.today?.dur ?? 0)} ligado</span></div>
       <div class="kv"><span class="lbl">Total registrado</span><b>${nf(S.total?.km ?? 0, 0)} km</b><span class="muted" style="font-size:12px">${S.total?.n ?? 0} viagens</span></div>
@@ -281,8 +284,9 @@
     $("#tripRows").innerHTML = vis.length ? vis.map((t) => { const s = t.tb_score; const c = s == null ? "var(--muted)" : s >= 85 ? "var(--ok)" : s >= 60 ? "var(--warn)" : "var(--bad)";
       return `<tr class="click" data-id="${t.id}" style="${t.hidden ? "opacity:.5" : ""}"><td class="head"><b>${esc(t.title || "")}</b>${t.title ? "<br>" : ""}${dt(t.start_ts)}${t.finalized ? "" : ' <span class="pill" style="--s:var(--ok)">agora</span>'}${t.note ? ` <span title="${esc(t.note)}">📝</span>` : ""}${t.n_alerts ? ` <span class="pill only-m" style="--s:var(--warn)">${t.n_alerts} alerta(s)</span>` : ""}</td><td class="num" data-l="Duração">${dur(t.duration_s ?? ((t.end_ts - t.start_ts) / 1000))}</td>
       <td class="num" data-l="Distância">${nf(t.distance_km, 1)}<span class="only-m"> km</span></td><td class="num" data-l="Vel. média">${nf(t.avg_speed)} km/h</td><td class="num" data-l="Consumo">${nf(t.km_l, 1)}<span class="only-m"> km/L</span></td><td class="num" data-l="Temp. máx">${nf(t.max_ect)} °C</td><td class="num no-m" data-l="Alertas">${t.n_alerts ?? 0}</td>
-      <td class="num" data-l="Nota eco">${t.eco_score ?? "—"}</td><td data-l="Borboleta"><div class="bar" style="--s:${c}" title="${s ?? "—"}/100"><i style="width:${s ?? 0}%"></i></div></td></tr>`; }).join("")
-      : `<tr><td colspan="9"><div class="empty">Nenhuma viagem ainda. A primeira aparece quando o motor ligar com o OBD conectado.</div></td></tr>`;
+      <td class="num" data-l="Nota eco">${t.eco_score ?? "—"}</td><td data-l="Borboleta"><div class="bar" style="--s:${c}" title="${s ?? "—"}/100"><i style="width:${s ?? 0}%"></i></div></td>
+      <td class="story-td"><button class="rbtn story-btn" type="button" data-story="${t.id}" aria-label="Diagnóstico desta viagem">🩺 Diagnóstico</button></td></tr>`; }).join("")
+      : `<tr><td colspan="10"><div class="empty">Nenhuma viagem ainda. A primeira aparece quando o motor ligar com o OBD conectado.</div></td></tr>`;
     window.dispatchEvent(new CustomEvent("obdtrips"));
   }
   const AIRL = { entrada_de_ar: "Possível entrada falsa de ar", suspeito: "Suspeito (MAF baixo parado)", maf_baixo: "MAF lendo baixo", normal: "Normal" };
@@ -290,6 +294,7 @@
     const t = await api(`/api/trips/${id}`);
     const S = t.series; const eco = t.eco_json || {}; const air = t.air_json || {};
     $("#tripDetail").innerHTML = `<div class="card"><div class="row-head"><h2>${esc(t.title || "Viagem de " + dt(t.start_ts))}</h2><span class="muted">${dt(t.start_ts)} → ${t.end_ts ? tm(t.end_ts) : "agora"} · ${esc(t.end_reason || "em andamento")}</span></div>
+      <button class="btn story-big" type="button" data-story="${t.id}">🩺 Diagnóstico da viagem <span>como foi, em linguagem simples</span></button>
       ${t.note ? `<div class="muted" style="margin-top:6px">📝 ${esc(t.note)}</div>` : ""}
       <form id="tripEdit" data-id="${t.id}" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px" ${CLOUD?.readonly ? "hidden" : ""}>
         <input type="text" id="tTitle" value="${esc(t.title || "")}" placeholder="Nome (ex.: Casa → trabalho)" aria-label="Nome da viagem" style="flex:1 1 180px">
