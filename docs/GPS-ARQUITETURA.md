@@ -1436,6 +1436,27 @@ Regras para quem executa:
 | **Pronto quando** | critérios de aceite de 9.1, 9.3 (distância), 9.7 (itens 1–3) e 9.13; `test_no_gps_trip_matches_old_distance` prova que nada muda sem GPS |
 | **[HW]** | precisão real da origem na partida a frio; raio adequado dos lugares |
 
+**Notas da implementação da F2 (2026-11-22)** — ajustes ao plano, para as fases seguintes seguirem o código:
+
+- **Paradas:** < 3 km/h por **≥ 20 s** (não 60 s: os semáforos do `commute()` param 30–45 s e o aceite pede 6 paradas), sem contar a saída e a chegada (pontas da viagem). `trip.STOP_MIN_S`.
+- **Altitude:** histerese de **5 m** (com 3 m o ruído de 4 m do simulador inventava ~70 m de subida em 6 km planos). Recalibrar com o VK-172.
+- **Origem pelo estacionamento:** a posição de estacionamento sai do **banco** (`places.parked_before`: média das 3 últimas posições boas antes do início, válida se as 3 estão paradas), não de `gps_model['parked']`, que no fechamento já aponta para o fim desta viagem; assim a reanálise de viagens antigas dá o mesmo resultado. Vale quando está a até `max(150 m, explicada × 1,15 + 50 m)` da primeira posição (a velocidade inteira do PID 0D subestima a distância explicada). Primeira posição mais de 20 s depois do início só marca `flags = origem_tardia`; sozinha não troca a origem (se o carro foi guinchado, o estacionamento está longe e errado).
+- **"Mudou de lugar desligado"** só é avaliado com viagem aberta neste boot (sem OBD não há como descontar o que o carro andou) e uma vez por boot. O alerta e o ntfy **não levam link nem coordenada** (a tabela `alert` é pública na nuvem e o ntfy não leva coordenada, seção 7.4); o mapa fica em `/api/gps/parked` e o ponto em `geo_event`.
+- **Cerca:** o estado inicial depois do boot é assumido em silêncio (ligar o carro em casa não gera "entrou em Casa").
+- **Motores e `gps.json`:** um motor pode ter `private() -> dict`; o hub copia as chaves `place` e `parked` para o `gps.json` (privado). `place` é `{id, name, kind}`. `live()` dos motores da F2 é vazio (nome de lugar é privado).
+- **Km sem OBD:** classe `NoObdKm` no `hub.py`, na mesma linha de `LIVE_ENGINES` da F2; o `geo_event` é atualizado a cada minuto e quando uma viagem abre.
+- **Resumo do ntfy:** `gps.summary_names` (padrão `true`, decisão do dono) liga os nomes no título. Só entram nomes de **lugares salvos**, nunca coordenada; com uma ponta só: "saindo de Casa" / "chegando em Casa". `parts` traz "R$ 0,52/km" (a nota entra na F5). Viagem sem trajeto: resumo igual ao de antes.
+- **`trip_gps`** é gravada também para viagem sem GPS (`n_fix = 0`, `flags = sem_trajeto`). `flags` usa ainda `manobra`, `origem_tardia`, `hora_aproximada`.
+- **`track_json`:** `gaps` em segundos desde `t0` (os mesmos valores de `t`, com as pontas sempre mantidas); as colunas `slope` e `limit` só aparecem na F6/F7; campo extra `eps_m` (tolerância final).
+- **Fator do velocímetro:** `trip.speedo_k()` lê `gps_model['speedo']['k']` (velocidade verdadeira ÷ a do OBD, aceito entre 0,85 e 1,15). A F5 deve gravar nesta chave.
+- **`outbox` vencido:** `sent_ts` negativo (nunca enviado). **`extras.odometer()`** ganha `gps_km`, `obd_km`, `sem_obd_km` e `composicao` (só quando há GPS ou km sem OBD; sem GPS a resposta é a mesma de antes) e soma os km sem OBD em `km`.
+- **Arquivos fora da lista da F2:** `config.py` (`gps.summary_names`; `vehicle.tyre = "205/55 R16"` e `vehicle.occupants = 2`, decisões do dono, usadas na F6) e `web/static/extras.js` (uma linha: a tela de manutenção mostra a `composicao` do 9.13). `config/obd.example.toml` com as opções novas.
+- **`geocode`:** o ramo do `geo.db` fica para a F7 (`_from_geodb` devolve `None`).
+- **Simulador:** cenário `straight(km)`; `add_places()` e `commute_end()` (Casa/Trabalho nas pontas do `commute()`; `obdctl gps sim --to-db` já cria os dois). `to_db(finalize=True)` usa a distância híbrida, como o coletor.
+- **API:** `/api/gps/logbook` devolve `{items, total, limit, offset}`; cada item tem `route`, `has_track`, `avg_moving` (km ÷ tempo em movimento) e `clock_synced`. Escrita de lugares avisa o coletor por `{"cmd": "reload_places"}` em `gps_cmd`. Apagar lugar = `deleted = 1` (o diário guarda o nome antigo; o lugar automático apagado não é recriado ali).
+- **Reset:** `reset.carry_config()` cria o banco novo (`db.init`) e copia `place`, `segment` e `gps_model` pelas colunas em comum.
+- **`obdctl gps reanalyze`** sem opção refaz os últimos 7 dias; só roda `FINALIZERS` (não recalcula `trip.distance_km`).
+
 ### F3 — Mapa, exportação e painel online protegido (funcionalidades 4, 15, 22, 24)
 
 | | |

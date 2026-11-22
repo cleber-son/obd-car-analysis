@@ -17,3 +17,9 @@ enabled = true           # sem receptor nada muda: o painel mostra "GPS não con
 source = "auto"          # auto (gpsd; serial direta se o gpsd não existir) | gpsd | nmea | replay | off
 rate_hz = 5              # taxa pedida ao receptor; grava 1 Hz andando e 1 a cada 30 s parado
 # replay_file = "/tmp/commute.nmea"   # com source = "replay" (obdctl gps sim --out …)
+moved_m = 300            # "o carro mudou de lugar desligado" a partir desta distância (descontado o que o OBD explica)
+summary_names = true     # nomes dos lugares no resumo da viagem no celular ("Casa → Trabalho"); false = só números
+
+[vehicle]
+tyre = "205/55 R16"
+occupants = 2            # pessoas que costumam andar no carro (entra na massa do dinamômetro, F6)

@@ -38,8 +38,16 @@ def flush_outbox(db_path: str, server: str, topic: str, click: str = "") -> int:
     con = sqlite3.connect(db_path, timeout=10)
     sent = 0
     try:
-        rows = con.execute("SELECT id, title, body, priority, tags FROM outbox WHERE sent_ts IS NULL ORDER BY id LIMIT 20").fetchall()
-        for rid, title, body, prio, tags in rows:
+        try:
+            rows = con.execute("SELECT id, title, body, priority, tags, expire_ts FROM outbox WHERE sent_ts IS NULL ORDER BY id LIMIT 20").fetchall()
+        except sqlite3.OperationalError:            # banco antigo, sem a coluna expire_ts
+            rows = [(*r, None) for r in con.execute("SELECT id, title, body, priority, tags FROM outbox WHERE sent_ts IS NULL ORDER BY id LIMIT 20")]
+        for rid, title, body, prio, tags, expire in rows:
+            now = int(time.time() * 1000)
+            if expire and expire < now:             # perdeu o sentido ("chegou em casa" horas depois): vencido, não envia
+                con.execute("UPDATE outbox SET sent_ts=? WHERE id=?", (-now, rid))    # sent_ts negativo = vencido
+                con.commit()
+                continue
             if not send(server, topic, title, body, prio or 3, tags or "", click):
                 break
             con.execute("UPDATE outbox SET sent_ts=? WHERE id=?", (int(time.time() * 1000), rid))

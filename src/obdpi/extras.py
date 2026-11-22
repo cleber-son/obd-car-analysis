@@ -239,7 +239,20 @@ def odometer(con: sqlite3.Connection) -> dict:
     if base is None:
         return {"km": None, "base_km": None, "base_ts": None}
     since = con.execute("SELECT COALESCE(SUM(distance_km),0) FROM trip WHERE start_ts>=?", (int(ts),)).fetchone()[0]
-    return {"km": round(float(base) + since, 1), "base_km": float(base), "base_ts": int(ts), "rodados_desde": round(since, 1)}
+    out = {"km": round(float(base) + since, 1), "base_km": float(base), "base_ts": int(ts), "rodados_desde": round(since, 1)}
+    try:                                       # GPS (seção 9.13): parte medida pelo GPS e km andados sem o OBD
+        gps = con.execute("SELECT COALESCE(SUM(MIN(gps_km, distance_km)),0) FROM trip WHERE start_ts>=? AND gps_km IS NOT NULL"
+                          " AND distance_km IS NOT NULL", (int(ts),)).fetchone()[0]
+        no_obd = con.execute("SELECT COALESCE(SUM(value),0) FROM geo_event WHERE kind='km_sem_obd' AND ts>=?", (int(ts),)).fetchone()[0]
+    except sqlite3.Error:
+        gps = no_obd = 0.0
+    if gps or no_obd:
+        nf = lambda v: f"{v:,.0f}".replace(",", ".")
+        out.update(km=round(float(base) + since + no_obd, 1), rodados_desde=round(since + no_obd, 1),
+                   gps_km=round(gps, 1), obd_km=round(since - gps, 1), sem_obd_km=round(no_obd, 1),
+                   composicao=f"informado {nf(float(base))} + {nf(gps)} km pelo GPS + {nf(since - gps)} km pelo velocímetro"
+                              + (f" + {nf(no_obd)} km sem OBD" if no_obd else ""))
+    return out
 
 
 def severe_use(con: sqlite3.Connection) -> dict:

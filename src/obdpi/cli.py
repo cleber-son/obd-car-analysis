@@ -10,6 +10,8 @@
   obdctl gps status        estado do GPS: receptor, satélites, taxa, hora, posições gravadas
   obdctl gps sim ...       viagem simulada (GPS + OBD): --scenario commute|tunnel|towed, --out arquivo.nmea|.jsonl,
                            --to-db banco --days N, --serve PORTA (finge ser o gpsd); veja obdctl gps sim --help
+  obdctl gps reanalyze [--trip N | --all]   refaz o fechamento das viagens com GPS (origem/destino, paradas, trajeto…);
+                           sem opção: as viagens dos últimos 7 dias
 """
 from __future__ import annotations
 
@@ -151,6 +153,38 @@ def gps_status(cfg):
         print(f"banco: {e}")
 
 
+def gps_reanalyze(cfg, args: list[str]) -> int:
+    """Roda de novo a lista FINALIZERS (a mesma do fechamento) nas viagens pedidas. Devolve quantas foram refeitas."""
+    from . import db
+    from .gps.hub import make_ctx, run_finalizers
+    con = db.connect(cfg["storage"]["db_path"])
+    try:
+        if "--trip" in args:
+            i = args.index("--trip")
+            try:
+                ids = [int(args[i + 1])]
+            except (IndexError, ValueError):
+                sys.exit("uso: obdctl gps reanalyze --trip N")
+        elif "--all" in args:
+            ids = [r[0] for r in con.execute("SELECT id FROM trip WHERE finalized=1 ORDER BY start_ts")]
+        else:
+            since = int(time.time() * 1000) - 7 * 86400_000
+            ids = [r[0] for r in con.execute("SELECT id FROM trip WHERE finalized=1 AND start_ts >= ? ORDER BY start_ts", (since,))]
+        n = 0
+        for tid in ids:
+            t = con.execute("SELECT end_ts FROM trip WHERE id=?", (tid,)).fetchone()
+            if not t:
+                print(f"viagem {tid}: não existe")
+                continue
+            run_finalizers(con, tid, make_ctx(con, cfg, trip_id=tid, ts=t[0]))
+            con.commit()                                   # uma por vez: o coletor (outro escritor) não fica esperando
+            n += 1
+        print(f"{n} viagem(ns) refeita(s)")
+        return n
+    finally:
+        con.close()
+
+
 def main():
     cfg = config.load()
     args = sys.argv[1:] or ["help"]
@@ -177,6 +211,8 @@ def main():
     elif args[0] == "gps" and len(args) > 1 and args[1] == "sim":
         from .gps import sim
         sim.main(args[2:])
+    elif args[0] == "gps" and len(args) > 1 and args[1] == "reanalyze":
+        gps_reanalyze(cfg, args[2:])
     elif args[0] == "test-push":
         n = cfg["notify"]
         ok = notify.send(n["ntfy_server"], n["ntfy_topic"], "Teste do Civic OBD ✅", "Se você recebeu isto, as notificações estão funcionando.", 3, "white_check_mark")

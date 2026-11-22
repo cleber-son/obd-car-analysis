@@ -6,7 +6,8 @@ linha de base). Nada é destruído: o banco e os backups diários vão para back
 último reset fica guardada) e um banco novo nasce vazio. Cada passo pode ser repetido: se a energia cair no meio, o
 pedido continua lá e termina na próxima partida.
 
-Continuam como estão: adaptador Bluetooth e protocolo descobertos, WiFi, chaves de IA, notificações e nuvem.
+Continuam como estão: adaptador Bluetooth e protocolo descobertos, WiFi, chaves de IA, notificações e nuvem. O banco novo
+recebe do antigo os lugares, os trechos de referência e os modelos do GPS (configuração do dono, não histórico).
 """
 from __future__ import annotations
 
@@ -78,6 +79,7 @@ def apply(cfg: dict) -> bool:
                 dbp.with_name(dbp.name + suf).unlink(missing_ok=True)
         for b in list(bdir.glob("obd-*.db")) + list(bdir.glob("obd-*.db.tmp")):
             shutil.move(str(b), str(keep / b.name))   # senão um banco corrompido amanhã traria os dados antigos de volta
+        carry_config(keep / dbp.name, dbp)
         sp = Path(cfg["storage"]["state_path"])
         try:
             st = json.loads(sp.read_text())
@@ -94,6 +96,36 @@ def apply(cfg: dict) -> bool:
         return True
     finally:
         os.close(fd)
+
+
+CARRY_TABLES = ("place", "segment", "gps_model")   # configuração do dono (lugares, trechos, modelos do GPS), não histórico
+
+
+def carry_config(old: Path, new: Path) -> None:
+    """Leva lugares, trechos de referência e gps_model do banco guardado para o banco novo (que nasce aqui, com o
+    esquema completo). Repetível: INSERT OR REPLACE pelas chaves. Qualquer erro só deixa o banco novo sem eles."""
+    if not old.exists():
+        return
+    from . import db
+    con = None
+    try:
+        con = db.init(str(new))
+        con.execute("ATTACH DATABASE ? AS old", (str(old),))
+        for t in CARRY_TABLES:
+            if not con.execute("SELECT 1 FROM old.sqlite_master WHERE type='table' AND name=?", (t,)).fetchone():
+                continue
+            have = [r[1] for r in con.execute(f"PRAGMA main.table_info({t})")]
+            cols = [c for c in (r[1] for r in con.execute(f"PRAGMA old.table_info({t})")) if c in have]
+            if cols:
+                cl = ", ".join(cols)
+                con.execute(f"INSERT OR REPLACE INTO main.{t}({cl}) SELECT {cl} FROM old.{t}")
+        con.commit()
+        con.execute("DETACH DATABASE old")
+    except sqlite3.Error:
+        pass
+    finally:
+        if con is not None:
+            con.close()
 
 
 def _collector_pids() -> list[int]:

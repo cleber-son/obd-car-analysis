@@ -20,7 +20,6 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 from . import Fix
 from . import nmea as nmeamod
@@ -294,8 +293,9 @@ def to_gpsd(trip: SimTrip) -> list[str]:
 def to_db(con, trip: SimTrip, *, with_gps: bool = True, finalize: bool = False) -> int:
     """Grava como o coletor gravaria (relógio sincronizado: ts = hora do GPS); devolve o id da viagem."""
     from ..obd.pids import SIGNALS
-    from .hub import Decimator, gps_cfg, run_finalizers
+    from .hub import Decimator, gps_cfg, make_ctx, run_finalizers
     from . import store
+    from . import trip as tripmod
     fast = [r for r in trip.obd if not r.get("slow")]
     slow = [r for r in trip.obd if r.get("slow")]
     a, b = fast[0]["ts"], fast[-1]["ts"]
@@ -341,13 +341,16 @@ def to_db(con, trip: SimTrip, *, with_gps: bool = True, finalize: bool = False) 
             if (p["speed"] or 0) == 0 and (p["rpm"] or 0) > 400:
                 idle += dt
         spd = [r["speed"] for r in fast]
-        con.execute("""UPDATE trip SET finalized=1, duration_s=?, distance_km=?, obd_km=?, idle_s=?, avg_speed=?, max_speed=?, max_rpm=?,
-                       fuel_l=?, km_l=?, hidden=CASE WHEN ? < 180 THEN 2 ELSE 0 END WHERE id=?""",
-                    (int((b - a) / 1000), round(dist, 2), round(dist, 2), int(idle), sum(spd) / len(spd), max(spd),
+        obd_km, gps_km = dist, None
+        g = tripmod.trip_distance(con, a, b, dist, gps_cfg({}))      # mesma conta do coletor (distância híbrida, seção 9.3)
+        if g:
+            dist, gps_km = g["km"], g["gps_km"]
+        con.execute("""UPDATE trip SET finalized=1, duration_s=?, distance_km=?, obd_km=?, gps_km=?, idle_s=?, avg_speed=?, max_speed=?,
+                       max_rpm=?, fuel_l=?, km_l=?, hidden=CASE WHEN ? < 180 THEN 2 ELSE 0 END WHERE id=?""",
+                    (int((b - a) / 1000), round(dist, 2), round(obd_km, 2), gps_km, int(idle), sum(spd) / len(spd), max(spd),
                      max(r["rpm"] for r in fast), round(fuel_l, 3), round(dist / fuel_l, 1) if fuel_l > 0.05 else None,
                      int((b - a) / 1000), tid))
-        run_finalizers(con, tid, SimpleNamespace(trip_id=tid, cfg=gps_cfg({}), con=con, geo=None, models={}, reader=None,
-                                                 fix=None, values={}, value_ts={}, engine_on=False, ts=b))
+        run_finalizers(con, tid, make_ctx(con, {}, trip_id=tid, ts=b))
     con.commit()
     return tid
 
@@ -516,7 +519,31 @@ def towed(seed: int = 1, t0: int = T0, **kw) -> list[SimTrip]:
     return [a, b]
 
 
-SCENARIOS = {"commute": commute, "tunnel": tunnel, "towed": towed}
+def straight(km: float = 10.0, seed: int = 1, t0: int = T0, speed: float = 60, **kw) -> SimTrip:
+    """Reta de 'km' quilômetros a 'speed' km/h (distância verdadeira conhecida: hodômetro, velocímetro)."""
+    legs = _legs(HOME, [(0, 0, 10, 10), (0, km * 1000, speed, 10)])
+    return simulate(legs, start=HOME, t0=t0, seed=seed, **kw)
+
+
+def commute_end() -> tuple[float, float]:
+    """Ponta final do commute() (o "Trabalho")."""
+    p = HOME
+    for m in COMMUTE:
+        p = offset(p[0], p[1], m[0], m[1])
+    return p
+
+
+def add_places(con) -> None:
+    """Casa e Trabalho nas pontas do commute() (banco de desenvolvimento), se ainda não existirem."""
+    from . import places
+    have = {r[0] for r in con.execute("SELECT name FROM place WHERE COALESCE(deleted,0)=0")}
+    for name, kind, (la, lo) in (("Casa", "casa", HOME), ("Trabalho", "trabalho", commute_end())):
+        if name not in have:
+            places.create_place(con, name, kind, la, lo)
+    con.commit()
+
+
+SCENARIOS = {"commute": commute, "tunnel": tunnel, "towed": towed, "straight": straight}
 
 
 def _scenario(name: str, seed: int, t0: int) -> list[SimTrip]:
@@ -558,6 +585,8 @@ def main(argv: list[str] | None = None) -> None:
         con = db.init(a.to_db)
         base = int(time.time() // 86400 * 86400 * 1000) - a.days * 86400_000 + 11 * 3600_000     # 08:00 em Brasília
         n = 0
+        if a.scenario == "commute":
+            add_places(con)
         for d in range(a.days):
             for k, rev in ((0, False), (10 * 3600_000, True)):
                 seed = a.seed + d * 2 + rev

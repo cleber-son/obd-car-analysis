@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from .. import config
 from . import FLAG_BURST, FLAG_STOPPED, Fix, good
-from . import store
+from . import places, store, trip
 from .reader import GpsReader
 
 log = logging.getLogger("gps")
@@ -75,6 +75,80 @@ class Decimator:
             self.slow_since += off
         if self.burst_until:
             self.burst_until += off
+
+
+class NoObdKm:
+    """Km sem OBD (seção 9.13): carro andando pelo GPS (> 10 km/h por 30 s) sem viagem aberta (adaptador fora, Bluetooth
+    caído). Um geo_event 'km_sem_obd' por sessão, com o valor em km atualizado a cada minuto; extras.odometer() soma."""
+    MIN_KMH, QUALIFY_MS, SAVE_MS = 10.0, 30_000, 60_000
+
+    def __init__(self, hub):
+        self.con = hub.con
+        self.ev_id: int | None = None
+        self.km = self.pend = 0.0
+        self.fast_since: int | None = None
+        self.active = False
+        self.last: int | None = None
+        self.last_save: int | None = None
+
+    def on_trip_start(self, tid, ts, merged) -> None:
+        pass
+
+    def shift(self, off: int) -> None:
+        for k in ("fast_since", "last", "last_save"):
+            if getattr(self, k) is not None:
+                setattr(self, k, getattr(self, k) + off)
+
+    def _save(self, ts: int) -> None:
+        if self.ev_id is None:
+            self.ev_id = store.add_event(self.con, self.fast_since or ts, "km_sem_obd", value=round(self.km, 3),
+                                         detail="carro andando pelo GPS sem viagem do OBD (adaptador fora ou Bluetooth caído)")
+        else:
+            self.con.execute("UPDATE geo_event SET value=? WHERE id=?", (round(self.km, 3), self.ev_id))
+        self.last_save = ts
+
+    def feed(self, ctx) -> list:
+        f = ctx.fix
+        prev, self.last = self.last, f.ts
+        if ctx.trip_id is not None:                   # viagem aberta: quem conta é o OBD
+            if self.active:
+                self._save(f.ts)
+            self.active, self.fast_since, self.pend = False, None, 0.0
+            return []
+        spd = f.speed or 0.0
+        dt = (f.ts - prev) / 1000 if prev is not None else 0.0
+        step = spd * dt / 3600 if 0 < dt <= 2 and spd >= 1.5 else 0.0
+        if self.active:
+            self.km += step
+        else:
+            if spd >= self.MIN_KMH:
+                if self.fast_since is None:
+                    self.fast_since, self.pend = f.ts, 0.0
+                self.pend += step
+                if f.ts - self.fast_since >= self.QUALIFY_MS:
+                    self.active, self.km = True, self.km + self.pend
+                    self.pend = 0.0
+            else:
+                self.fast_since, self.pend = None, 0.0
+        if self.active and (self.ev_id is None or self.last_save is None or f.ts - self.last_save >= self.SAVE_MS):
+            self._save(f.ts)
+        return []
+
+    def live(self) -> dict:
+        return {}
+
+
+# ---- F2: diário de bordo, lugares e estacionamento
+FINALIZERS += [trip.finalize]
+LIVE_ENGINES += [places.ParkEngine, places.GeofenceEngine, NoObdKm]
+
+
+def make_ctx(con, cfg: dict, **kw) -> SimpleNamespace:
+    """ctx fora do coletor (sim.to_db, obdctl gps reanalyze): mesmos campos de GpsHub.ctx()."""
+    base = dict(fix=None, values={}, value_ts={}, engine_on=False, trip_id=None, ts=int(time.time() * 1000), reader=None,
+                cfg=gps_cfg(cfg), con=con, geo=None, models={})
+    base.update(kw)
+    return SimpleNamespace(**base)
 
 
 def run_finalizers(con, tid: int, ctx) -> None:
@@ -174,6 +248,10 @@ class GpsHub:
                 self.reader.request_rate(float(c.get("hz", 5)))
             elif c.get("cmd") == "burst":
                 self.start_burst(float(c.get("s", 30)))
+            elif c.get("cmd") == "reload_places":
+                for e in self.engines:
+                    if hasattr(e, "reload"):
+                        e.reload()
             else:
                 log.debug("gps: comando ignorado nesta versão: %s", c)
 
@@ -294,6 +372,13 @@ class GpsHub:
                  "status": {k: st.get(k) for k in ("state", "src", "device", "driver", "mode", "sats", "hdop", "hz", "age_s",
                                                    "ttff_s", "reconnects", "rate_hz")},
                  "clock": getattr(self.clock, "source", None)}
+            for e in self.engines:                   # lugar atual e estacionamento (privados: levam posição e nome)
+                fn = getattr(e, "private", None)
+                if fn:
+                    try:
+                        d.update({k: v for k, v in (fn() or {}).items() if k in ("place", "parked")})
+                    except Exception as ex:
+                        self._warn(type(e).__name__, ex)
             p = self.run_dir / "gps.json"
             tmp = p.with_suffix(".tmp")
             tmp.write_text(json.dumps(d, ensure_ascii=False))
@@ -368,12 +453,24 @@ class GpsHub:
                 self._warn(type(e).__name__, ex)
 
     def trip_distance(self, tid: int, a: int, b: int, obd_km: float) -> dict | None:
-        """Distância híbrida GPS + OBD (F2). Na F1: None = a distância continua sendo a do OBD."""
-        return None
+        """Distância híbrida GPS + OBD (seção 9.3). None sem nenhuma posição boa na viagem: a distância continua
+        sendo a do OBD, exatamente como antes do GPS."""
+        if not self.enabled:
+            return None
+        try:
+            return trip.trip_distance(self.con, a, b, obd_km, self.cfg)
+        except Exception as e:
+            self._warn("trip_distance", e)
+            return None
 
     def finalize_trip(self, tid: int) -> None:
         run_finalizers(self.con, tid, self.ctx(trip_id=tid))
 
     def summary(self, tid: int) -> dict:
-        """Complemento do resumo da viagem no celular (F2: "Casa → Trabalho")."""
-        return {"route": None, "parts": []}
+        """Complemento do resumo da viagem no celular: {"route": "Casa → Trabalho" | None, "parts": [...]}.
+        Os nomes dos lugares vão no título se gps.summary_names (padrão: sim; decisão do dono)."""
+        try:
+            return trip.summary(self.con, tid, bool(self.cfg.get("summary_names", True)))
+        except Exception as e:
+            self._warn("summary", e)
+            return {"route": None, "parts": []}

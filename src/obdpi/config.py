@@ -43,8 +43,10 @@ DEFAULTS: dict = {
         "moved_m": 300,                               # distância que caracteriza "mudou de lugar desligado"
         "cloud": "auto",                              # auto (envia posição só se a nuvem tiver senha de localização) | off
         "voice_radar": True, "voice_limit": True,
+        "summary_names": True,                        # nomes dos lugares no resumo do ntfy ("Casa → Trabalho"); False = só números
     },
-    "vehicle": {"mass_kg": 1350, "cda": 0.63, "crr": 0.011, "drivetrain_eff": 0.88, "tank_l": 50},
+    "vehicle": {"mass_kg": 1350, "cda": 0.63, "crr": 0.011, "drivetrain_eff": 0.88, "tank_l": 50,
+                "tyre": "205/55 R16", "occupants": 2},       # decisões do dono (2026-11-22); ocupantes entram na massa do dinamômetro (F6)
     "power": {"always_on": False, "min_batt_v": 12.0},
 }
 
