@@ -103,6 +103,7 @@ class LimitsEngine:
         self.streak: dict[tuple, int] = defaultdict(int)
         self.z_streak: dict[str, int] = defaultdict(int)
         self.z_side: dict[str, bool] = {}
+        self.ac_on = False                 # ❄️ marcado pelo dono no modo direção
         self.base: dict[str, Welford] = {}
         for r in baseline_rows or []:
             self.base[r["key"]] = Welford(r["n"], r["mean"], r["m2"])
@@ -162,7 +163,7 @@ class LimitsEngine:
                                         f"Sonda de faixa larga em λ {lam:.2f} por 1 min ({'pobre' if lam > 1 else 'rica'})", "o2c1_lambda", lam, ts))
         # linha de base aprendida
         for c in ("idle_warm", "cruise"):
-            if c not in ctx:
+            if c not in ctx or (c == "idle_warm" and self.ac_on):    # compressor do ar muda carga/rotação da lenta
                 continue
             for sig, x in v.items():
                 if sig in ("run_time", "dist_clr", "time_clr", "warmups", "dist_mil", "time_mil", "fuel_level", "speed") \
@@ -212,7 +213,7 @@ class LimitsEngine:
             if not prev or SEVN[sev] > SEVN[prev[0]]:
                 out[sig] = [sev, title if sev != "ok" else "", rng, f"{sig}:{c}"]
         for c in ("idle_warm", "cruise"):
-            if c not in ctx:
+            if c not in ctx or (c == "idle_warm" and self.ac_on):    # compressor do ar muda carga/rotação da lenta
                 continue
             for sig, x in v.items():
                 w = self.base.get(f"{sig}@{c}")

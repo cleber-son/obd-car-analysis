@@ -179,7 +179,7 @@ class ThrottleEngine:
                 std = statistics.pstdev(r)
                 cross = sum(1 for i in range(1, len(r)) if (r[i - 1] - mean) * (r[i] - mean) < 0)
                 self.idle_std_hist.append(std)
-                if p2p > 150 and cross >= 6:
+                if p2p > 150 and cross >= 6 and not getattr(self, "ac_on", False):
                     out += self._emit("R4", "crit" if p2p > 300 else "warn", "Marcha lenta oscilando",
                                       f"Variação de {p2p:.0f} rpm (média {mean:.0f}) com {cross // 2} ciclos em 30 s", ts, "rpm", p2p, 180)
                 elif std > 40:

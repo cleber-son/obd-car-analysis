@@ -695,8 +695,16 @@ def annotations():
 def add_annotation(body: dict, x_token: str | None = Header(None)):
     check_admin(x_token)
     con = db.connect(DB)
-    con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)",
-                (int(body.get("ts") or now_ms()), body.get("kind", "manutencao"), str(body.get("text", ""))[:500]))
+    kind = body.get("kind", "manutencao")
+    text = str(body.get("text", ""))[:500]
+    if kind == "ar":                                   # ❄️ do modo direção: o dono marca quando liga/desliga o ar-condicionado
+        on = bool(body.get("on"))
+        text = text or ("Ar-condicionado ligado" if on else "Ar-condicionado desligado")
+        try:
+            (LIVE.parent / "ac").write_text("1" if on else "0")    # o coletor lê: some sozinho quando o Pi desliga com o carro
+        except OSError:
+            pass
+    con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)", (int(body.get("ts") or now_ms()), kind, text))
     con.commit()
     return {"ok": True}
 

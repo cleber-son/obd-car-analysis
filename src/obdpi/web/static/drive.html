@@ -30,6 +30,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .app.off .core, .app.off .tiles, .app.off .graphs, .app.off .rpmbar { opacity: .38 }
 .top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); gap: 8px }
 .top a { color: var(--muted); text-decoration: none; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px }
+.top a[aria-pressed="true"] { background: var(--speed); color: #04121a; border-color: var(--speed) }
+.acb { font: 800 12px var(--disp); letter-spacing: .06em; color: var(--speed); border: 1px solid var(--speed); border-radius: 999px; padding: 3px 9px }
 .st { display: inline-flex; align-items: center; gap: 6px } .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--muted)) }
 
 /* barra de rotação com luz de troca */
@@ -128,7 +130,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 </head>
 <body>
 <div class="app">
-  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="grBtn" aria-label="Modo gráfico">📈</a><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="accBtn">⏱ 0–100</a><a href="#" id="voBtn" aria-label="Voz ligada (toque para silenciar)" hidden>🔊</a><a href="#" id="shBtn" aria-label="Compartilhar viagem" hidden>📤</a><a href="/">Painel</a></span></div>
+  <div class="top"><span class="st"><span class="dot" id="dot"></span><span id="state">Conectando…</span></span><span id="clock" class="num"></span><span style="display:flex;gap:6px"><a href="#" id="grBtn" aria-label="Modo gráfico">📈</a><a href="#" id="cfgBtn" aria-label="Configurar quadros">⚙</a><a href="#" id="acBtn" aria-label="Ar-condicionado: toque quando ligar ou desligar" aria-pressed="false">❄️</a><a href="#" id="accBtn">⏱ 0–100</a><a href="#" id="voBtn" aria-label="Voz ligada (toque para silenciar)" hidden>🔊</a><a href="#" id="shBtn" aria-label="Compartilhar viagem" hidden>📤</a><a href="/">Painel</a></span></div>
   <div class="rpmbar" id="rpmbar"><i id="rpmfill"></i><div class="ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div></div>
   <div class="alert" id="alert"></div>
   <div class="core">
@@ -137,6 +139,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
       <div class="lim" id="lim" hidden aria-live="polite"></div>
       <div class="gear"><div><span id="gear">–</span><small>MARCHA</small></div></div>
       <div class="rpmnum"><b id="rpm">0</b><span>rpm</span></div>
+      <div class="acb" id="acb" hidden>❄️ AR LIGADO</div>
       <div class="hint" id="hint"></div>
     </div>
   </div>
@@ -467,6 +470,13 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     const vt = d.value_ts || {}, ref = d.ts || 0; if (!ref || !Object.keys(vt).length) return d;
     const v = {}; for (const [k, x] of Object.entries(d.values)) if (vt[k] == null || ref - vt[k] <= 45000) v[k] = x;
     return { ...d, values: v }; };
+  // ❄️ ar-condicionado: o dono toca quando liga/desliga; vira nota no diário e o Pi deixa de estranhar a lenta com o compressor
+  let acOn = false, acPend = 0;
+  const acShow = (on) => { acOn = on; $("acBtn").setAttribute("aria-pressed", on); $("acb").hidden = !on; };
+  $("acBtn").addEventListener("click", (e) => { e.preventDefault(); const on = !acOn; acShow(on); acPend = Date.now();
+    fetch("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "ar", on, text: on ? "Ar-condicionado ligado" : "Ar-condicionado desligado", ts: Date.now() }) })
+      .then((r) => { if (!r.ok) throw 0; }).catch(() => { acShow(!on); acPend = 0; }); });
   function render(d0) {
     const d = freshLive(d0);
     renderAcc(d);
@@ -490,6 +500,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
     else if (v.gear && v.gear > 1 && rpm < 1300 && (v.load ?? 0) > 80) hint = "↓ Reduza a marcha";
     $("hint").textContent = hint;
     lastD = d; pushHist(d); if (graphMode) drawGraphs(); else renderTiles(d);
+    if (d.ac_on != null && Date.now() - acPend > 30000) acShow(!!d.ac_on);   // vale o que o Pi sabe (a nota da nuvem leva ~10 s)
     $("shBtn").hidden = !(DEMO || d.gps?.state === "ok");          // F9: compartilhar só aparece com GPS
     // alerta recente (10 min)
     const a = (on || coll) ? (d.alerts || []).find((x) => Date.now() - (x.ts_end || x.ts) < 10 * 60e3 && x.sev !== "info") : null;

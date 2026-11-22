@@ -273,3 +273,33 @@ def test_reset_all(tmp_path=None):
     old.close()
     assert json.loads((base / "state.json").read_text()) == {"adapter_mac": "AA"}
     assert reset.last(cfg) and not reset.pending(cfg) and reset.apply(cfg) is False
+
+
+def test_ar_condicionado_marcado_pelo_dono(tmp_path, monkeypatch):
+    """❄️ do modo direção: vira nota, avisa o coletor por /run e as regras da lenta deixam de estranhar o compressor."""
+    from obdpi import db
+    from obdpi.web import app as A
+    db.init(str(tmp_path / "obd.db")).close()
+    monkeypatch.setattr(A, "DB", str(tmp_path / "obd.db"))
+    monkeypatch.setattr(A, "LIVE", tmp_path / "live.json")
+    monkeypatch.setattr(A, "check_admin", lambda t: None)
+    A.add_annotation({"kind": "ar", "on": True}, None)
+    assert (tmp_path / "ac").read_text() == "1"
+    A.add_annotation({"kind": "ar", "on": False}, None)
+    assert (tmp_path / "ac").read_text() == "0"
+    con = db.connect(str(tmp_path / "obd.db"))
+    assert [r[0] for r in con.execute("SELECT text FROM annotation WHERE kind='ar' ORDER BY id")] == ["Ar-condicionado ligado", "Ar-condicionado desligado"]
+    # linha de base: com o ar ligado a lenta não aprende nem avisa
+    l = LimitsEngine(period_s=20)
+    base = {"ect": 90, "rpm": 750, "speed": 0, "run_time": 600}
+    for i in range(120):
+        l.evaluate(dict(base, load=17.5 + (i % 3 - 1)), True, i * 20000)
+    l.ac_on = True
+    out = [a for i in range(120, 160) for a in l.evaluate(dict(base, load=33.0), True, i * 20000) if a.rule.startswith("z:")]
+    assert not out and abs(l.base["load@idle_warm"].mean - 17.5) < 1
+    # borboleta: lenta oscilando com o compressor entrando e saindo não vira alerta
+    t = ThrottleEngine(); t.ac_on = True; ts, out = 0, []
+    for i in range(60):
+        ts += 1000
+        out += t.feed({"rpm": 800 + (200 if (i // 2) % 2 else -200), "speed": 0, "tps": 6, "tps_cmd": 7, "pedal_d": 15}, ts, 90)
+    assert not any(a.rule == "R4" for a in out)

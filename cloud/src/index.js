@@ -366,7 +366,7 @@ export function cleanCheckup(b) {
 const PUBLIC_NOTES = {
   "/api/checkup": cleanCheckup,
   "/api/annotations": (b) => { const text = String(b.text || "").trim().slice(0, 200); if (text.length < 3) return null;
-    return { text, kind: ["manutencao", "teste"].includes(b.kind) ? b.kind : "manutencao", ts: Date.now() }; },
+    return { text, kind: ["manutencao", "teste", "ar"].includes(b.kind) ? b.kind : "manutencao", ts: Date.now(), ...(b.kind === "ar" ? { on: !!b.on } : {}) }; },
   "/api/maintenance/odometer": (b) => { const km = Number(b.km); return km >= 1 && km <= 999999 ? { km, ts: Date.now() } : null; },
   "/api/maintenance/done": (b) => { if (!/^[a-z_]{3,20}$/.test(String(b.key || ""))) return null;
     const out = { key: b.key, ts: Number(b.ts) > 9e11 && Number(b.ts) <= Date.now() + 864e5 ? Number(b.ts) : Date.now() };

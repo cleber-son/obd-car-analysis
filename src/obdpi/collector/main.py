@@ -729,6 +729,7 @@ class Collector:
         live = {
             "ts": self.clock.now(), "state": self.state_name, "detail": self.state_detail,
             "engine_on": self.engine_on, "trip_id": self.trip_id, "trip_start": self.trip_start or None,
+            "ac_on": getattr(self, "ac_on", False),
             "values": self.values, "value_ts": self.value_ts,
             "pedal_norm": self.throttle.pedal_norm(self.values.get("pedal_d")),
             "status": self.limits.status(dict(self.values, pedal_d_norm=self.throttle.pedal_norm(self.values.get("pedal_d")) or 0), self.engine_on),
@@ -767,6 +768,11 @@ class Collector:
     # ------------------------------------------------------------------ ciclos
     # ------------------------------------------------------------------ teste 0–100
     def accel_poll_cmd(self) -> None:
+        try:                                           # ❄️ ar-condicionado marcado pelo dono (modo direção)
+            ac = (self.run_dir / "ac").read_text().strip() == "1"
+        except OSError:
+            ac = False
+        self.ac_on = self.limits.ac_on = self.throttle.ac_on = ac
         c = self.run_dir / "alerts_cmd"
         if c.exists():                                 # botão "Limpar alertas" do painel
             c.unlink(missing_ok=True)

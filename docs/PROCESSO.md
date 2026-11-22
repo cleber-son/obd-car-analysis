@@ -552,3 +552,14 @@ trocado/verificado, motivos e etc." **Nada publicado** (nem nuvem nem Pi); sem c
   **não** levar o Diagnóstico geral (`461d969`), que o dono pediu só no git por enquanto.
 - Nuvem: `wrangler deploy` (cache `delfos-v6`). Pi: `scripts/deploy.sh` pelo WiFi "garagem", serviços ativos, sem
   `checkup.js` no Pi (conferido).
+
+## 2026-11-22 — ❄️ Ar-condicionado marcado no modo direção
+
+Pedido do dono depois da análise da viagem (as quedas da lenta e a carga de 33 % eram o compressor do ar): um botão
+**❄️** na barra do modo direção. Tocar marca "Ar-condicionado ligado/desligado" (nota `kind: "ar"` no diário, também
+pela fila do painel online) e mostra o selo "❄️ AR LIGADO". O OBD do Civic não informa o ar, por isso é manual.
+- O painel do Pi grava `/run/obd/ac` (some sozinho quando o Pi desliga com o carro); o coletor lê a cada ciclo, põe
+  `ac_on` no `live.json` (o botão acompanha o que o Pi sabe, em qualquer aparelho) e, com o ar ligado, a **linha de
+  base da lenta não aprende nem avisa** e a regra **R4 (lenta oscilando)** não dispara — o compressor entrando e saindo
+  causa exatamente isso. Os limites absolutos continuam valendo.
+- Teste: `test_ar_condicionado_marcado_pelo_dono`.
