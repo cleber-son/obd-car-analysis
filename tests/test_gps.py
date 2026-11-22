@@ -505,6 +505,72 @@ def test_api_gps_status_and_live():
     assert c.get("/api/gps/live").json() == {"state": "coletor_parado"}
 
 
+def test_gps_check_readonly():
+    """obdctl gps check (F10, docs/DIA-DO-GPS.md): só leitura — não pede taxa ao gpsd — e nunca levanta sem GPS."""
+    from obdpi.gps import check
+    lines = (FIX / "gpsd-session.jsonl").read_text().splitlines()
+    srv = FakeGpsd(lines, line_gap_s=0.01)
+    srv.start()
+    try:
+        d = check.probe_gpsd("127.0.0.1", srv.port, timeout=3)
+    finally:
+        srv.stop()
+    assert d["reachable"] and d["version"] == "3.25" and d["tpv_mode"] == 3, d
+    assert d["devices"] == [{"path": "/dev/ttyACM0", "driver": "u-blox", "cycle": 1.0}]
+    assert not any(r.startswith("?DEVICE") for r in srv.received), srv.received     # nada de mudar a taxa
+    assert check.probe_gpsd("127.0.0.1", free_port())["reachable"] is False
+
+    csv = "^,*,192.168.0.1,2,6,377,12,0.001,0.001,0.02,0.01,0.03\n#,+,GPS,0,2,17,1,0.01,0.01,0.1,0.2,0.4\n"
+    ran = lambda *a, **k: SimpleNamespace(returncode=0, stdout=csv)
+    assert check.chrony_gps(ran) == {"found": True, "state": "+", "reach": 0o17}
+    assert check.chrony_gps(lambda *a, **k: SimpleNamespace(returncode=0, stdout=csv.splitlines()[0]))["found"] is False
+    def boom(*a, **k):
+        raise FileNotFoundError("chronyc")
+    assert check.chrony_gps(boom) is None and check.throttled(boom) is None
+    assert check.throttled(lambda *a, **k: SimpleNamespace(returncode=0, stdout="throttled=0x50005\n")) == 0x50005
+
+    base = Path(tempfile.mkdtemp())
+    now = 1795400000.0
+    geo = base / "geo.db"
+    con = sqlite3.connect(geo)
+    con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    con.executemany("INSERT INTO meta VALUES (?,?)", [("osm_ts", str(int((now - 10 * 86400) * 1000))), ("cameras", "12"), ("roads", "345")])
+    con.commit(); con.close()
+    cfg = make_cfg(base)
+    cfg["gps"]["geo_db"] = str(geo)
+    cfg["cloud"] = {"url": "https://exemplo.invalid", "token": "x"}
+    (base / "gps.json").write_text(json.dumps({"state": "ok", "status": {"state": "ok", "src": "gpsd", "sats": 9, "hdop": 0.9,
+                                               "hz": 5.0, "reconnects": 0, "ttff_s": 31}}))
+    (base / "share_cloud.json").write_text(json.dumps({"ts": int((now - 20) * 1000), "loc": True, "links": []}))
+    good = {"reachable": True, "version": "3.25", "devices": [{"path": "/dev/ttyACM0", "driver": "u-blox", "cycle": 0.2}], "tpv_mode": 3}
+    inp = check.gather(cfg, base, gpsd=lambda h, p: good, chrony=lambda: {"found": True, "state": "*", "reach": 0o377},
+                       power=lambda: 0, synced=lambda: True, clock_src=lambda: "gps", now=lambda: now)
+    inp["gps_json_age"] = 1.0                                   # o arquivo acabou de ser escrito (relógio do teste é fixo)
+    rows = check.evaluate(inp, cfg)
+    assert all(r[0] == check.OK for r in rows), rows
+    assert any("12 radares" in r[2] and "10 dias" in r[2] for r in rows)
+    assert "0 falha(s)" in check.render(rows)
+
+    # nada instalado: sem gps.json, gpsd recusando, sem chrony/vcgencmd/geo.db, nuvem sem senha → só falhas e avisos
+    empty = base / "vazio"
+    empty.mkdir()
+    (empty / "share_cloud.json").write_text(json.dumps({"ts": int(now * 1000), "loc": False}))
+    cfg["gps"]["geo_db"] = str(empty / "nao-existe.db")
+    inp = check.gather(cfg, empty, gpsd=lambda h, p: {"reachable": False, "error": "recusado"}, chrony=lambda: None,
+                       power=lambda: 0x50005, synced=lambda: False, clock_src=lambda: "none", now=lambda: now)
+    st = {r[1]: r[0] for r in check.evaluate(inp, cfg)}
+    assert st["gpsd responde"] == check.FAIL and st["coletor e GPS"] == check.FAIL and st["chrony com o GPS"] == check.FAIL
+    assert st["mapa offline (geo.db)"] == check.WARN and st["relógio"] == check.WARN
+    assert st["localização na nuvem"] == check.FAIL and st["alimentação do Pi"] == check.FAIL
+    # GPS desligado na configuração: não conecta no gpsd
+    cfg["gps"]["enabled"] = False
+    called = []
+    inp = check.gather(cfg, empty, gpsd=lambda h, p: called.append(1), chrony=lambda: None, power=lambda: None,
+                       synced=lambda: True, clock_src=lambda: "ntp", now=lambda: now)
+    assert not called and inp["gpsd"] is None
+    assert {r[1]: r[0] for r in check.evaluate(inp, cfg)}["GPS na configuração"] == check.WARN
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

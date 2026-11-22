@@ -1643,6 +1643,12 @@ Regras para quem executa:
 
 Sem código novo previsto: executar a lista 10.5, corrigir o que ela mostrar (código USB, taxa, `offset` do chrony, limiares), registrar tudo em `docs/PROCESSO.md` e marcar neste documento cada **[HW]** como conferido ou corrigido. Se o receptor chegar antes de as fases acabarem, a F10 pode ser feita logo depois da F1 e repetida em parte depois da F6 (taxa e voz) e da F7 (radar).
 
+**Notas da preparação da F10 (2026-11-22)** — o receptor ainda não chegou; **nenhum [HW] foi conferido** (nada foi testado em hardware, no Pi nem na nuvem):
+
+- A lista de execução está em [`docs/DIA-DO-GPS.md`](DIA-DO-GPS.md): (A) publicação na ordem nuvem → Pi, com as conferências por `curl`, `obdctl gps status/check` e `obd-doctor`; (B) a lista 10.5 junto com todos os [HW] da F1 à F9, cada item com o esperado, onde conferir e o arquivo ou limiar a ajustar; (C) as decisões do dono.
+- Código novo, só leitura: `obdctl gps check` (`src/obdpi/gps/check.py`) resume gpsd, receptor, posição, taxa, chrony, `geo.db`, senha de localização na nuvem (pelo `/run/obd/share_cloud.json` do último ping) e subtensão. Não pede taxa ao receptor, não reinicia nada e não fala com a nuvem. Teste: `test_gps_check_readonly` em `tests/test_gps.py`.
+- Achado: o `data/geo/geo.db` local cobre só a Grande SP (93 mil vias, 1.287 radares); o corredor até Cristais Paulista ainda precisa ser gerado (um arquivo só, com `--force`), como diz a parte A2 do `DIA-DO-GPS.md`.
+
 ### Ordem e dependências
 
 ```

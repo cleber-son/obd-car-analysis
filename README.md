@@ -81,6 +81,7 @@ Diagnóstico no Pi:
 ```bash
 cd /opt/obd && PYTHONPATH=src venv/bin/python -m obdpi.cli probe      # lista PIDs e lê tudo uma vez
 PYTHONPATH=src venv/bin/python -m obdpi.cli status                       # estado ao vivo
+PYTHONPATH=src venv/bin/python -m obdpi.cli gps check                    # GPS: conferência só de leitura (docs/DIA-DO-GPS.md)
 journalctl -u obd-collector -f                                            # logs
 ```
 
@@ -108,6 +109,8 @@ docs/             ARQUITETURA.md · PROCESSO.md (diário) · pids-civic-2008.md
 
 - [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md): arquitetura completa (desenhada com Claude Fable)
 - [`docs/PROCESSO.md`](docs/PROCESSO.md): diário de tudo que foi feito e descoberto
+- [`docs/GPS-ARQUITETURA.md`](docs/GPS-ARQUITETURA.md): arquitetura do GPS (VK-172), fases F1–F10
+- [`docs/DIA-DO-GPS.md`](docs/DIA-DO-GPS.md): lista do dia do hardware: publicar (nuvem → Pi), ligar e conferir o GPS, pendências do dono (`obdctl gps check`)
 - [`docs/pids-civic-2008.md`](docs/pids-civic-2008.md): o que este Civic informa pelo OBD
 - [`docs/DIAGNOSTICO-2026-11-18.md`](docs/DIAGNOSTICO-2026-11-18.md): análise do ajuste de combustível após a troca da borboleta
 

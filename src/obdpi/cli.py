@@ -8,6 +8,8 @@
   obdctl status            mostra /run/obd/live.json resumido
   obdctl test-push         envia notificação de teste ao iPhone
   obdctl gps status        estado do GPS: receptor, satélites, taxa, hora, posições gravadas
+  obdctl gps check         conferência do dia do hardware (só leitura): gpsd, receptor, posição, taxa, chrony,
+                           geo.db, senha de localização na nuvem (último ping) e subtensão; docs/DIA-DO-GPS.md
   obdctl gps sim ...       viagem simulada (GPS + OBD): --scenario commute|tunnel|towed, --out arquivo.nmea|.jsonl,
                            --to-db banco --days N, --serve PORTA (finge ser o gpsd); veja obdctl gps sim --help
   obdctl gps reanalyze [--trip N | --all]   refaz o fechamento das viagens com GPS (origem/destino, paradas, trajeto…);
@@ -208,6 +210,9 @@ def main():
             print(f"  {k:16s} {v}")
     elif args[0] == "gps" and len(args) > 1 and args[1] == "status":
         gps_status(cfg)
+    elif args[0] == "gps" and len(args) > 1 and args[1] == "check":
+        from .gps import check
+        sys.exit(check.main(cfg))
     elif args[0] == "gps" and len(args) > 1 and args[1] == "sim":
         from .gps import sim
         sim.main(args[2:])
