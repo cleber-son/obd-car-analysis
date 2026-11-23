@@ -645,3 +645,14 @@ a viagem... seja criativo"*.
 - **Não conferido:** iPhone de verdade (voz, compartilhar), a rota da IA com chave e o caminho Pi → nuvem de verdade.
   **O painel online só mostra o diagnóstico depois do Pi atualizado e sincronizado**; antes disso avisa que o Pi ainda
   não mandou. Os limites das regras são valores de oficina e desta única viagem real: vale rever com mais viagens.
+
+## 2026-11-23 — Deploy (nuvem + Pi) do Diagnóstico geral, ❄️ e diagnóstico de cada viagem
+
+- Dono liberou publicar tudo (HEAD `4c5a2f8`, incluindo o Diagnóstico geral que antes ficou só no git).
+- Antes: pytest 162 e `npm test` 42 verdes (o venv precisa de `httpx` para o `TestClient`).
+- Nuvem: `npm run deploy` (versão `f0697a08`, cache `delfos-v9`); `/static/checkup.js` e `/static/story.js` 200,
+  `/api/env` com `"loc":"trancada"`.
+- Pi: pelo WiFi "garagem" (192.168.200.205). Backup em `/data/obd/backup/opt-antes-diag.tgz` e `obd-antes-diag.db`;
+  `scripts/deploy.sh` com `== OK`; coletor, web, sync, btagent, gpsd e chrony ativos; `/api/trips/33/story` responde
+  (🤔 ponto de atenção: mistura ar-combustível); nenhum erro no journal.
+- `vcgencmd get_throttled` = `0x50005` (subtensão agora e desde o boot) antes e depois: a alimentação do Pi segue fraca.
