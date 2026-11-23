@@ -656,3 +656,28 @@ a viagem... seja criativo"*.
   `scripts/deploy.sh` com `== OK`; coletor, web, sync, btagent, gpsd e chrony ativos; `/api/trips/33/story` responde
   (🤔 ponto de atenção: mistura ar-combustível); nenhum erro no journal.
 - `vcgencmd get_throttled` = `0x50005` (subtensão agora e desde o boot) antes e depois: a alimentação do Pi segue fraca.
+
+## 2026-11-23 — ❄️ automático: o Pi reconhece o ar-condicionado sozinho
+
+Pedido do dono: marcar o ar ligado sem precisar tocar no ❄️. O OBD do Civic não informa o ar, mas a gravação de hoje
+(lenta quente, ar ligado na higienização, 1 leitura/s) mostrou a assinatura do compressor: ele acopla e solta sozinho a
+cada ~22 s (~17 s acoplado com a carga em ~58 % e o ponto recuado até −15°, ~5 s solto em ~33 % e +10°). Ventoinha,
+farol e vidro mexem 2–5 pontos; o compressor, 20–40.
+
+- **`analytics/acdetect.py`** (`AcDetector`): só olha parado em lenta quente (velocidade 0, 550–1.100 rpm, motor ≥ 70 °C,
+  sem pé). **Liga** com 2 saltos de carga ≥ 15 pontos em até 2 min (compressor ciclando) ou carga ≥ nível sem ar + 15
+  por 60 s (acoplado direto). **Desliga** depois de 90 s em lenta sem salto e com a carga perto do nível sem ar. Rodando,
+  mantém o último estado. O nível sem ar começa em 34 % e é aprendido nas folgas do compressor (`ac_base_load` no state).
+- **Coletor:** a cada leitura rápida alimenta o detector; numa mudança grava o arquivo `ac` (o mesmo do ❄️, então o
+  selo do modo direção, os limites da lenta e o copiloto seguem juntos), a nota `ar` "Ar-condicionado ligado/desligado
+  (detectado)" e o evento `ar_auto`. **O toque do dono vale mais:** um ❄️ (arquivo alterado por fora) define o estado e
+  o automático espera 3 min antes de discordar. Motor desligado = ar desligado (sem nota).
+- **Diagnóstico da viagem:** com notas só automáticas o texto diz "detectado pelo Delfos" em vez de "marcado por você";
+  sem nota e com saltos de carga, "o Delfos não reconheceu o ar aqui: se estava ligado, toque no ❄️".
+- **Testes:** `tests/test_acdetect.py` (10, com a gravação real `tests/fixtures/ac_idle_20261123.csv`: liga em < 1 min e
+  não pisca, aprende ~33 %; lenta sem ar 10 min não liga; um salto só não liga; desliga em lenta calma; acoplado direto;
+  rodando não mexe; motor frio ignorado; ❄️ manual segura 3 min; coletor de verdade grava arquivo e nota e ignora o
+  próprio arquivo). pytest 172 → 173 com o do diagnóstico.
+- **Não conferido:** ar ligado andando (só se reconhece na próxima parada em lenta), o dia em que o compressor fica
+  acoplado direto, e falsos positivos com outras cargas pesadas em lenta (direção é elétrica no Civic 8ª geração).
+- **Deploy:** pendente; o Pi desligou com o carro antes de dar tempo.

@@ -134,6 +134,15 @@ def test_documento_pequeno_sem_posicao_e_deterministico():
     assert a["share"].startswith("🚗 Delfos · Viagem de 22/11 às 19:01\n🙂 ")
 
 
+def test_ar_condicionado_detectado_pelo_delfos():
+    t0 = REAL["start_ts"]
+    notes = [{"ts": t0 + 280_000, "kind": "ar", "text": "Ar-condicionado ligado (detectado)"},
+             {"ts": t0 + 700_000, "kind": "ar", "text": "Ar-condicionado desligado (detectado)"}]
+    s = real(annotations=notes)
+    assert "o ar-condicionado estava ligado (detectado pelo Delfos)" in sysof(s, "lenta")["txt"]
+    assert any(h["icon"] == "❄️" and h["s"] == "detectado pelo Delfos" for h in s["highlights"])
+
+
 def test_ar_condicionado_marcado_pelo_dono_vira_a_explicacao():
     t0 = REAL["start_ts"]
     notes = [{"ts": t0 + 280_000, "kind": "ar", "text": "Ar-condicionado ligado"}, {"ts": t0 + 700_000, "kind": "ar", "text": "Ar-condicionado desligado"},

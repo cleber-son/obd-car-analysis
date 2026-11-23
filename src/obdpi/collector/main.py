@@ -19,6 +19,7 @@ from .. import __version__, config, db, notify, timesrc
 from ..analytics import SEV_ORDER, Alert
 from ..analytics import fuel as fuelmod
 from ..analytics import tripdiag
+from ..analytics.acdetect import AcDetector
 from ..analytics.limits import LimitsEngine
 from ..analytics.throttle import ThrottleEngine, trip_score
 from ..elm.elm327 import ELM327, EcuSilent, ElmError, ElmNeedsReset
@@ -123,6 +124,8 @@ class Collector:
             self.queue_push("Banco de dados restaurado", f"O banco estava corrompido e voltou do backup {self._restored[0]}. Os dados depois dele ficaram no arquivo .corrompido.", "warn")
             self.con.commit()
         self.throttle = ThrottleEngine(self.state.get("throttle"))
+        self.acdet = AcDetector(float(self.state.get("ac_base_load") or 34.0))   # ❄️ automático pela carga do motor
+        self.ac_mtime: float | None = None
         self.session_id = None
         self.session_start = 0
         self.elm: ELM327 | None = None
@@ -768,11 +771,7 @@ class Collector:
     # ------------------------------------------------------------------ ciclos
     # ------------------------------------------------------------------ teste 0–100
     def accel_poll_cmd(self) -> None:
-        try:                                           # ❄️ ar-condicionado marcado pelo dono (modo direção)
-            ac = (self.run_dir / "ac").read_text().strip() == "1"
-        except OSError:
-            ac = False
-        self.ac_on = self.limits.ac_on = self.throttle.ac_on = ac
+        self.ac_poll_manual()
         c = self.run_dir / "alerts_cmd"
         if c.exists():                                 # botão "Limpar alertas" do painel
             c.unlink(missing_ok=True)
@@ -837,6 +836,53 @@ class Collector:
                               a.get("max_rpm"), len(a["pts"]), hz, self.fuel_mix))
             a["hz"] = hz
             self.con.commit()
+
+    # ------------------------------------------------------------------ ❄️ ar-condicionado
+    def _ac_set(self, on: bool) -> None:
+        self.ac_on = self.limits.ac_on = self.throttle.ac_on = on
+
+    def ac_poll_manual(self) -> None:
+        """❄️ tocado pelo dono (o painel grava o arquivo `ac`): vale o que ele marcou."""
+        f = self.run_dir / "ac"
+        try:
+            mt = f.stat().st_mtime
+        except OSError:
+            mt = None
+        if mt != self.ac_mtime:
+            self.ac_mtime = mt
+            if mt is not None:
+                try:
+                    on = f.read_text().strip() == "1"
+                except OSError:
+                    on = False
+                self.acdet.manual(on, self.clock.now())
+        self._ac_set(self.acdet.on)
+
+    def ac_feed(self, ts: int) -> None:
+        """Detecção automática: o compressor deixa a carga da lenta em degraus (ver analytics/acdetect.py)."""
+        if not self.engine_on:
+            if self.acdet.on:
+                self.acdet.reset()
+                self._ac_write(False)
+            return
+        ch = self.acdet.feed(ts, self.values)
+        if ch is None:
+            return
+        self._ac_write(ch)
+        txt = "Ar-condicionado ligado (detectado)" if ch else "Ar-condicionado desligado (detectado)"
+        self.con.execute("INSERT INTO annotation(ts, kind, text) VALUES (?,?,?)", (ts, "ar", txt))
+        self.event("info", "ar_auto", "ligado" if ch else "desligado")
+        if abs(self.acdet.base - float(self.state.get("ac_base_load") or 34.0)) >= 1:
+            self.state.set("ac_base_load", round(self.acdet.base, 1))
+
+    def _ac_write(self, on: bool) -> None:
+        f = self.run_dir / "ac"
+        try:
+            f.write_text("1" if on else "0")
+            self.ac_mtime = f.stat().st_mtime          # escrito por nós: não é toque do dono
+        except OSError:
+            pass
+        self._ac_set(on)
 
     def fast_cycle(self) -> None:
         ts = self.clock.now()
@@ -906,6 +952,7 @@ class Collector:
         self.value_ts["gear"] = ts
         self.update_engine(vals.get("rpm"), ts)
         self.trip_live_update(vals, ts)
+        self.ac_feed(ts)
         if self.engine_on or self.trip_id:
             self.con.execute(f"INSERT OR REPLACE INTO fast_sample(ts, trip_id, {', '.join(FAST_COLS)}) VALUES (?,?,{','.join('?' * len(FAST_COLS))})",
                              (ts, self.trip_id, *[vals.get(c) for c in FAST_COLS]))

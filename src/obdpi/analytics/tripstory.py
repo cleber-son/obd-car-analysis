@@ -213,6 +213,8 @@ def build(trip: dict, ctx: dict | None = None) -> dict:
         elif off and ac and ac[-1][1] is None:
             ac[-1][1] = a["ts"]
     ac_win = [(a, b if b is not None else t1) for a, b in ac]
+    ac_notes = [a for a in notes if a.get("kind") == "ar" and "deslig" not in str(a.get("text") or "").lower()]
+    ac_by = "detectado pelo Delfos" if ac_notes and all("detectado" in str(a.get("text") or "") for a in ac_notes) else "marcado por você"
     in_ac = lambda ts, pad=0: any(a - pad <= ts <= b + pad for a, b in ac_win)
     ac_s = sum((b - a) / 1000 for a, b in ac_win)
 
@@ -414,7 +416,7 @@ def build(trip: dict, ctx: dict | None = None) -> dict:
         if not dips:
             txt += ", firme."
         if expl:
-            w = "o ar-condicionado estava ligado (marcado por você)" if all(d["why"] == "ar" for d in expl) else \
+            w = f"o ar-condicionado estava ligado ({ac_by})" if all(d["why"] == "ar" for d in expl) else \
                 "a carga do motor saltou no mesmo instante, que é o jeito de uma carga pesada entrando (quase sempre o compressor do ar-condicionado)"
             txt += f". Caiu {_plural(len(expl), 'vez', 'vezes')} ({_join(_uniq([hm(d['ts']) for d in expl])[:4])}, mínimo de {_n(min(d['rpm'] for d in expl))} rpm), mas {w}"
             txt += "." if not unexpl else ""
@@ -443,9 +445,9 @@ def build(trip: dict, ctx: dict | None = None) -> dict:
         if al_expl:
             by_ac = all(a["why"] == "ar" for a in al_expl)
             bits.append(f"{_plural(len(al_expl), 'aviso', 'avisos')} de marcha lenta com cara de alarme falso: "
-                        + ("o ar-condicionado estava ligado (marcado por você)" if by_ac else
+                        + (f"o ar-condicionado estava ligado ({ac_by})" if by_ac else
                            "bateram com os instantes em que a carga do motor saltou com o carro parado, o jeito do compressor do ar-condicionado entrando")
-                        + ("" if by_ac else "; da próxima vez toque no ❄️ do modo direção para o Delfos saber"))
+                        + ("" if by_ac else "; o Delfos não reconheceu o ar aqui: se estava ligado, toque no ❄️ do modo direção"))
         if al_hab:
             sigs = _join(sorted({SIG.get(str(a["signal"]), str(a["signal"])) for a in al_hab if a["signal"]})[:5])
             mix_ok = any(s["key"] == "mistura" and s["status"] == "ok" for s in systems) and any(a["signal"] in ("stft1", "o2c1_lambda") for a in al_hab)
@@ -554,7 +556,7 @@ def build(trip: dict, ctx: dict | None = None) -> dict:
         a, d = max(long_stops, key=lambda x: x[1])
         add_hi("🅿️", "Maior parada", _dur(d), f"às {hm(a)}")
     if ac_s:
-        add_hi("❄️", "Ar-condicionado", _dur(ac_s), "marcado por você")
+        add_hi("❄️", "Ar-condicionado", _dur(ac_s), ac_by)
 
     # ---------------- linha do tempo
     tl = [{"ts": t0, "icon": "🔑", "txt": "Partida" + (f" com o motor a {_n(start_ect)} °C" if start_ect is not None else "")}]
