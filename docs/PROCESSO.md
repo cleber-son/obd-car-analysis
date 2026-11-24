@@ -680,4 +680,15 @@ farol e vidro mexem 2–5 pontos; o compressor, 20–40.
   próprio arquivo). pytest 172 → 173 com o do diagnóstico.
 - **Não conferido:** ar ligado andando (só se reconhece na próxima parada em lenta), o dia em que o compressor fica
   acoplado direto, e falsos positivos com outras cargas pesadas em lenta (direção é elétrica no Civic 8ª geração).
-- **Deploy:** pendente; o Pi desligou com o carro antes de dar tempo.
+- **Deploy:** feito em 2026-11-24 14:30–14:37 (`scripts/deploy.sh` com `== OK`, proteção do cartão destravada e religada,
+  raiz em overlay de novo). Coletor, web, sync, btagent, gpsd e chrony ativos; `acdetect.py` no Pi; coletor em
+  "coletando" sem erro no journal. `get_throttled` segue `0x50005` (subtensão).
+
+## 2026-11-24 — comparativo das viagens 25–36
+
+- **Bicos novos resolveram o vazamento:** ajuste curto na lenta de +19 % / +42 % (viagens 25–26, 21/11) para −12..+3 %
+  depois de 22/11, com λ 0,99. Consumo em viagens com estrada subiu de ~4 para 6,1–6,7 km/L.
+- **Bateria/alternador:** partida 11,2–11,8 V, carga 14,0–14,1 V em todas.
+- **Atenção:** 107 °C na viagem 35 (16:24) após 55 min em lenta com ar ligado; voltou a 95 °C (ventoinha entrou). Nas
+  demais, pico de 94–98 °C. Conferir líquido de arrefecimento e ventoinha em lenta longa.
+- **Pi:** viagem 36 não fechou (Pi caiu por subtensão); fonte/cabo USB do carro segue suspeito.
