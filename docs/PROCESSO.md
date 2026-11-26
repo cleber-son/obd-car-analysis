@@ -692,3 +692,20 @@ farol e vidro mexem 2–5 pontos; o compressor, 20–40.
 - **Atenção:** 107 °C na viagem 35 (16:24) após 55 min em lenta com ar ligado; voltou a 95 °C (ventoinha entrou). Nas
   demais, pico de 94–98 °C. Conferir líquido de arrefecimento e ventoinha em lenta longa.
 - **Pi:** viagem 36 não fechou (Pi caiu por subtensão); fonte/cabo USB do carro segue suspeito.
+
+## 2026-11-26 — dia do GPS (VK-172 no carro, viagens 40–41)
+
+- **B1 ok:** `lsusb` com `1546:01a7 U-Blox AG [u-blox 7]`, `/dev/gps0 → ttyACM0`; gpsd 3.25 + `gpsd-tools` (sem
+  `gpspipe` no Trixie: o fluxo foi lido direto do socket 2947).
+- **B2/B3 parcial:** primeira posição em 730 s (viagem 40, receptor sem céu na garagem) e 185 s (viagem 41). Na viagem 41,
+  567 posições, 93 % em 3D, mas só 3–4 satélites em uso e HDOP médio 3,0 (melhor 1,78): recepção fraca, posição do
+  receptor no carro a rever. Velocidade GPS × OBD bate (34 × 33,5; 22 × 21,1 km/h); via casada (cidade, limite presumido).
+- **B4 ok:** `DEVICES` com `cycle 0.2` (5 Hz aceito pelo `?DEVICE`); não precisou de `ubxtool`.
+- **Corrigido (1ccc4c6):** o gpsd 3.25 manda **2 TPV por época** com a mesma hora (a taxa medida aparecia 9–10 Hz e a
+  posição entrava em dobro) e SKY sem contagem que apagava a anterior (506 de 567 posições gravadas com `sats` vazio,
+  `min_sats` cego). `GpsdSource` corta o TPV repetido e junta o SKY com o anterior; `share.track_points` usa
+  `good_row` (dois pontos a 1 km do carro, HDOP ~12, na partida a frio).
+- **B5 pendente:** chrony com a linha `GPS` em `reach 0` (sem posição estável ainda).
+- **Senha de localização** trocada pelo dono para 4 dígitos (`secrets/cloud.txt`). Fraca contra tentativa (0,8 s por erro).
+- **Deploy no Pi:** 2026-11-26 12:30–12:40 (`== OK`, proteção destravada e religada, raiz em overlay). Nuvem sem mudança.
+  `get_throttled` segue `0x50005`.
