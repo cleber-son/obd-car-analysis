@@ -815,6 +815,11 @@ def test_share_track_only_current_trip():
     assert len(few) <= 21 and few[-1] == pts[-1]                                             # a ponta atual fica
     assert c.get("/api/gps/share/track?trip=999").json() == {"trip": 999, "pts": []}
     assert a != b
+    # partida a frio (2026-11-26, VK-172): posição com HDOP alto a 1 km do carro não entra no trajeto
+    con.execute("UPDATE gps_fix SET lat=lat+0.01, hdop=12 WHERE ts=(SELECT MIN(ts) FROM gps_fix WHERE ts>=?)", (b0,))
+    con.commit()
+    bad = sharemod.track_points(db.connect(str(base / "obd.db"), readonly=True), b)["pts"]
+    assert bad and haversine_m(bad[0][0], bad[0][1], pts[0][0], pts[0][1]) < 500
 
 
 def test_current_track_open_trip():

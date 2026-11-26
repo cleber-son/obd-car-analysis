@@ -162,6 +162,21 @@ def test_gpsd_source_with_fake_server():
         assert e.refused
 
 
+def test_gpsd_partial_sky_and_repeated_tpv():
+    """gpsd real (Trixie, VK-172): SKY só com DOPs não apaga a contagem; 2 TPV da mesma época viram uma posição."""
+    src = GpsdSource()
+    src._handle({"class": "SKY", "hdop": 1.1, "uSat": 9, "nSat": 14}, 0)
+    src._handle({"class": "SKY", "hdop": 2.4}, 0)                         # parcial: sem satélites
+    assert src.sky == {"hdop": 2.4, "sats": 9, "seen": 14}
+    tpv = {"class": "TPV", "mode": 3, "time": "2026-11-26T12:00:00.000Z", "lat": -23.67, "lon": -46.61}
+    a = src._handle({**tpv, "speed": 1.0}, 0)
+    assert a and a.sats == 9 and a.hdop == 2.4
+    assert src._handle({**tpv, "speed": 1.0}, 0) is None                 # mesma época: fora
+    b = src._handle({**tpv, "time": "2026-11-26T12:00:00.200Z"}, 0)      # sem velocidade na 1ª…
+    assert b and src._handle({**tpv, "time": "2026-11-26T12:00:00.200Z", "speed": 2.0}, 0).speed == 7.2   # …a 2ª com ela passa
+    assert src._handle({**tpv, "time": "2026-11-26T12:00:00.400Z"}, 0)
+
+
 def test_replay_source_rebase():
     p = Path(tempfile.mkdtemp()) / "r.jsonl"
     t0 = 1700000000000

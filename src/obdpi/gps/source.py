@@ -73,13 +73,17 @@ def tpv_fix(msg: dict, sky: dict, mono: float) -> Fix | None:
                heading=msg.get("track"), climb=msg.get("climb"), hdop=sky.get("hdop"), sats=sky.get("sats"), mode=int(mode))
 
 
-def sky_info(msg: dict) -> dict:
+def sky_info(msg: dict, prev: dict | None = None) -> dict:
+    """SKY → {hdop, sats, seen}. O gpsd manda SKY parcial (só DOPs, do GSA, sem a lista de satélites): o campo que não
+    veio fica com o valor do SKY anterior, senão a contagem some e o filtro de qualidade (min_sats) fica cego."""
     sats = msg.get("uSat")
     sv = msg.get("satellites")
     if sats is None and isinstance(sv, list):
         sats = sum(1 for s in sv if s.get("used"))
     seen = msg.get("nSat", len(sv) if isinstance(sv, list) else None)
-    return {"hdop": msg.get("hdop"), "sats": sats, "seen": seen}
+    new = {"hdop": msg.get("hdop"), "sats": sats, "seen": seen}
+    old = prev or {}
+    return {k: (v if v is not None else old.get(k)) for k, v in new.items()}
 
 
 class GpsdSource(GpsSource):
@@ -95,6 +99,8 @@ class GpsdSource(GpsSource):
         self.last_line = 0.0
         self.removed = 0
         self.version = None
+        self.last_t: int | None = None             # hora GPS da última posição entregue (para cortar TPV repetido)
+        self.last_speed: float | None = None
 
     def open(self) -> None:
         self.close()
@@ -105,6 +111,7 @@ class GpsdSource(GpsSource):
         except OSError as e:
             raise SourceError(f"gpsd: {e}") from e
         self.sock, self.buf, self.devices, self.sky = s, b"", {}, {}
+        self.last_t = self.last_speed = None
         self.last_line = time.monotonic()
         self._send('?WATCH={"enable":true,"json":true};')
 
@@ -117,9 +124,17 @@ class GpsdSource(GpsSource):
     def _handle(self, msg: dict, mono: float) -> Fix | None:
         c = msg.get("class")
         if c == "TPV":
-            return tpv_fix(msg, self.sky, mono)
+            f = tpv_fix(msg, self.sky, mono)
+            # o gpsd pode mandar 2 TPV da mesma época (um por sentença NMEA): a taxa aparecia dobrada (9,6 Hz a 5 Hz)
+            # e a mesma posição entrava duas vezes. Só passa a repetida se a primeira veio sem velocidade e esta tem.
+            if f is not None and f.t_gps is not None and f.t_gps == self.last_t:
+                if self.last_speed is not None or f.speed is None:
+                    return None
+            if f is not None:
+                self.last_t, self.last_speed = f.t_gps, f.speed
+            return f
         if c == "SKY":
-            self.sky = sky_info(msg)
+            self.sky = sky_info(msg, self.sky)
         elif c == "DEVICES":
             self.devices = {d["path"]: d.get("driver") for d in msg.get("devices") or [] if d.get("path")}
         elif c == "DEVICE" and msg.get("path"):

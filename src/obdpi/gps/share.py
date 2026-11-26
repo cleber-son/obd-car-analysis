@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from .geo import haversine_m
+from .trip import good_row
 
 # Decisão do dono (F9): a tela oferece "24h" (padrão) e "sempre" (até ele cancelar, sem prazo). "1h", "4h" e "viagem"
 # (até o fim da viagem) continuam aceitos pela API, mas não aparecem na tela.
@@ -192,10 +193,12 @@ def track_points(con, trip_id: int, step_m: float = TRACK_STEP_M, max_n: int = T
         return {"trip": trip_id, "pts": []}
     a = row["start_ts"]
     b = row["end_ts"] or int(time.time() * 1000) + 60_000
-    rows = con.execute("SELECT ts, lat, lon FROM gps_fix WHERE ts BETWEEN ? AND ? AND mode >= 2 AND (trip_id IS NULL OR trip_id = ?)"
-                       " ORDER BY ts", (a, b, trip_id)).fetchall()
+    rows = con.execute("SELECT ts, lat, lon, mode, hdop, sats FROM gps_fix WHERE ts BETWEEN ? AND ? AND mode >= 2"
+                       " AND (trip_id IS NULL OR trip_id = ?) ORDER BY ts", (a, b, trip_id)).fetchall()
     pts: list[list] = []
     for r in rows:
+        if not good_row(r):                          # partida a frio: posições com HDOP alto saíam a 1 km do carro
+            continue
         if pts and haversine_m(pts[-1][0], pts[-1][1], r["lat"], r["lon"]) < step_m:
             continue
         pts.append([round(r["lat"], 5), round(r["lon"], 5), int(r["ts"])])
